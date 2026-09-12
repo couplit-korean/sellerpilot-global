@@ -5,10 +5,10 @@
 # the concurrency live here, and a copy outside the repository silently fell
 # back to the 5 second default whenever it was lost or replaced.
 #
-# It keeps the worker on the release Production is serving:
+# It uses an explicitly verified Production release:
 #   - If a worker already answers on the health port, do nothing.
-#   - Otherwise fetch main (with retries), check it out, and run the worker.
-# A stale checkout silently keeps old behaviour, so the fetch result is logged.
+#   - Otherwise fetch the pinned SHA, check out a clean runtime, and run it.
+# Updating main alone is not proof that Vercel serves that commit.
 #
 # Install as a thin shim so repository updates apply without editing launchd:
 #   ~/dev/sellerpilot-worker-runner.sh  ->  copies and execs this file
@@ -31,6 +31,13 @@ export SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS="${SELLERPILOT_AI_WORKER_MAX_IDLE_
 WORKER_DIR="${SELLERPILOT_WORKER_DIR:-$HOME/dev/sellerpilot-worker}"
 HEALTH_URL="${SELLERPILOT_WORKER_HEALTH_URL:-http://127.0.0.1:8080/readyz}"
 NODE_BIN="${SELLERPILOT_NODE_BIN:-$(command -v node)}"
+RELEASE_FILE="${SELLERPILOT_GATEWAY_RELEASE_FILE:-$HOME/Library/Application Support/SellerPilot/gateway-release}"
+
+case "$WORKER_DIR" in
+  "$HOME/dev/sellerpilot-worker") ;;
+  *) echo "[worker] use the dedicated ~/dev/sellerpilot-worker checkout"; exit 1 ;;
+esac
+[ -x "$NODE_BIN" ] || { echo "[worker] SELLERPILOT_NODE_BIN is required"; exit 1; }
 
 cd "$WORKER_DIR" || { echo "[worker] missing checkout $WORKER_DIR"; exit 1; }
 
@@ -40,9 +47,20 @@ while true; do
     continue
   fi
 
+  RELEASE_SHA="$(cat "$RELEASE_FILE" 2>/dev/null || true)"
+  if ! [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+    echo "[worker] verified Production release pin is missing"
+    sleep 60
+    continue
+  fi
+  if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "[worker] runtime has local changes; refusing to overwrite them"
+    sleep 60
+    continue
+  fi
   fetched=0
   for attempt in 1 2 3; do
-    if git fetch --depth 1 origin main --quiet 2>/dev/null; then
+    if git fetch --depth 1 origin "$RELEASE_SHA" --quiet 2>/dev/null; then
       fetched=1
       break
     fi
@@ -51,11 +69,14 @@ while true; do
   done
 
   if [ "$fetched" = "1" ]; then
-    git checkout --detach --force FETCH_HEAD --quiet || true
+    git checkout --detach "$RELEASE_SHA" --quiet || { sleep 60; continue; }
   else
-    echo "[worker] fetch failed; using the local checkout"
+    if [ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]; then
+      echo "[worker] fetch failed and local release differs from Production pin"
+      sleep 60
+      continue
+    fi
   fi
-  git clean -fdq -e node_modules || true
 
   echo "[worker] release $(git rev-parse HEAD) fetched=${fetched} $(date -u +%FT%TZ)"
   "$NODE_BIN" --import tsx scripts/ai-cli-worker.mjs --gateway-only --no-scheduler || true

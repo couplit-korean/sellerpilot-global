@@ -7,7 +7,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "dev": "node scripts/check-local-workspace.mjs && next dev",
     "cs:draft:worker": "node --import tsx scripts/cs-draft-worker.mjs",
     "cs:draft:worker:once": "node --import tsx scripts/cs-draft-worker.mjs --once",
     "ai:worker": "node --import tsx scripts/ai-cli-worker.mjs",
@@ -19,9 +19,9 @@
     "gateway:worker:once": "node --import tsx scripts/ai-cli-worker.mjs --gateway-only --once",
     "gateway:serverless:configure": "node scripts/bootstrap-serverless-cs-runtime.mjs",
     "deploy:vercel:candidate": "node scripts/deploy-vercel-release-candidate.mjs",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "build:vercel": "next build --webpack",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "build": "node scripts/check-local-workspace.mjs && next build --webpack",
+    "build:vercel": "node scripts/check-local-workspace.mjs && next build --webpack",
+    "start": "node scripts/check-local-workspace.mjs && next start",
     "test": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build && node --test tests/*.test.mjs && node --import tsx --test tests/*.test.ts",
     "test:channels": "node --import tsx --test tests/*.test.ts",
     "test:db": "node --test tests/supabase-migrations.test.mjs",
@@ -31,7 +31,12 @@
     "check:domain-boundaries": "node scripts/audit-business-domain-boundaries.mjs",
     "test:domain-isolation": "node --import tsx --test tests/cs-product-registration-boundary.test.mjs tests/shipping-domain-flow.test.mjs tests/shipping-product-independent-db.test.mjs tests/domain-completion-isolation.test.mjs tests/cs-provider-isolation.test.ts tests/cs-draft-queue-db.test.mjs tests/cs-independent-snapshot-db.test.mjs tests/cs-draft-api-flow.test.mjs",
     "check:channel-boundaries": "node scripts/audit-channel-module-boundaries.mjs",
-    "test:channel-isolation": "node --import tsx --test tests/channel-module-boundaries.test.mjs"
+    "test:channel-isolation": "node --import tsx --test tests/channel-module-boundaries.test.mjs",
+    "dev:cloudflare": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "build:cloudflare": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
+    "start:cloudflare": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "check:workspace": "node scripts/check-local-workspace.mjs",
+    "check:types": "tsc --noEmit --incremental false"
   },
   "dependencies": {
     "@puckeditor/core": "^0.23.0",

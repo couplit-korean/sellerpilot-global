@@ -1,0 +1,83 @@
+{
+  "schema": "sellerpilot-execution-map/1",
+  "canonicalWorkspace": "~/dev/sellerpilot-app",
+  "productionVerifiedRelease": "fd426cc588f03c1e187b689141018b6de4a38eca",
+  "lanes": [
+    {
+      "domain": "detail",
+      "vercel": [
+        "app/api/ai/product-studio/route.ts",
+        "lib/server-product-studio-runtime.ts",
+        "lib/server-product-studio.ts"
+      ],
+      "local": [
+        "scripts/product-ai-worker.mjs"
+      ],
+      "condition": "Vercel AI Gateway and service configuration permit the server queue; Codex CLI/Swift jobs require Mac worker."
+    },
+    {
+      "domain": "images",
+      "vercel": [
+        "app/api/ai/product-research/route.ts",
+        "app/api/ai/worker/first-draft-images/route.ts",
+        "app/api/ai/worker/result-upload-authorize/route.ts"
+      ],
+      "local": [
+        "scripts/first-draft-image-lane.mjs",
+        "scripts/product-ai-worker.mjs",
+        "scripts/image-label-fidelity.swift",
+        "scripts/source-product-cutout.swift"
+      ],
+      "condition": "Current first-draft image lane needs SELLERPILOT_FIRST_DRAFT_IMAGES=1 and Codex image generation on Mac; Vercel coordinates jobs/uploads/results."
+    },
+    {
+      "domain": "registration",
+      "vercel": [
+        "app/api/admin/channel-operations/route.ts",
+        "lib/product-registration",
+        "lib/channels/serverless-gateway-provider.ts"
+      ],
+      "local": [
+        "scripts/channel-gateway-worker.mjs"
+      ],
+      "condition": "Local executor needs exact release, observed egress, operation-specific live DB approval and credential binding. Approval is expiring; all eight channels are not assumed ready."
+    },
+    {
+      "domain": "cs",
+      "vercel": [
+        "app/cs",
+        "app/api/cs",
+        "lib/cs",
+        "lib/channels/inquiry-sync.ts"
+      ],
+      "local": [
+        "scripts/cs-draft-worker.mjs",
+        "scripts/channel-gateway-worker.mjs"
+      ],
+      "condition": "Inbox/history/reply queue uses Vercel and Supabase; Codex reply drafts use own local worker; restricted provider calls use approved gateway."
+    },
+    {
+      "domain": "shipping",
+      "vercel": [
+        "app/shipping",
+        "lib/shipping",
+        "lib/channels/order-sync.ts"
+      ],
+      "local": [
+        "scripts/channel-gateway-worker.mjs"
+      ],
+      "condition": "Order/shipment UI and durable queue run server-side; approved executor sends provider shipping request and records readback independently of product and CS completion."
+    },
+    {
+      "domain": "competitor",
+      "vercel": [
+        "app/api/admin/competitor-prices/route.ts",
+        "lib/competitor-prices.ts"
+      ],
+      "local": [
+        "scripts/channel-gateway-worker.mjs"
+      ],
+      "condition": "Korean 11st source search is queued to Mac gateway; supported other provider searches may run server-side."
+    }
+  ]
+}

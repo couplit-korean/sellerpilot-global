@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { access, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { assertLocalWorkspace } from "./workspace-paths.mjs";
 
 const label = "chatgpt.sellerpilot.ai-worker";
 const workerTokenScopes = [
@@ -386,6 +387,7 @@ if (process.argv.includes("--status")) {
 }
 
 async function install() {
+  assertLocalWorkspace(sourceRoot);
   // Validate before staging files, reading tokens or changing the LaunchAgent.
   const maxConcurrency = resolveInstallerConcurrency(process.argv.slice(2));
   const tokenSetId = commandLineValue("--token-set");
@@ -483,6 +485,7 @@ async function install() {
     <key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string>
     <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>${maxConcurrency}</string>
     <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>${maxConcurrency}</string>
+    <key>SELLERPILOT_FIRST_DRAFT_IMAGES</key><string>1</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

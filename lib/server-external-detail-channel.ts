@@ -1,6 +1,6 @@
 import { listingPublicationContentProjection } from "./channels/listing-publication-content";
 import {createHash} from 'node:crypto';
-import {productDetailDataToHtml} from '../app/_publishing/product-detail-html';
+import {productDetailDataToHtml} from './product-detail-html';
 import type {ProductDetailData} from '../app/product-detail-puck';
 import {listingExpectedPublicationLocale} from './channels/listing-publication-state';
 import {approvedExternalDetailManifest} from './server-external-detail-manifest';

@@ -1,3 +1,5 @@
+> Current workspace: `~/dev/sellerpilot-app`. See [workspace and runtime guide](docs/통합-작업공간-운영안내.md).
+
 # SellerPilot 멀티채널 커머스 운영센터
 
 Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay, Temu의 상품·주문·재고·CS를 한 대시보드에서 운영한다. Alibaba.com과 1688은 준비 채널이다.
