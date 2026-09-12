@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { runChannelDiagnostic, type ChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
-import { executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
+import { ChannelGatewayInProgressError, executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
 import { runTracxDiagnostic } from "../../../../../lib/logistics/tracx";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
@@ -91,8 +91,21 @@ export async function POST(request: NextRequest) {
         credentialId: parsed.data.credentialId,
         channel: parsed.data.channel,
       });
-      return recordedDiagnosticResponse(serviceClient, parsed.data.credentialId, result);
-    } catch {
+      // The worker commits its diagnostic and receipt in the same transaction.
+      // Re-recording here could overwrite a newer diagnostic with an older poll.
+      return NextResponse.json(result, {
+        status: result.status === "failed" ? 422 : 200,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    } catch (error) {
+      if (error instanceof ChannelGatewayInProgressError) {
+        return NextResponse.json({
+          status: "pending",
+          code: "CREDENTIAL_TEST_IN_PROGRESS",
+          jobId: error.jobId,
+          message: "연결 검사가 대기 또는 실행 중입니다. 완료되면 연결 상태에 반영됩니다. 잠시 후 새로고침해 주세요.",
+        }, { status: 202, headers: { "cache-control": "no-store, max-age=0" } });
+      }
       const channelName = {
         shopee: "Shopee",
         lazada: "Lazada",
@@ -102,8 +115,11 @@ export async function POST(request: NextRequest) {
         ebay: "eBay",
         temu: "Temu",
       }[parsed.data.channel];
-      const message = `${channelName} 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다. 워커 상태와 채널 인증값을 확인해 주세요.`;
-      return recordedDiagnosticResponse(serviceClient, parsed.data.credentialId, { status: "failed", message });
+      return NextResponse.json({
+        status: "manual",
+        code: "CREDENTIAL_TEST_EXECUTION_UNVERIFIED",
+        message: `${channelName} 연결 검사 실행 결과를 확인하지 못했습니다. 작업자와 운영 DB 상태를 확인해 주세요.`,
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
   const { data: secretPayload, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", {

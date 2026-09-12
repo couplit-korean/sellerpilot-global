@@ -119,7 +119,8 @@ for (const [channel, credentials, data] of [
   });
 }
 
-async function routeFixture({ channel = "coupang", result = diagnostic, recordMode = "ok", executionThrows = false, admin = true, token = true, active = true } = {}) {
+class ChannelGatewayInProgressError extends Error { constructor(jobId) { super("CHANNEL_GATEWAY_TIMEOUT"); this.jobId=jobId; } }
+async function routeFixture({ channel = "qoo10", result = diagnostic, recordMode = "ok", executionThrows = false, pending = false, admin = true, token = true, active = true } = {}) {
   const calls = [];
   const recordCalls = [];
   const sdk = {
@@ -139,13 +140,13 @@ async function routeFixture({ channel = "coupang", result = diagnostic, recordMo
       } };
     },
   };
-  const execute = async () => { calls.push("diagnostic"); if (executionThrows) throw new Error(privateMarker); return result; };
+  const execute = async () => { calls.push("diagnostic"); if (pending) throw new ChannelGatewayInProgressError(credentialId); if (executionThrows) throw new Error(privateMarker); return result; };
   const { POST } = load(routeSource, {
     "@supabase/supabase-js": sdk,
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
     zod: { z },
     "../../../../../lib/channel-diagnostics": { runChannelDiagnostic: execute },
-    "../../../../../lib/channels/gateway": { executeDiagnosticViaChannelGateway: execute },
+    "../../../../../lib/channels/gateway": { executeDiagnosticViaChannelGateway: execute, ChannelGatewayInProgressError },
     "../../../../../lib/logistics/tracx": { runTracxDiagnostic: execute },
     "../../../../../lib/supabase/config": { supabasePublishableKey: "fixture-public", supabaseUrl: "https://fixture.invalid" },
   });
@@ -179,7 +180,7 @@ for (const status of ["passed", "manual", "failed"]) {
     assert.equal(r.recordCalls[0].p_credential_id, credentialId);
   });
 }
-for (const channel of ["coupang", "lazada", "shopee", "elevenst", "smartstore", "ebay", "temu", "qoo10", "tracx"]) {
+for (const channel of ["qoo10", "tracx"]) {
   test(`all route recording paths check RPC errors without changing diagnostics: ${channel}`, async () => {
     const good = await routeFixture({ channel });
     assert.equal(good.response.status, 200);
@@ -190,7 +191,7 @@ for (const channel of ["coupang", "lazada", "shopee", "elevenst", "smartstore", 
     assert.equal(failed.recordCalls[0].p_status, "passed");
   });
 }
-for (const channel of ["coupang", "tracx"]) {
+for (const channel of ["tracx"]) {
   test(`execution failure ${channel} records failed once; record failure remains distinct`, async () => {
     const good = await routeFixture({ channel, executionThrows: true });
     assert.equal(good.response.status, 422);
@@ -219,3 +220,19 @@ test("existing authorization and active-credential gates still prevent execution
     assert.equal(r.calls.length, 0);
   }
 });
+
+for (const channel of ["coupang","lazada","shopee","elevenst","smartstore","ebay","temu"]) {
+  test(`gateway ${channel} retains atomic worker recording and pending status`,async()=>{
+    for (const status of ["passed","failed","manual"]) {
+      const r=await routeFixture({channel,result:{...diagnostic,status},recordMode:"throw"});
+      assert.equal(r.response.status,status==="failed"?422:200);
+      assert.equal(r.body.status,status);assert.equal(r.recordCalls.length,0);
+    }
+    const pending=await routeFixture({channel,pending:true});
+    assert.equal(pending.response.status,202);assert.equal(pending.body.status,"pending");
+    assert.equal(pending.body.jobId,credentialId);assert.equal(pending.recordCalls.length,0);
+    const unknown=await routeFixture({channel,executionThrows:true});
+    assert.equal(unknown.response.status,503);assert.equal(unknown.body.status,"manual");
+    assert.equal(unknown.recordCalls.length,0);
+  });
+}

@@ -58,3 +58,12 @@
 ## 남은 내부 복구 범위
 
 상세 inventory의 상품 등록 recovery/producer context 및 CS 이력/가져오기·readback 계약을 의존성 순서로 복구해야 한다. 20260910033000 / 043000 / 050000에는 서로 다른 파일의 번호 충돌이 있어 무조건 전체 적용하면 안 된다. 일반 문의 조회 복구와 특수 이력·분쟁·리뷰·답변 readback 복구는 별개다. 채널 연결 UI의 온라인 표시는 이 기능들의 성공 근거가 아니다.
+
+## 추가 진단 복구 (2026-09-13 06시 이후 KST)
+
+- 운영 Vercel `5ae1ce05f2eb56c5d323b9fe83917b1acb9e7361` / `dpl_5d4HxyRJ12k3ejZkRMyrkZ2EbQFS` 배포 및 활성 SHA·스케줄 6개 확인. Mac gateway도 같은 SHA로 재시작되어 ready=true 확인.
+- Temu 진단 job `922a1fe2-0029-49be-a2f0-4c5d1e7aa0ba`는 21:21:19 UTC 실제 성공했지만, 요청 45초 대기 종료가 failed로 기록되고 DB 완료 함수는 토큰 갱신이 있을 때만 진단을 기록하는 결함이 있었다.
+- `20260912214500_persist_async_channel_diagnostics.sql` 운영 적용 및 원문 SHA `25f85279e2ef1b566fdd75937902eac56dbe42c1271ae389417c4594e2ce9e73` journal 확인. 기존 원자적 완료 함수의 인증/receipt/타 채널 부수효과를 보존하고 모든 진단을 저장한다. 이전 job이 더 새로운 검사 요청을 덮어쓰지 않는다.
+- API는 대기/상태 조회 지연을 HTTP 202 pending으로 반환하며 failed로 기록하지 않는다. 완료된 worker 결과를 다시 기록해 최신 상태를 덮어쓰지도 않는다. 실행 결과 미확인은 503 manual이며 인증 실패로 단정하지 않는다. 이 API 추가 수정은 다음 배포 대상이다.
+- 실제 운영 함수 fixture를 실행하는 PostgreSQL 검증 및 9개 채널 진단/API 검증 57/57, 추가 Next.js production build 통과.
+- 운영 정적 RPC 재대조: 333개 이름 중 95개 누락. 콜백 별칭·동적 이름은 별도 잔여이며 이 숫자가 전체 누락의 상한은 아니다. 이를 채널 연결 완료와 혼동하지 않는다.
