@@ -459,6 +459,83 @@ function tokenSimilarity(reference: string, candidate: string) {
   return referenceTokens.filter((token) => candidateTokens.has(token) || compactText(candidate).includes(compactText(token))).length / referenceTokens.length;
 }
 
+const productNameMatchStopwords = new Set([
+  "the", "and", "with", "for", "of", "set", "pack",
+  "상품", "제품", "정품", "공식", "세트", "new", "新品",
+]);
+
+export function stripCompetitorSearchQuantities(value: string) {
+  return String(value ?? "")
+    .replace(/\b\d{8,14}\b/gu, " ")
+    .replace(/(?<!\p{L})\d+(?:[.,]\d+)?\s*(?:mg|g|kg|ml|l|oz|fl\s*oz|lb|cm|mm|gb|tb|mah|w|봉|개|입|포|정|매|팩|줄|구|캡슐|pack|pcs?|count|sticks?|tablets?|units?|bottles?|cans?)(?![\p{L}\p{N}])/giu, " ")
+    .replace(/(?<!\d)\d{1,3}\s*\+\s*\d{1,3}(?!\d)/gu, " ")
+    .replace(/\b(?:x|×)\s*\d{1,4}\b/giu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type CompetitorMatchMode = "strict" | "product_name";
+
+export function assessProductNameMatch(
+  reference: Pick<CompetitorProductIdentity, "productName" | "brand">,
+  candidate: { title: string },
+): CompetitorMatchAssessment {
+  const productName = stripCompetitorSearchQuantities(reference.productName);
+  const title = stripCompetitorSearchQuantities(candidate.title);
+  const compactName = compactText(productName);
+  const compactTitle = compactText(title);
+  const brandTokens = new Set(
+    normalizeLooseText(stripCompetitorSearchQuantities(reference.brand ?? ""))
+      .split(" ")
+      .filter((token) => token.length >= 2),
+  );
+  const nameTokens = [...new Set(normalizeLooseText(productName).split(" ").filter((token) => (
+    token.length >= 2
+    && !productNameMatchStopwords.has(token)
+    && !brandTokens.has(token)
+    && !/^\d/u.test(token)
+  )))];
+  const fallbackTokens = nameTokens.length > 0
+    ? nameTokens
+    : [...new Set(normalizeLooseText(productName).split(" ").filter((token) => token.length >= 2 && !/^\d/u.test(token)))];
+  const titleTokens = new Set(normalizeLooseText(title).split(" "));
+  const matched = fallbackTokens.filter((token) => titleTokens.has(token) || compactTitle.includes(compactText(token)));
+  const contained = compactName.length >= 2 && (
+    compactTitle.includes(compactName)
+    || (compactName.includes(compactTitle) && compactTitle.length >= 2)
+  );
+  const overlap = fallbackTokens.length > 0 ? matched.length / fallbackTokens.length : 0;
+  const accepted = contained || matched.length > 0;
+  if (!accepted) {
+    return {
+      matcherVersion: COMPETITOR_MATCHER_VERSION,
+      matchTier: "rejected",
+      matchScore: 0,
+      matchEvidence: [],
+      mismatchEvidence: [{
+        code: "product_name_not_similar",
+        attribute: "productName",
+        expected: reference.productName,
+        actual: candidate.title,
+        source: "listing_title",
+      }],
+    };
+  }
+  return {
+    matcherVersion: COMPETITOR_MATCHER_VERSION,
+    matchTier: "probable",
+    matchScore: Math.min(87, Math.max(50, Math.round((contained ? 0.9 : Math.max(overlap, 0.5)) * 87))),
+    matchEvidence: [{
+      code: contained ? "product_name_exact" : "product_name_similar",
+      attribute: "productName",
+      expected: reference.productName,
+      actual: candidate.title,
+      source: "listing_title",
+    }],
+    mismatchEvidence: [],
+  };
+}
+
 function explicitLatinModelTokens(value: string) {
   return [...new Set((value.normalize("NFKC").match(/[A-Za-z0-9][A-Za-z0-9._-]{2,39}/gu) ?? [])
     .filter((token) => /[A-Za-z]/u.test(token) && /\d/u.test(token))
@@ -1072,9 +1149,12 @@ export function enrichCompetitorCandidateV3<T extends CompetitorCandidateV3Input
   reference: CompetitorProductIdentity,
   candidate: T,
   collectedAt = new Date().toISOString(),
+  options?: { matchMode?: CompetitorMatchMode },
 ): T & CompetitorPriceObservationV3Fields {
   const observedAt = normalizedIsoInstant(candidate.observedAt) || normalizedIsoInstant(collectedAt) || new Date().toISOString();
-  const assessment = assessCompetitorMatch(reference, candidate);
+  const assessment = options?.matchMode === "product_name"
+    ? assessProductNameMatch(reference, candidate)
+    : assessCompetitorMatch(reference, candidate);
   const candidateIdentity = resolveCandidateIdentity(candidate);
   const unitQuantity = candidateIdentity.totalQuantity ?? candidateIdentity.specification ?? null;
   const normalizedPrice = normalizeCompetitorPrice({

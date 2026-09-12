@@ -11,6 +11,7 @@ import {
   deduplicateCompetitorObservations,
   deduplicateCompetitorSourceObservations,
   enrichCompetitorCandidateV3,
+  type CompetitorMatchMode,
   knownCompetitorPriceComponent,
   unknownCompetitorPriceComponent,
   type CompetitorCandidateIdentity,
@@ -97,6 +98,7 @@ export type CompetitorRefreshContext = {
   claimToken?: string;
   signal?: AbortSignal;
   identity?: CompetitorProductIdentity;
+  matchMode?: CompetitorMatchMode;
 };
 type SearchProvider = {
   id: CompetitorSearchProvider;
@@ -2201,10 +2203,15 @@ export async function searchCompetitorProviders(
   refreshContext?: CompetitorRefreshContext,
 ): Promise<CompetitorProviderSearchResult> {
   const queries = normalizedCompetitorQueries(primary, aliases);
-  const identity = refreshContext?.identity;
+  const matchMode: CompetitorMatchMode = refreshContext?.matchMode === "product_name" ? "product_name" : "strict";
   const observedAt = new Date().toISOString();
   const effectivePrimary = queries[0] ?? primary.replace(/\p{Cc}/gu, " ").trim().slice(0, 160);
   const effectiveAliases = queries.slice(1);
+  const identity = refreshContext?.identity
+    ?? (matchMode === "product_name" && effectivePrimary.length >= 2 ? { productName: effectivePrimary } : undefined);
+  const nameIdentity = matchMode === "product_name" && identity
+    ? { productName: identity.productName, ...(identity.brand ? { brand: identity.brand } : {}) }
+    : identity;
   const settled = await Promise.allSettled(registry.configured.map(async (provider) => {
     const items = await withProviderTimeout(
       (signal) => {
@@ -2218,15 +2225,19 @@ export async function searchCompetitorProviders(
       providerTimeoutMs,
     );
     const usable = items.filter((item) => Number.isFinite(item.price) && item.price > 0);
-    const ranked = identity
+    const ranked = nameIdentity
       ? usable
-          .map((item) => enrichCompetitorCandidateV3(identity, item, observedAt))
+          .map((item) => enrichCompetitorCandidateV3(nameIdentity, item, observedAt, { matchMode }))
           // Keep probable candidates and one bounded rejected candidate per
           // marketplace, but discard unrelated provider noise that supplied no
-          // positive identity evidence at all.
-          .filter((item) => item.matchTier !== "rejected" || item.matchEvidence.some((evidence) => (
-            ["gtin", "brand", "productName", "manufacturerPartNumber", "modelNumber"].includes(evidence.attribute)
-          )))
+          // positive identity evidence at all. Product-name research only keeps
+          // similar titles; pack/option mismatches are not a reason to drop.
+          .filter((item) => item.matchTier !== "rejected" || (
+            matchMode !== "product_name"
+            && item.matchEvidence.some((evidence) => (
+              ["gtin", "brand", "productName", "manufacturerPartNumber", "modelNumber"].includes(evidence.attribute)
+            ))
+          ))
           .sort((left, right) => (
             ({ exact: 0, probable: 1, rejected: 2 } as const)[left.matchTier]
             - ({ exact: 0, probable: 1, rejected: 2 } as const)[right.matchTier]

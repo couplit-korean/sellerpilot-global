@@ -54,7 +54,7 @@ test("admin competitor lookup forwards structured identity and returns real snap
 
   assert.match(route, /productName: z\.string/);
   assert.match(route, /gtin: z\.string/);
-  assert.match(route, /identity \? \{ identity \} : undefined/);
+  assert.match(route, /identity \? \{ identity, matchMode \} : undefined/);
   assert.match(route, /const fetchedAt = new Date\(\)\.toISOString\(\)/);
   assert.match(route, /status: partial \? 207 : 200/);
   assert.match(route, /verifiedSameProduct: "matchTier" in item && item\.matchTier === "exact"/);

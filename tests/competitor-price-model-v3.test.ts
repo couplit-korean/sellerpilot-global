@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   COMPETITOR_MATCHER_VERSION,
   assessCompetitorMatch,
+  assessProductNameMatch,
+  stripCompetitorSearchQuantities,
   canonicalCompetitorUrl,
   competitorLowestPriceEligibility,
   deduplicateCompetitorObservations,
@@ -661,4 +663,61 @@ test("provider deadlines and completed 11st in-progress errors terminate as fail
   const result = await searchCompetitorProviders(registry, "Kellogg Chex 570g", [], 30, 50);
   assert.equal(result.pending, false);
   assert.equal(result.providers[0]?.status, "failed");
+});
+
+test("first-draft product-name matching keeps similar snacks and drops unrelated titles", () => {
+  assert.equal(stripCompetitorSearchQuantities("롯데 롯샌 파스퇴르 순우유맛 315g 6봉"), "롯데 롯샌 파스퇴르 순우유맛");
+  const sameLine = assessProductNameMatch({
+    productName: "롯데 롯샌 파스퇴르 순우유맛 315g 6봉",
+    brand: "롯데",
+  }, { title: "롯샌 초코 105g 3봉" });
+  assert.equal(sameLine.matchTier, "probable");
+  assert.equal(sameLine.matchEvidence[0]?.code, "product_name_similar");
+  const unrelated = assessProductNameMatch({
+    productName: "롯데 롯샌 파스퇴르 순우유맛 315g 6봉",
+    brand: "롯데",
+  }, { title: "롯데 초코파이 12개입" });
+  assert.equal(unrelated.matchTier, "rejected");
+});
+
+test("product-name provider search keeps different pack sizes of the same named product", async () => {
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "naver_shopping",
+      marketplaces: ["smartstore"],
+      search: async () => [
+        providerCandidate({
+          title: "롯샌 파스퇴르 순우유맛 315g 6봉",
+          externalId: "lotte-sand-315",
+          url: "https://smartstore.naver.com/example/products/315",
+        }),
+        providerCandidate({
+          title: "롯샌 파스퇴르 순우유맛 105g",
+          externalId: "lotte-sand-105",
+          url: "https://smartstore.naver.com/example/products/105",
+          price: 2_000,
+        }),
+        providerCandidate({
+          title: "초코파이 12개입",
+          externalId: "chocopie",
+          url: "https://smartstore.naver.com/example/products/pie",
+          price: 3_000,
+        }),
+      ],
+    }],
+    unavailable: [],
+  };
+  const result = await searchCompetitorProviders(
+    registry,
+    "롯샌 파스퇴르 순우유맛",
+    [],
+    30,
+    100,
+    {
+      identity: { productName: "롯데 롯샌 파스퇴르 순우유맛 315g 6봉", brand: "롯데" },
+      matchMode: "product_name",
+    },
+  );
+  assert.deepEqual(result.items.map((item) => item.externalId).sort(), ["lotte-sand-105", "lotte-sand-315"]);
+  assert.equal(result.items.every((item) => item.matchTier === "probable"), true);
 });

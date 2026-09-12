@@ -9,7 +9,7 @@ import {
   pollCompetitorResearch,
   shouldInvalidateCompetitorResearch,
 } from "../app/_publishing/competitor-research-polling";
-import { competitorCandidateRelevance } from "../lib/competitor-prices";
+import { assessProductNameMatch } from "../lib/competitor-price-model";
 
 type Provider = { status: "pending" | "searched"; count: number };
 type Item = { id: string };
@@ -73,9 +73,12 @@ test("stale price retry conditions include corrected brand, GTIN, and sale confi
   assert.notEqual(basePath, brandPath);
   assert.notEqual(basePath, gtinPath);
   assert.notEqual(basePath, bundlePath);
-  assert.match(queryFor(brandPath), /Brand B/);
-  assert.match(queryFor(gtinPath), /8800000000002/);
-  assert.match(queryFor(bundlePath), /상품 1\+1/);
+  assert.match(brandPath, /Brand\+B|Brand B|brand=Brand\+B/);
+  assert.match(gtinPath, /8800000000002/);
+  assert.match(bundlePath, /packageContents=/);
+  assert.match(basePath, /matchMode=product_name/);
+  assert.doesNotMatch(queryFor(basePath), /8800000000001/);
+  assert.doesNotMatch(queryFor(basePath), /500g/);
   assert.doesNotMatch(queryFor(buildCompetitorResearchRetryPath({ ...base, gtinStatus: "NO_GTIN" })), /8800000000001/);
   assert.equal(buildCompetitorResearchRetryPath({}), "");
 });
@@ -104,36 +107,16 @@ test("initial price research preserves deterministic intake identity and bounded
 
   assert.match(query, /Sony/);
   assert.match(query, /WH-1000XM5/);
-  assert.match(query, /headphones 1 unit/);
-  assert.match(query, /8801234567890/);
+  assert.doesNotMatch(query, /headphones 1 unit/);
+  assert.doesNotMatch(query, /8801234567890/);
+  assert.doesNotMatch(query, /128GB/i);
+  assert.equal(url.searchParams.get("matchMode"), "product_name");
   assert.ok(query.length <= 500);
   assert.ok(aliases.length <= 12);
   assert.ok(aliases.every((alias) => alias.length >= 2 && alias.length <= 160));
-  assert.ok(aliases.some((alias) => alias.includes("소니 WH-1000XM5 무선 헤드폰 128GB")));
-  assert.ok(aliases.some((alias) => alias.includes("ソニー WH-1000XM5 ワイヤレスヘッドホン 128GB")));
-  assert.ok(aliases.every((alias) => alias.startsWith("Sony ")));
-  assert.ok(aliases.every((alias) => alias.includes("WH-1000XM5")));
-  assert.ok(aliases.every((alias) => alias.includes("headphones 1 unit")));
-  assert.ok(aliases.every((alias) => alias.includes("8801234567890")));
-  const candidateBase = {
-    provider: "ebay_browse" as const,
-    externalId: "sony-price-regression",
-    url: "https://www.ebay.com/itm/sony-price-regression",
-    imageUrl: "",
-    mallName: "eBay",
-    marketplace: "ebay" as const,
-    price: 300,
-    currency: "USD",
-  };
-  const identityQueries = [query, ...aliases];
-  assert.equal(competitorCandidateRelevance({
-    ...candidateBase,
-    title: "Generic WH-1000XM5 wireless headphones 128GB 1 unit 8801234567890",
-  }, identityQueries), 0);
-  assert.ok(competitorCandidateRelevance({
-    ...candidateBase,
-    title: "Sony WH-1000XM5 wireless headphones 128GB 1 unit 8801234567890",
-  }, identityQueries) > 0);
+  assert.ok(aliases.some((alias) => alias.includes("소니 WH-1000XM5 무선 헤드폰")));
+  assert.ok(aliases.some((alias) => alias.includes("ソニー WH-1000XM5 ワイヤレスヘッドホン")));
+  assert.ok(aliases.every((alias) => !alias.includes("8801234567890")));
 
   const genericPath = buildCompetitorResearchRetryPath({
     productName: "Apple cider vinegar powder 15 sticks",
@@ -141,8 +124,9 @@ test("initial price research preserves deterministic intake identity and bounded
     packageContents: "15 sticks",
     gtinStatus: "NO_GTIN",
   }, ["Apple cider vinegar powder 15 sticks"]);
-  const [genericAlias] = new URL(genericPath, "https://sellerpilot.test").searchParams.getAll("alias");
-  assert.doesNotMatch(genericAlias ?? "", /No Brand/iu);
+  const genericUrl = new URL(genericPath, "https://sellerpilot.test");
+  assert.doesNotMatch(genericUrl.searchParams.get("query") ?? "", /15 sticks/i);
+  assert.doesNotMatch(genericUrl.searchParams.getAll("alias").join(" "), /No Brand/iu);
 });
 
 test("stale and manual retry paths keep single-query ACV identity matchable", () => {
@@ -155,24 +139,21 @@ test("stale and manual retry paths keep single-query ACV identity matchable", ()
     gtinStatus: "NO_GTIN",
   });
   const retryUrl = new URL(retryPath, "https://sellerpilot.test");
-  const retryQueries = [retryUrl.searchParams.get("query") ?? "", ...retryUrl.searchParams.getAll("alias")];
-  const exactCandidate = {
-    provider: "elevenst_product_search" as const,
-    externalId: "acv-stale-manual-retry",
-    title: "비욘드 오리진 애사비 젤리스틱 15포",
-    url: "https://www.11st.co.kr/products/acv-stale-manual-retry",
-    imageUrl: "",
-    mallName: "11st",
-    marketplace: "elevenst" as const,
-    price: 19_900,
-    currency: "KRW",
-  };
-
-  assert.ok(competitorCandidateRelevance(exactCandidate, retryQueries) > 0);
-  assert.ok(competitorCandidateRelevance(exactCandidate, ["BEYOND ORIGIN 애사비 젤리스틱 15포"]) > 0);
+  const query = retryUrl.searchParams.get("query") ?? "";
+  assert.equal(retryUrl.searchParams.get("matchMode"), "product_name");
+  assert.match(query, /애사비/);
+  assert.doesNotMatch(query, /15포/);
+  assert.equal(assessProductNameMatch({
+    productName: "BEYOND ORIGIN 애사비 젤리스틱 15포",
+    brand: "BEYOND ORIGIN",
+  }, { title: "비욘드 오리진 애사비 젤리스틱 15포" }).matchTier, "probable");
+  assert.equal(assessProductNameMatch({
+    productName: "BEYOND ORIGIN 애사비 젤리스틱 15포",
+    brand: "BEYOND ORIGIN",
+  }, { title: "BEYOND ORIGIN 애사비 젤리스틱 30포" }).matchTier, "probable");
 });
 
-test("unbranded intake protects the full manufacturer across localized retry aliases", () => {
+test("unbranded intake searches the product name without manufacturer prefixes", () => {
   const retryPath = buildCompetitorResearchRetryPath({
     productName: "Daily vitamin 30 tablets",
     brandName: "No Brand",
@@ -187,22 +168,16 @@ test("unbranded intake protects the full manufacturer across localized retry ali
   ]);
   const retryUrl = new URL(retryPath, "https://sellerpilot.test");
   const retryQueries = [retryUrl.searchParams.get("query") ?? "", ...retryUrl.searchParams.getAll("alias")];
-  const baseCandidate = {
-    provider: "ebay_browse" as const,
-    externalId: "manufacturer-identity-regression",
-    url: "https://www.ebay.com/itm/manufacturer-identity-regression",
-    imageUrl: "",
-    mallName: "eBay",
-    marketplace: "ebay" as const,
-    price: 15,
-    currency: "USD",
-  };
 
-  assert.ok(retryQueries.every((query) => query.startsWith("Acme Labs ")));
+  assert.equal(retryUrl.searchParams.get("query"), "Daily vitamin");
   assert.doesNotMatch(retryQueries.join(" "), /No Brand/iu);
-  assert.ok(competitorCandidateRelevance({ ...baseCandidate, title: "Acme Labs daily vitamin 30 tablets" }, retryQueries) > 0);
-  assert.equal(competitorCandidateRelevance({ ...baseCandidate, title: "Other Labs daily vitamin 30 tablets" }, retryQueries), 0);
-  assert.equal(competitorCandidateRelevance({ ...baseCandidate, title: "Generic daily vitamin 30 tablets" }, retryQueries), 0);
+  assert.doesNotMatch(retryQueries.join(" "), /30 tablets/i);
+  assert.equal(assessProductNameMatch({
+    productName: "Daily vitamin 30 tablets",
+  }, { title: "Acme Labs daily vitamin 60 tablets" }).matchTier, "probable");
+  assert.equal(assessProductNameMatch({
+    productName: "Daily vitamin 30 tablets",
+  }, { title: "Other Labs candy 30 pieces" }).matchTier, "rejected");
 });
 
 test("competitor research polls a pending gateway result and publishes the settled snapshot", async () => {

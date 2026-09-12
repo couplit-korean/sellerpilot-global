@@ -56,6 +56,7 @@ export async function GET(request: Request) {
   if (hasStructuredIdentity && !identityFields.data.productName) {
     return NextResponse.json({ message: "구조화 동일상품 판정에는 확정 상품명이 필요합니다." }, { status: 400, headers: NO_STORE_HEADERS });
   }
+  const matchMode = requestUrl.searchParams.get("matchMode") === "product_name" ? "product_name" as const : "strict" as const;
   const identity: CompetitorProductIdentity | undefined = identityFields.data.productName ? {
     productName: identityFields.data.productName,
     ...(identityFields.data.brand ? { brand: identityFields.data.brand } : {}),
@@ -65,7 +66,7 @@ export async function GET(request: Request) {
     ...(identityFields.data.packageContents ? { packageContents: identityFields.data.packageContents } : {}),
     ...(identityFields.data.condition ? { condition: competitorCondition[identityFields.data.condition] } : {}),
     ...(identityFields.data.gtin ? { gtins: [identityFields.data.gtin] } : {}),
-  } : undefined;
+  } : matchMode === "product_name" ? { productName: query.data } : undefined;
   try {
     const registry = await competitorProviderRegistry(admin.serviceClient, {
       elevenstTimeoutMs: COMPETITOR_ELEVENST_WAIT_MS,
@@ -78,7 +79,7 @@ export async function GET(request: Request) {
       aliases.data,
       30,
       COMPETITOR_PROVIDER_BUDGET_MS,
-      identity ? { identity } : undefined,
+      identity ? { identity, matchMode } : undefined,
     );
     const fetchedAt = new Date().toISOString();
     const providers = competitorProviderApiStatuses(registry, result.providers);

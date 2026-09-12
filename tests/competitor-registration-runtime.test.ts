@@ -213,7 +213,7 @@ test("registration sends confirmed structured identity while query-only admin se
     readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(route, /identity \? \{ identity \} : undefined/);
+  assert.match(route, /identity \? \{ identity, matchMode \} : undefined/);
   assert.match(route, /verifiedSameProduct: "matchTier" in item && item\.matchTier === "exact"/);
   assert.doesNotMatch(route, /verifiedSameProduct:\s*true/);
   assert.match(route, /status: partial \? 207 : 200/);
