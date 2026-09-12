@@ -3422,6 +3422,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setResearchResult(result);
     setFirstDraftImages(generatedFirstDraftImages);
     setFirstDraftReviewed(false);
+    void startFirstDraftConceptImages(jobId);
     setUploadError("");
     setProductResearchError("");
     setResearchCompetitors([]);
@@ -4129,6 +4130,56 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setRunning(false);
     }
   };
+  // The first-draft six images come from the serverless catalog (photo crops) because the
+  // gateway image model is unavailable to this account, so the same six assets are generated
+  // on the local Codex lane and the tiles are refreshed as the images arrive.
+  const [firstDraftConceptStatus, setFirstDraftConceptStatus] = useState("");
+  const firstDraftImagePollRef = useRef<number | null>(null);
+  const firstDraftImageRequestedRef = useRef(false);
+  const refreshFirstDraftImages = async (jobId: string) => {
+    try {
+      const accessToken = (await createSupabaseClient().auth.getSession()).data.session?.access_token;
+      if (!accessToken) return;
+      const read = await fetch('/api/ai/product-research/recover', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!read.ok) return;
+      const payload = await read.json() as { result?: { generatedImages?: Array<{ id: string; url: string | null }> } };
+      const generated = payload.result?.generatedImages ?? [];
+      if (generated.length) mergeStudioDraftImages(generated);
+    } catch {
+      // a transient read must not stop the running generation
+    }
+  };
+  const startFirstDraftConceptImages = async (jobId: string) => {
+    if (!jobId || firstDraftImageRequestedRef.current) return;
+    firstDraftImageRequestedRef.current = true;
+    try {
+      const accessToken = (await createSupabaseClient().auth.getSession()).data.session?.access_token;
+      if (!accessToken) return;
+      const response = await fetch('/api/admin/first-draft-images-enqueue', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!response.ok) return;
+      setFirstDraftConceptStatus('1차 이미지 6장을 상세페이지와 같은 카테고리 매칭 파이프라인으로 생성하고 있습니다. 완료되는 대로 이 자리에 반영됩니다.');
+      if (firstDraftImagePollRef.current !== null) window.clearInterval(firstDraftImagePollRef.current);
+      let attempts = 0;
+      firstDraftImagePollRef.current = window.setInterval(() => {
+        attempts += 1;
+        void refreshFirstDraftImages(jobId);
+        if (attempts >= 90 && firstDraftImagePollRef.current !== null) {
+          window.clearInterval(firstDraftImagePollRef.current);
+          firstDraftImagePollRef.current = null;
+        }
+      }, 20_000);
+    } catch {
+      // requesting generated images is best effort; the server result stays as is
+    }
+  };
   const startAutomation = (options?: { automatic?: boolean }) => {
     // A previous attempt can die before it reports back, leaving the in-flight
     // flag set. That used to swallow every later press with no message at all.
@@ -4427,7 +4478,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
             {firstDraftImages.length > 0 && <section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
-              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : studioDraftBlockedReason || "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
+              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : firstDraftConceptStatus || studioDraftBlockedReason || "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
               <div>{firstDraftImages.map((image) => <figure key={image.id}><span><Image src={image.url} alt={firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized /></span><figcaption>{firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]}</figcaption></figure>)}</div>
             </section>}
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
