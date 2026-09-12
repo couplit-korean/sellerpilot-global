@@ -819,14 +819,14 @@ function ChannelConnectionStrip({
       type="button"
       className={`channel-connection-strip ${attention === 0 ? "all-connected" : "has-attention"}`}
       onClick={onOpenConnections}
-      aria-label={`채널 연동 상태 ${connected}/${metrics.length} 연동 완료${attention ? ` · ${attention}개 확인 필요` : ""}`}
-      title={metrics
+      aria-label={metrics.length ? `채널 연동 상태 ${connected}/${metrics.length} 연동 완료${attention ? ` · ${attention}개 확인 필요` : ""}` : "채널 연동 상태 확인 중"}
+      title={metrics.length ? metrics
         .map((metric) => `${metric.name}: ${credentialConnectionLabel(metric)}`)
-        .join("\n")}
+        .join("\n") : "채널 연동 상태 확인 중"}
     >
       <span className="strip-summary">
         <Activity size={12} />
-        <b>채널 연동 {connected}/{metrics.length}</b>
+        <b>{metrics.length ? `채널 연동 ${connected}/${metrics.length}` : "채널 연동 확인 중"}</b>
       </span>
       <span className="strip-marks">
         {metrics.map((metric) => {
