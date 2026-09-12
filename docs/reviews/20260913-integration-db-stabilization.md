@@ -65,3 +65,9 @@ Supabase connector는 여전히 SellerPilot 권한이 없지만 Aside SQL Editor
 후보 검사 스크립트는 실제 GitHub 연결 CLI가 반환하는 `githubCommitSha`도 확인하도록 수정했다. Git SHA 증거 없음/상충은 계속 거부한다. 관련 검사 통과. CS fence 소스 검사는 현재의 Lazada 상품 후기 읽기 확인 전용 예외와 일치시켰으며 provider 쓰기 보호를 변경하지 않았다.
 
 현재 Production은 `fd426cc588f03c1e187b689141018b6de4a38eca`, `dpl_Fkbk9Kyg9whytrri5pUcG5PQkjUm`이다. 신규 통합본 Production 승격, 설치 작업자 최신화, 실제 8채널 신규 등록/CS 발송은 완료하지 않았다. 실행 중 provider 작업을 확인하지 않은 채 gateway를 강제 재시작하지 않았다. 다음 작업은 후보 배포 계정 문제 해소 → canary → 잔여 RPC/수집 검증 → 안전한 실행본 교체 순서다.
+
+## 후보 배포 재시도 — 작성자 차단 해소
+
+공식 운영 GitHub 계정으로 저장소 로컬 작성자를 설정한 `8e521023383c470fca88705630cf63a3643c22d3`은 후보 배포 `dpl_79iHhc2CD91rM5wtXRi4JbiM3ZEU`에서 계정 차단을 통과했다. 원격 빌드에서 `.vercelignore`가 모든 scripts를 제외해 `scripts/check-local-workspace.mjs`를 찾지 못하는 실제 오류를 확인했다. 해당 검사와 그 의존 파일 `workspace-paths.mjs` 두 개만 배포에 포함하도록 수정했다. 클라우드 경로 검사를 삭제하지 않았으며 로컬 작업자 스크립트 전체를 업로드하지 않는다. 재시도 전 상태는 ERROR이며 운영 도메인/Production은 유지됐다.
+
+Aside 판매자 화면 추가 확인: Shopee `Couplit.kr`, `gjrxn:main`, 현재 Philippines / `gjrxntd.ph`, shop `1758392137`; Lazada MY `Couplet Seoul`, Seller Full Access. 상점 로그인 상태를 API 권한/상품 등록 성공으로 확대하지 않는다.
