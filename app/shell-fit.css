@@ -1,4 +1,4 @@
-/* Last-loaded shell contract. Vertical scroll OK. Horizontal pan is not. */
+/* Last-loaded shell contract. Keep header content visible. Never pan sideways. */
 
 html,
 body {
@@ -10,7 +10,9 @@ body {
 .commerce-service-rail,
 .topbar,
 .topbar-title,
-.topbar-actions {
+.topbar-actions,
+.channel-connection-strip,
+.channel-connection-strip .strip-marks {
   min-width: 0 !important;
   max-width: 100% !important;
   overflow-x: hidden !important;
@@ -21,63 +23,96 @@ body {
 .commerce-service-rail {
   display: flex !important;
   flex-wrap: wrap !important;
-  row-gap: 4px;
+  align-items: center !important;
+  gap: 6px 10px !important;
+  min-height: 32px !important;
 }
 
 .commerce-service-rail strong,
 .commerce-service-rail span,
 .commerce-service-rail em {
+  display: inline-flex !important;
   flex: 0 1 auto !important;
   min-width: 0 !important;
   max-width: 100% !important;
-  white-space: normal !important;
+  height: 24px !important;
+  align-items: center !important;
+  white-space: nowrap !important;
 }
 
 .topbar {
   display: flex !important;
   flex-wrap: wrap !important;
   align-items: center !important;
+  gap: 8px !important;
 }
 
 .topbar-actions {
   display: flex !important;
   flex-wrap: wrap !important;
   flex: 1 1 auto !important;
+  align-items: center !important;
   justify-content: flex-end !important;
-  gap: 4px !important;
+  gap: 6px !important;
 }
 
 .channel-connection-strip {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: auto !important;
+  min-height: 32px !important;
   white-space: normal !important;
-  min-width: 0 !important;
-  max-width: 100% !important;
 }
 
-@media (max-width: 1180px) {
-  .commerce-service-rail {
-    display: none !important;
-  }
+.channel-connection-strip .strip-marks {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
 
-  .channel-connection-strip .strip-marks {
-    display: none !important;
-  }
+.topbar .mobile-menu-button,
+.topbar .global-search,
+.topbar .top-icon-button,
+.topbar .user-menu,
+.topbar .demo-data-badge,
+.topbar .publishing-busy-badge {
+  height: 32px !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  box-sizing: border-box !important;
+}
 
-  .demo-data-badge b,
-  .demo-data-badge small,
-  .publishing-busy-badge small,
-  .topbar-actions .global-search span,
-  .topbar-actions .global-search kbd,
-  .user-menu > span:nth-child(2),
-  .user-menu > svg {
-    display: none !important;
-  }
+.topbar .user-avatar,
+.topbar .channel-mark,
+.topbar .channel-mark.sm,
+.topbar .channel-mark.lg,
+.channel-connection-strip .channel-mark,
+.channel-connection-strip .channel-mark.sm,
+.channel-connection-strip .channel-mark.lg {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  border-radius: 6px !important;
+  font-size: 9px !important;
+  line-height: 1 !important;
+}
+
+.topbar .channel-mark.wide,
+.channel-connection-strip .channel-mark.wide {
+  width: auto !important;
+  min-width: 24px !important;
+  padding: 0 6px !important;
 }
 
 @media (max-width: 900px) {
   .topbar {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) !important;
-    row-gap: 6px !important;
+    row-gap: 8px !important;
   }
 
   .topbar-title,
@@ -92,5 +127,19 @@ body {
     overflow: visible !important;
     white-space: normal !important;
     text-overflow: clip !important;
+  }
+
+  .topbar-actions .global-search {
+    width: 32px !important;
+    min-width: 32px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+  }
+
+  .topbar-actions .global-search span,
+  .topbar-actions .global-search kbd,
+  .user-menu > span:nth-child(2),
+  .user-menu > svg {
+    display: none !important;
   }
 }
