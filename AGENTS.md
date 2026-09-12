@@ -1,3 +1,13 @@
+<!-- BEGIN sellerpilot-canonical-workspace -->
+# Persistent workspace policy (user instruction, 2026-09-13)
+
+For every new SellerPilot chat/task, use `/Users/kimchangheemac/dev/sellerpilot-app` as the only development source. Read that root's AGENTS.md and `docs/통합-작업공간-운영안내.md`; inspect Git status before edits. If this task starts elsewhere, run subsequent development commands with an explicit workdir pointing to that canonical root.
+
+Do not create clones, Git worktrees, temporary checkouts, or project copies unless the user explicitly requests a separate workspace. Starting a new chat/task does not authorize another copy. When explicitly asked to create a new SellerPilot task, select the existing canonical project and Local environment. Preserve pre-existing changes in other folders; do not automatically delete, reset, overwrite, or merge them. Coordinate overlapping edits in the shared checkout.
+
+Old Documents/dev/sellerpilot/channel folders and archives are not development roots. Existing sellerpilot-worker and Application Support/SellerPilot/worker-runtime folders are runtime installations. Keep active source, Git, dependencies, and runtime files outside iCloud/Documents/Desktop/cloud sync; retain `pnpm check:workspace`. This path policy supersedes older workspace recommendations, while production/migration/credential controls remain in force. It governs agent actions and does not itself disable app-side Worktree creation before startup.
+<!-- END sellerpilot-canonical-workspace -->
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
