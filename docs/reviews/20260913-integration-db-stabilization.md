@@ -71,3 +71,28 @@ Supabase connector는 여전히 SellerPilot 권한이 없지만 Aside SQL Editor
 공식 운영 GitHub 계정으로 저장소 로컬 작성자를 설정한 `8e521023383c470fca88705630cf63a3643c22d3`은 후보 배포 `dpl_79iHhc2CD91rM5wtXRi4JbiM3ZEU`에서 계정 차단을 통과했다. 원격 빌드에서 `.vercelignore`가 모든 scripts를 제외해 `scripts/check-local-workspace.mjs`를 찾지 못하는 실제 오류를 확인했다. 해당 검사와 그 의존 파일 `workspace-paths.mjs` 두 개만 배포에 포함하도록 수정했다. 클라우드 경로 검사를 삭제하지 않았으며 로컬 작업자 스크립트 전체를 업로드하지 않는다. 재시도 전 상태는 ERROR이며 운영 도메인/Production은 유지됐다.
 
 Aside 판매자 화면 추가 확인: Shopee `Couplit.kr`, `gjrxn:main`, 현재 Philippines / `gjrxntd.ph`, shop `1758392137`; Lazada MY `Couplet Seoul`, Seller Full Access. 상점 로그인 상태를 API 권한/상품 등록 성공으로 확대하지 않는다.
+
+## 운영 반영과 실행본 갱신 — e783fc0
+
+- 후보 `dpl_CW18E1nb6X3u3CXctBhFwkVTXZys` / `e783fc00656ad356ce13a6f011deb91c6cc6bbdb`의 원격 Next build 및 배포 Ready를 확인했다. 자동화 인증을 통한 후보 무작업 canary 6개 통과: claimed=0, processed=0, executed=false.
+- `vercel promote` 성공 뒤 `sellerpilot-global.vercel.app`의 실제 연결 deployment ID를 재조회하여 위 ID와 일치 확인했다. 기존 운영 도메인이 유지됐다는 위 문단은 후보 검증 시점 이력이다.
+- Aside 운영 화면이 서버 SHA e783fc0을 표시했다. 관리자 UI의 운영 일정 재검증을 실행하고, Supabase 상태 RPC 재조회로 active=true, activeRelease=e783fc0, scheduleCount=6, unsafePendingMutations=0을 확인했다.
+- DB에서 실행 중인 채널 작업은 문의/주문 읽기뿐임을 확인했다. gateway active 0을 재확인한 뒤 pin을 새 Production SHA로 원자적 변경하고 기존 worker에 SIGTERM 정상 종료를 요청했다. supervisor가 새 SHA를 fetch/checkout해 재실행했고 ready/200 및 SHA 일치를 확인했다. SIGKILL/실행 중 상품 재전송은 하지 않았다.
+- AI running=0, first-draft generating=0, CS-draft running=0을 DB에서 확인한 뒤 AI/CS를 정상 종료하고 설치 프로그램으로 Mac runtime을 갱신했다. 새 CS PID=71310, AI도 실행 확인. 설치된 lib/scripts/prompts 581개 모두 통합 소스 해시와 일치.
+- 설치된 OxiPNG 실행 경로를 실제 호출한 합성 RGBA 검사: 65,859→421 bytes, 원본/결과 픽셀 및 알파 바이트 동일, encoder=oxipng-max-zopfli, accepted. 이 압축률은 합성 시험 자료이며 실제 상품 이미지의 보장 수치가 아니다.
+
+## 후속 운영 진단과 추가 안정화
+
+e783fc0 운영 로그 표본 100건에서 CS draft HTTP 204 21건, gateway complete 200 2건, 일반 claim 200/204를 확인했다. 한편 eBay recovery claim의 PGRST202와 Elevenst recovery 503은 남는다. 실제 DB 인자 대조 결과 일반 claim·local executor·local recovery 함수는 존재하고 계약이 일치한다. 누락은 다음 세 함수다.
+
+1. `sellerpilot_claim_ebay_publication_reconciliation(text,text)`
+2. `sellerpilot_service_claim_elevenst_create_recovery(text)`
+3. `sellerpilot_service_finish_elevenst_create_recovery(text,uuid,uuid,jsonb)`
+
+이 복구 기능은 상품 승인·CREATE 단계 증거·자격 증명 변경을 함께 검증하는 migration 체인이므로 누락 함수 이름만 맞춰 stub을 만들거나 구버전 구현만 적용하지 않았다. eBay 20260910021000/040000, Elevenst 20260910043000/044500 및 선행 실행 permit/source 계약의 실제 스키마 대조가 다음 DB 작업이다. 정규식 기반 SQL 검사를 실제 PostgreSQL 동시 실행 검증으로 간주하지 않는다.
+
+Shopee/Lazada 연결 버튼을 한 번씩 재검사했으나 UI는 worker 경로 시간 초과로 실패를 표시했다. DB에서 해당 diagnostic.test는 아직 queued임을 확인했다. 따라서 이 결과는 API 키가 잘못됐다는 증거가 아니다. 중복 진단 작업을 추가하지 않는다. Qoo10은 이번 실제 상품 읽기 진단을 통과했다.
+
+추가로 e783fc0 실행 중 CS 완료 HTTP 400이 detached Promise rejection으로 프로세스 전체를 종료시키는 문제를 확인했다. 새 회귀 검사는 실제 worker 자식 프로세스와 로컬 가짜 API를 사용하며 모든 외부 fetch를 차단한다. 수정 전 동일 HTTP 400으로 프로세스 exit=1을 재현했고, 오류 처리 후에는 프로세스 생존·active 슬롯 해제·readiness 실패 유지·provider 실행 반복 없음·SIGTERM 정상 종료를 확인했다. runtime은 실패를 성공으로 바꾸지 않고 60초 수령 backoff를 둔다. 이 후속 수정은 별도 배포 및 설치 반영 대상이다.
+
+최신 gateway 준비 상태는 조회 시점에 따라 degraded/active=1도 재관측됐다. 일시적인 ready를 전체 운영 안정화 완료로 보고하지 않는다. 신규 게시 릴리스 확인은 새 SHA로 다시 검증해야 하며 실제 원격 증거 없이 8개 채널 확인 기록이나 게이트 개방을 수행하지 않았다.

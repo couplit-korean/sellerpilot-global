@@ -448,7 +448,19 @@ do {
                         continue;
                     }
                     else {
-                        const activeGatewayJob = withLocalProviderRequestBudget(gatewayJob, (reserve) => processGatewayJob(gatewayJob, reserve)).finally(() => {
+                        const activeGatewayJob = withLocalProviderRequestBudget(gatewayJob, (reserve) => processGatewayJob(gatewayJob, reserve)).catch((error) => {
+                            // Detached jobs need a rejection handler immediately. The
+                            // job lifecycle owns its completion/reconciliation state;
+                            // never replace its result or rerun the provider here.
+                            gatewayWorkerHealth?.markGatewayResponse(503);
+                            gatewayClaimBackoffUntil = Math.max(gatewayClaimBackoffUntil, Date.now() + workerFailureBackoffMs(503));
+                            const status = error instanceof WorkerRequestTerminalError
+                                ? error.status
+                                : Number(/\bHTTP (\d{3})\b/u.exec(String(error?.message ?? ""))?.[1] ?? 0);
+                            console.error("채널 작업 완료를 확정하지 못했습니다. 원장 확인이 필요합니다.", {
+                                channel: gatewayJob.channel, operation: gatewayJob.operation, status,
+                            });
+                        }).finally(() => {
                             activeGatewayJobs.delete(activeGatewayJob);
                             gatewayWorkerHealth?.setActiveGatewayJobs(activeGatewayJobs.size);
                         });
