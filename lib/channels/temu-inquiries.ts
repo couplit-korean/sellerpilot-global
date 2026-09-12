@@ -103,7 +103,11 @@ function detailQueue(value: unknown) {
 
 function secondsArgument(arguments_: Record<string, unknown>, key: string) {
   if (arguments_[key] === undefined) return null;
-  return integerArgument(arguments_, key, { min: 1, max: 9_999_999_999 });
+  const raw = integerArgument(arguments_, key, { min: 1, max: 9_999_999_999_999 });
+  // Temu expects ten-digit epoch seconds. Older stored plans and the seller CS
+  // screen still send epoch milliseconds, which used to fail the range check
+  // without telling anyone why, so the unit is normalized here.
+  return raw > 9_999_999_999 ? Math.floor(raw / 1_000) : raw;
 }
 
 function assertAfterSalesTimeRange(arguments_: Record<string, unknown>) {
