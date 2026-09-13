@@ -2265,7 +2265,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
         }
         else {
             const assetPrompt = firstDraftScenes && backgroundOnly
-                ? buildFirstDraftBackgroundPrompt(result, outputFile, generationPreset)
+                ? buildFirstDraftBackgroundPrompt(result, outputFile, generationPreset, retryAuditFeedback.failedDimensions ?? [])
                 : buildAssetImagePrompt(result, outputFile, generationPreset, backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role), [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"), backgroundOnly ? "identity-background" : "product", retrySettingShot ?? undefined, backgroundContactMode);
             const imageArgs = [
                 "exec",

@@ -216,7 +216,7 @@ export function buildFirstDraftSceneBrief(result: ProductStudioResult, preset: A
   return `카테고리: ${result.product.category}. 장소: ${roleClause(shot.location)}. 조명: ${roleClause(shot.moment)}. 표면: ${roleClause(shot.surface)}. 구도: ${roleClause(shot.camera)}.`;
 }
 
-export function buildFirstDraftBackgroundPrompt(result: ProductStudioResult, outputPath: string, preset: AssetSpec) {
+export function buildFirstDraftBackgroundPrompt(result: ProductStudioResult, outputPath: string, preset: AssetSpec, failedDimensions: readonly string[] = []) {
   const shot = resolveProductSettingShot(result, preset.id);
   if (!shot) throw new Error(`${preset.id} 1차 이미지의 카테고리 장면 계획이 없습니다.`);
   const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result));
@@ -227,6 +227,11 @@ export function buildFirstDraftBackgroundPrompt(result: ProductStudioResult, out
     `사진 역할: ${preset.id} / ${preset.purpose}. 상품 카테고리: ${result.product.category}.`,
     buildFirstDraftSceneBrief(result, preset),
     "상품은 이후 검증된 원본 사진의 픽셀로 합성합니다. 지금은 상품, 병, 캔, 포장, 컵, 사람, 손, 글자, 로고, 바코드, 상품 그림자나 상품 반사상을 그리지 마세요. 실제 카테고리와 장소를 알아볼 수 있는 자연스러운 배경과 입체감을 만드세요.",
+    "상품 합성 전의 빈 세트입니다. 장보기·준비·사용·분류라는 역할은 공간의 분위기만 뜻하며 행동이나 물건을 직접 보여주지 않습니다. 식재료·과일·채소·장바구니·가방·접시·그릇·보관통·냄비·조리도구를 프레임 전체에서 빼세요. 벽·창·고정 선반·가구와 비어 있는 받침 공간으로만 장소를 표현하세요.",
+    ...(["safety-merchandise", "safety-package-container"].some((field) => failedDimensions.includes(field))
+      ? ["재시도 교정: 앞 후보에 판매 상품이나 용기가 섞였습니다. 주변부와 먼 배경까지 모든 식품·가방·식기·통·병을 제거한 빈 공간을 새로 생성하세요."] : []),
+    ...(failedDimensions.includes("reserved-zone")
+      ? ["재시도 교정: 상품 영역과 바닥 접촉 위치를 가리지 마세요. 받침의 수평 윗면이 상품 바닥 아래와 이미지 하단까지 연속되게 하세요."] : []),
     `이미지 크기 ${preset.width}x${preset.height}. 나중에 상품이 들어갈 빈 영역의 정규화 좌표: ${JSON.stringify(placement)}. 이 영역은 단순하고 가려지지 않아야 하며 주변에는 장면을 알아볼 수 있는 공간이 보여야 합니다.`,
     contactMode === "surface-supported"
       ? `방 전체의 바닥 사진이 아니라 선반·테이블·조리대 가까이에서 찍는 상품 촬영 배경입니다. 상품 바닥 좌표 y=${contact}가 자연스럽게 수평 받침 표면 안쪽에 놓이게 하세요. 받침은 이 좌표보다 위에서 시작해 상품 영역의 좌우와 이미지 하단까지 이어져야 합니다. 앞쪽 모서리와 수직 앞판은 프레임 아래로 빼서 이미지 하단 전체가 수평 윗면이 되게 하세요. 받침의 뒷 경계와 상품 바닥을 정확히 일치시킬 필요는 없습니다. 방 바닥, 세로 벽, 빈 공중을 상품 받침으로 대신하지 마세요.`
