@@ -103,5 +103,19 @@
     "Shopee stored main-token lineage and durable one-time recovery; no new login/OAuth attempt",
     "Lazada IM Cross-border contract and four non-MY grants",
     "actual listing/reply/shipping execution and remote readback"
-  ]
+  ],
+  "terminalConflictFollowup": {
+    "observedAt": "2026-09-13T10:15:00Z",
+    "migration": "20260913101500_shopee_refresh_conflict_returns_terminal_status",
+    "sourceSha256": "02f0a5ce7948eb1fc4f4985774c8967fe74b94357b4d52ae6640b9f14f460ab9",
+    "functionMd5": "d8827490fc893477816b5f221d9c2b7d",
+    "dbTestsPassed": 6,
+    "dbTestsFailed": 0,
+    "gatewayRecoveredAt": "2026-09-13T10:14:19.483Z",
+    "activeGatewayJobs": 0,
+    "gatewayHttpStatus": 200,
+    "priorUnresolvedClaimCleared": false,
+    "rejectedJobMayAwaitLeaseExpiry": true,
+    "liveCredentialRefreshHttpStatus": 409
+  }
 }

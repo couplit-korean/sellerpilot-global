@@ -252,3 +252,54 @@ test("expired refresh lease cannot discard an unresolved provider outcome and re
     }
   } finally { await db.close(); }
 });
+
+
+test("production wrapper returns a terminal conflict for the unresolved fence and preserves unrelated failures", async () => {
+  const db = await fixture();
+  try {
+    await db.exec(boundsFix);
+    // Install the original production wrapper around the actual restored CAS.
+    await db.exec(`
+      create function sellerpilot_private.shopee_sg_create_job_v1(uuid,uuid)
+      returns boolean language sql as $$select coalesce(current_setting('test.shopee_create',true),'false')='true'$$;
+      create function sellerpilot_private.shopee_sg_create_execution_lineage_current_v1(uuid,uuid)
+      returns boolean language sql as $$select false$$;
+    `);
+    const start = recovery.indexOf("alter function public.sellerpilot_service_begin_cs_shopee_target_refresh_v1(");
+    const end = recovery.indexOf("revoke all on function sellerpilot_private.shopee_sg_create_job_v1", start);
+    assert.ok(start > 0 && end > start);
+    await db.exec(recovery.slice(start, end));
+    assert.equal((await begin(db, jobOne, claimOne, shops[0])).status, "acquired");
+    await db.query("update sellerpilot_private.cs_shopee_target_refresh_claims set lease_expires_at=now()-interval '1 minute' where credential_id=$1", [credential]);
+    await db.query("update sellerpilot_private.channel_gateway_jobs set status='reconciliation_required' where id=$1", [jobOne]);
+    // Reproduce the raised error that the current HTTP layer would retry as 503.
+    await assert.rejects(begin(db, jobTwo, claimTwo, shops[0]), /SHOPEE_PRIOR_REFRESH_RECONCILIATION_REQUIRED/);
+    const terminalFix = await readFile(new URL(
+      "../supabase/migrations/20260913101500_shopee_refresh_conflict_returns_terminal_status.sql", import.meta.url,
+    ), "utf8");
+    await db.exec(terminalFix);
+    const before = (await db.query("select * from sellerpilot_private.cs_shopee_target_refresh_claims")).rows;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.deepEqual(await begin(db, jobTwo, claimTwo, shops[0]), {
+        contract: "sellerpilot-shopee-target-refresh-claim/1", status: "conflict",
+        reason: "prior_refresh_reconciliation_required",
+      });
+    }
+    assert.deepEqual((await db.query("select * from sellerpilot_private.cs_shopee_target_refresh_claims")).rows, before);
+    assert.equal((await db.query("select credential_refresh_in_flight value from sellerpilot_private.channel_gateway_jobs where id=$1", [jobTwo])).rows[0].value, false);
+    assert.equal((await db.query("select credential_refresh_in_flight value from sellerpilot_private.channel_gateway_jobs where id=$1", [jobOne])).rows[0].value, true);
+    assert.equal((await db.query("select count(*)::int n from sellerpilot_private.test_refresh_stages")).rows[0].n, 0);
+    assert.equal((await begin(db, jobTwo, claimOne, shops[0])).status, "ownership_lost");
+    await db.exec("set test.shopee_create='true'");
+    assert.deepEqual(await begin(db, jobTwo, claimTwo, shops[0]), { contract: "sellerpilot-shopee-target-refresh-claim/1", status: "conflict" });
+    await db.exec("set test.shopee_create='false'");
+    await db.exec(`create or replace function public.sp_60910013000_begin_shopee_refresh_before_create(p_token_hash text,p_job_id uuid,p_claim_token uuid,p_target_type text,p_target_id text)
+      returns jsonb language plpgsql as $$begin raise exception 'UNRELATED_STATE_FAILURE' using errcode='55000'; end$$`);
+    await assert.rejects(begin(db, jobTwo, claimTwo, shops[0]), /UNRELATED_STATE_FAILURE/);
+    await assert.rejects(db.exec(terminalFix), /SHOPEE_REFRESH_TERMINAL_PREIMAGE_DRIFT/);
+    await db.exec("rollback");
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal((await db.query("select has_function_privilege($1,'public.sellerpilot_service_begin_cs_shopee_target_refresh_v1(text,uuid,uuid,text,text)','EXECUTE') ok", [role])).rows[0].ok, role === "service_role");
+    }
+  } finally { await db.close(); }
+});

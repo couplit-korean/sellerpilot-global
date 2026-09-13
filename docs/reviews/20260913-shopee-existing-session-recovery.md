@@ -39,3 +39,18 @@ DB의 9개 대상 저장 결함과 최근 provider 403은 각각 확인한 별�
 - [Shopee get_access_token](https://open.shopee.com/documents/v2/v2.public.get_access_token?module=104&type=1) — 로그인된 기존 개발자 탭에서 문서를 열어 확인.
 - [Shopee refresh_access_token](https://open.shopee.com/documents/v2/v2.public.refresh_access_token?module=104&type=1) — 2026-07-13 변경 이력 포함 현재 페이지 확인.
 - [Lazada authorization](https://open.lazada.com/apps/doc/doc?docId=108260&nodeId=10777) — 이전 후속에서 확인한 Cross-border grant 범위.
+
+## 19:15 KST 재점검에서 확인한 수정 누락과 후속 반영
+
+사용자가 오늘 실제 진전·반복 작업 여부를 물어 커밋/적용 기록과 운영 상태를 다시 대조했다. 이때 gateway가 degraded였고 Shopee product_review 작업 `2feaf755-8d92-4f80-8f41-9242148bdfb1` 하나가 실행 중이었다. 원인은 09:25 UTC에 추가한 미확정 refresh claim 보호장치가 SQLSTATE 55000을 올리면 기존 worker HTTP 계층이 이를 모두 일시 지연 503으로 처리해 재시도한 것이다. DB 보호 자체와 HTTP 오류 전달 사이를 마지막 수정 때 끝까지 검증하지 못한 누락이다.
+
+`20260913101500_shopee_refresh_conflict_returns_terminal_status.sql`은 현재 공개 begin wrapper의 정확한 이전 본문을 확인하고, **55000 + SHOPEE_PRIOR_REFRESH_RECONCILIATION_REQUIRED 조합만** 기존 claim conflict 계약으로 변환한다. 예외 subtransaction은 실패한 claim 교체를 rollback하며 과거 job·토큰 상태를 보존한다. 다른 55000 오류는 그대로 올리고 기존 소유권·Shopee CREATE lineage 검사도 유지한다. HTTP 계층은 반환 conflict를 409로 처리해 외부 갱신 전 재시도를 종료한다.
+
+- 실제 원본 CAS와 production wrapper를 사용하는 PGlite 검사 6개 통과. 새 검사는 수정 전 exception을 재현하고 수정 후 반복 conflict 반환, 이전 claim 전체 보존, 새 job의 in-flight=false, 원래 job의 in-flight=true, 소유권 거부, CREATE lineage 거부, 무관한 오류의 전파, 실행 권한 및 재적용 차단을 확인한다.
+- 운영 journal version/name/source SHA256 `02f0a5ce7948eb1fc4f4985774c8967fe74b94357b4d52ae6640b9f14f460ab9`와 함수 postimage `d8827490fc893477816b5f221d9c2b7d`를 대조했다.
+- 같은 거부 대상의 실제 운영 credential-refresh HTTP 응답도 409로 확인했다. 이 호출은 갱신 경계 확인이며 provider 토큰 API를 호출하지 않았다.
+- 로컬 active job은 1→0으로 바뀌었고 10:14:19 UTC contact에서 gateway ready/HTTP 200으로 복귀했다. 강제 worker 재시작이나 provider 토큰 재호출은 하지 않았다.
+- worker의 409 처리는 소유권 상실과 동일하게 작업을 중단하므로 해당 DB job은 아직 running/lease 만료 대기일 수 있다. 이를 완료 성공으로 바꾸지 않았다. 과거 refresh claim과 미확정 토큰 문제도 그대로 남는다.
+- 이번 재조회에서 DB blocking·장기 transaction·deadlock은 0, 중앙 시스템 메시지는 eBay 21/Lazada 13이다. 이러한 수치나 커밋 개수는 전 채널 등록·고객 답변·배송 성공의 대체 근거가 아니다.
+
+현재 알려진 잔여 범위는 Shopee 토큰/앱 키, Lazada 4개국 IM, 동적 DB 호출 38곳, 실제 업무 실행 검증이다. 마지막 검증에서 추가 결함이 발견되면 같은 증거 목록에 추가하며, '이 네 묶음만 하면 무조건 모두 작동한다'고 보증하지 않는다.
