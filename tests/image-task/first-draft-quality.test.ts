@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+
+test("the installed first-draft prompt call accepts no prior failure as well as retry feedback", async () => {
+  const worker = await readFile(new URL("../../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
+  const call = worker.match(/\? (buildFirstDraftBackgroundPrompt\([^\n]+\))/)?.[1];
+  assert.ok(call, "the real first-draft invocation must be exercised");
+  const invoke = new Function("buildFirstDraftBackgroundPrompt", "result", "outputFile", "generationPreset", "retryAuditFeedback", `return ${call};`);
+  const capture = (_result: unknown, _path: string, _preset: unknown, dimensions: string[]) => dimensions;
+  assert.deepEqual(invoke(capture, {}, "/tmp/test.png", {}, null), []);
+  assert.deepEqual(invoke(capture, {}, "/tmp/test.png", {}, undefined), []);
+  assert.deepEqual(invoke(capture, {}, "/tmp/test.png", {}, { failedDimensions: ["safety-package-container"] }), ["safety-package-container"]);
+});
 import {
   buildFirstDraftImageQualityReceipt,
   buildFirstDraftStudioResult,
