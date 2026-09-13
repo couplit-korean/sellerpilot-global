@@ -610,6 +610,17 @@ test("surface-supported background plates require one horizontal seam inside the
   await assert.doesNotReject(assertIdentityBackgroundPlate(supported, spec, "surface-supported"));
 });
 
+test("first-draft pixel checks allow a base inside the support plane for independent scene review", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait")!;
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const tabletop = await syntheticSurfacePlate(spec, { seamY: contactY - 35 });
+  await assert.rejects(assertIdentityBackgroundPlate(tabletop, spec, "surface-supported"));
+  await assert.doesNotReject(assertIdentityBackgroundPlate(tabletop, spec, "surface-supported", "catalog-scenes"));
+  const transparent = await sharp({ create: { width: 320, height: 400, channels: 4, background: { r: 250, g: 250, b: 250, alpha: 0 } } }).png().toBuffer();
+  await assert.rejects(assertIdentityBackgroundPlate(transparent, spec, "surface-supported", "catalog-scenes"), /완전히 불투명/);
+});
+
 test("final support fallback repairs only a missing boundary and preserves candidate-specific outer pixels", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);

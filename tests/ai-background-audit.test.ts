@@ -390,7 +390,9 @@ test("worker runs the independent semantic audit inside every background retry w
   const worker = await readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
   assert.match(worker, /backgroundSemanticAuditSchema/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
-  assert.match(worker, /--sandbox", "read-only"/);
+  assert.match(worker, /const codexReadSandboxMode = [^\n]+\|\| "read-only"/);
+  const auditImplementation = worker.match(/async function auditGeneratedIdentityBackground[\s\S]+?\n}\nasync function fingerprintGeneratedShot/)?.[0] ?? "";
+  assert.match(auditImplementation, /"--sandbox", codexReadSandboxMode/);
   assert.match(worker, /`--image=\$\{outputFile\}`/);
   assert.match(worker, /expectedPlateDigest/);
   assert.match(worker, /stage: `background-audit:\$\{preset\.id\}`/);
@@ -402,4 +404,36 @@ test("worker runs the independent semantic audit inside every background retry w
   assert.match(worker, /conflictingAssetIds/);
   assert.doesNotMatch(worker, /different camera family[\s\S]{0,180}exact assigned/);
   assert.doesNotMatch(worker.match(/async function auditGeneratedIdentityBackground[\s\S]+?\n}\n\nasync function fingerprintGeneratedShot/)?.[0] ?? "", /referenceIndexes|imageFiles/);
+});
+
+test("first-draft photo review keeps truthful optional mismatches without discarding a recognizable distinct scene", () => {
+  const photo = {
+    ...safeAudit,
+    assignedMomentSatisfied: false,
+    assignedSurfaceSatisfied: false,
+    assignedCameraSatisfied: false,
+    assignedPaletteSatisfied: false,
+    assignedSupportingObjectsSatisfied: false,
+    observedMomentKey: "overcast-day",
+    observedSurfaceKey: "ceramic-counter",
+    observedCameraKey: "near-frontal",
+    observedPaletteKey: "neutral-gray",
+    observedNonMerchandiseProps: ["pantry-shelves", "window"],
+    seriesMomentDistinct: false,
+    seriesSurfaceDistinct: false,
+    seriesPaletteDistinct: false,
+    seriesCueDistinct: false,
+  };
+  assert.throws(() => assertSafeBackgroundSemanticAudit(photo, "fixed-window-frame"));
+  assert.doesNotThrow(() => assertSafeBackgroundSemanticAudit(photo, "fixed-window-frame", undefined, "catalog-scenes"));
+  for (const field of ["merchandisePresent", "packageOrContainerPresent", "labelBarcodeOrCertificationPresent", "humanPresent"] as const) {
+    assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, [field]: true }, undefined, undefined, "catalog-scenes"));
+  }
+  for (const field of ["reservedZoneClear", "assignedEnvironmentPresent", "assignedLocationSatisfied", "spatialDepthPresent", "seriesVisuallyDistinct"] as const) {
+    assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, [field]: false }, undefined, undefined, "catalog-scenes"));
+  }
+  assert.throws(() => assertSafeBackgroundSemanticAudit({
+    ...photo, seriesLocationDistinct: false, seriesSpatialDepthDistinct: false,
+  }, undefined, undefined, "catalog-scenes"));
+  assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, conflictingAssetIds: ["portrait"] }, undefined, undefined, "catalog-scenes"));
 });

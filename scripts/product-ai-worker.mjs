@@ -13,7 +13,7 @@ import { assertSafeBackgroundSemanticAudit, backgroundSemanticAuditSchema, build
 import { maximumStudioJobSourceBytes, maximumStudioSourceImageBytes, maximumStudioSourceImagePixels } from "../lib/studio-source-photo-policy.ts";
 import { createStudioLocalizedChunkOutputSchema, createStudioMasterOutputSchema, createStudioMasterInvocationBudget, localizedSegmentCoverageIssue, mergeStudioSegmentOutputs, nextStudioLocalizedRepairPass, planStudioLocalizedChunks, planStudioSegmentRepair, studioIssuesForLocalizedChunk, studioMasterDetailImageRoleIssue } from "../lib/studio-segment-generation.ts";
 import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "../lib/studio-source-integrity.ts";
-import { buildAssetImagePrompt, requiresSourceIdentityProtection, resolveIdentityBackgroundContactMode, resolveProductSceneIdentityText, resolveProductSettingShot, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
+import { buildAssetImagePrompt, buildFirstDraftBackgroundPrompt, buildFirstDraftSceneBrief, requiresSourceIdentityProtection, resolveIdentityBackgroundContactMode, resolveProductSceneIdentityText, resolveProductSettingShot, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
 import { buildSettingShotRetryGuidance, buildSettingShotRetryVariant, mergeSettingShotRetryAuditFeedback, settingShotAssetIds } from "../lib/product-setting-shots.ts";
 import { assertIdentityBackgroundPlate, assertIdentityEvidenceLinkage, compositeIdentityForeground, isRepairableMissingIdentitySupportBoundary, loadVisionIdentityForeground, normalizeIdentityBackgroundPlate, planIdentityEvidenceAttempt, repairMissingIdentitySupportSurface, renderIdentityEvidenceBoard, renderIdentityEvidencePanel, renderIdentityOnNeutralCanvas, renderMissingIdentityEvidence, selectCanonicalWholeProductIdentityView } from "../lib/product-identity-protection.ts";
 import { cliStudioResultSchema, normalizeStudioResultForTerminalValidation, productResearchResultSchema, studioCompetitorContextSchema } from "../lib/ai-cli-contract.ts";
@@ -1475,7 +1475,7 @@ async function normalizeGeneratedAsset(outputFile, preset) {
 }
 const maximumBackgroundAuditBytes = 64 * 1024;
 const maximumBackgroundAuditComparisons = 8;
-async function auditGeneratedIdentityBackground({ outputFile, preset, expectedEnvironment, expectedEnvironmentKeys, expectedPropKey, expectedPropDescription, expectedPlateDigest, expectedPlateBytes, contactMode, comparisonPlates, jobId, claimToken, leaseSignal, }) {
+async function auditGeneratedIdentityBackground({ reviewProfile, outputFile, preset, expectedEnvironment, expectedEnvironmentKeys, expectedPropKey, expectedPropDescription, expectedPlateDigest, expectedPlateBytes, contactMode, comparisonPlates, jobId, claimToken, leaseSignal, }) {
     const auditFile = join(dirname(outputFile), `background-audit-${preset.id}.json`);
     await rm(auditFile, { force: true });
     for (const comparison of comparisonPlates) {
@@ -1489,6 +1489,7 @@ async function auditGeneratedIdentityBackground({ outputFile, preset, expectedEn
         }
     }
     const prompt = buildBackgroundSemanticAuditPrompt({
+        reviewProfile,
         assetId: preset.id,
         expectedEnvironment,
         expectedEnvironmentKeys,
@@ -1596,7 +1597,7 @@ async function auditGeneratedIdentityBackground({ outputFile, preset, expectedEn
         && !parsed.data.labelBarcodeOrCertificationPresent
         && !parsed.data.humanPresent;
     try {
-        assertSafeBackgroundSemanticAudit(parsed.data, expectedPropKey, expectedEnvironmentKeys);
+        assertSafeBackgroundSemanticAudit(parsed.data, expectedPropKey, expectedEnvironmentKeys, reviewProfile);
     }
     catch (error) {
         const auditError = new Error(error instanceof Error ? error.message : `${preset.id} 배경판 의미 검수에 실패했습니다.`, { cause: error });
@@ -2133,7 +2134,7 @@ async function retainRejectedBackgroundForRetry({ retryState, preset, outputFile
         plateBytes: generated.length,
     });
 }
-async function generateDistinctAsset({ result, outputFile, preset, imageFiles, identityCutouts, jobId, claimToken, leaseSignal, existingShots, existingBackgroundShots, existingBackgroundProps, comparisonShots = [], comparisonBackgroundShots = [], priorTerminalImageFailureContext = null, retryState = createAssetGenerationRetryState(preset, priorTerminalImageFailureContext), startingAttempt = 1, maximumAttempt = MAXIMUM_SHOT_GENERATION_ATTEMPTS, }) {
+async function generateDistinctAsset({ firstDraftScenes = false, result, outputFile, preset, imageFiles, identityCutouts, jobId, claimToken, leaseSignal, existingShots, existingBackgroundShots, existingBackgroundProps, comparisonShots = [], comparisonBackgroundShots = [], priorTerminalImageFailureContext = null, retryState = createAssetGenerationRetryState(preset, priorTerminalImageFailureContext), startingAttempt = 1, maximumAttempt = MAXIMUM_SHOT_GENERATION_ATTEMPTS, }) {
     if (!Number.isSafeInteger(startingAttempt)
         || !Number.isSafeInteger(maximumAttempt)
         || startingAttempt < 1
@@ -2203,7 +2204,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         const backgroundContactMode = backgroundOnly
             ? resolveIdentityBackgroundContactMode(result, baseSettingShot)
             : "surface-supported";
-        const retrySettingShot = baseSettingShot && retryIndex > 0
+        const retrySettingShot = baseSettingShot && retryIndex > 0 && !firstDraftScenes
             ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex, backgroundContactMode)
             : baseSettingShot;
         // Retry choreography changes the trusted architecture and apparent depth,
@@ -2262,7 +2263,9 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             }
         }
         else {
-            const assetPrompt = buildAssetImagePrompt(result, outputFile, generationPreset, backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role), [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"), backgroundOnly ? "identity-background" : "product", retrySettingShot ?? undefined, backgroundContactMode);
+            const assetPrompt = firstDraftScenes && backgroundOnly
+                ? buildFirstDraftBackgroundPrompt(result, outputFile, generationPreset)
+                : buildAssetImagePrompt(result, outputFile, generationPreset, backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role), [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"), backgroundOnly ? "identity-background" : "product", retrySettingShot ?? undefined, backgroundContactMode);
             const imageArgs = [
                 "exec",
                 "--model", model,
@@ -2316,14 +2319,16 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                         throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
                     const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
                     try {
-                        await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
+                        await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode, firstDraftScenes ? "catalog-scenes" : undefined);
                     }
                     catch (error) {
-                        const mayRepairSupportBoundary = attempt === maximumAttempt
+                        const mayRepairSupportBoundary = !firstDraftScenes && attempt === maximumAttempt
                             && backgroundContactMode === "surface-supported"
                             && isRepairableMissingIdentitySupportBoundary(error);
                         if (!mayRepairSupportBoundary)
                             throw error;
+                        // Inspect the unmodified plate before repairing background geometry.
+                        await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
                         generated = await repairMissingIdentitySupportSurface(generated, generationPreset);
                         await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
                         await writeFile(outputFile, generated);
@@ -2331,9 +2336,10 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                     }
                     await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
                     semanticAudit = await auditGeneratedIdentityBackground({
+                        reviewProfile: firstDraftScenes ? "catalog-scenes" : undefined,
                         outputFile,
                         preset: generationPreset,
-                        expectedEnvironment: [
+                        expectedEnvironment: firstDraftScenes ? buildFirstDraftSceneBrief(result, preset) : [
                             `장소=${backgroundContract.location.description}`,
                             `가시적 시간대 조명=${backgroundContract.moment.description}`,
                             `표면=${backgroundContract.surface.description}`,
@@ -2348,7 +2354,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                             spatialDepth: backgroundContract.spatialDepth.key,
                         },
                         expectedPropKey: backgroundContract.prop.key,
-                        expectedPropDescription: backgroundContract.prop.description,
+                        expectedPropDescription: firstDraftScenes ? "No specific fixture is required; record only visible fixed architectural cues." : backgroundContract.prop.description,
                         expectedPlateDigest: createHash("sha256").update(generated).digest("hex"),
                         expectedPlateBytes: generated.length,
                         contactMode: backgroundContactMode,
@@ -2367,7 +2373,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                         hardNegativeSpatialDepthKeys: [semanticAudit.observedSpatialDepthKey],
                         hardNegativeCueKeys: semanticAudit.observedNonMerchandiseProps,
                     };
-                    const repeatedProp = findRepeatedBackgroundProp(semanticAudit.observedNonMerchandiseProps, existingBackgroundProps);
+                    const repeatedProp = firstDraftScenes ? null : findRepeatedBackgroundProp(semanticAudit.observedNonMerchandiseProps, existingBackgroundProps);
                     if (repeatedProp) {
                         const repeatedPropError = new Error(`${preset.id} 배경 소품 ${repeatedProp.propKey}이 ${repeatedProp.assetId} 설정샷과 반복됐습니다.`);
                         repeatedPropError.conflictingAssetIds = [repeatedProp.assetId];
@@ -2379,9 +2385,17 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                         repeatedPropError.safeForRetryComparison = true;
                         throw repeatedPropError;
                     }
-                    backgroundProps = [backgroundContract.prop.key];
+                    // Optional first-draft cues must never be recorded as observed
+                    // when the auditor explicitly reported them absent.
+                    backgroundProps = firstDraftScenes ? [] : [backgroundContract.prop.key];
                 }
                 catch (error) {
+                    if (firstDraftScenes) {
+                        const dimensions = Array.isArray(error?.failedDimensions)
+                            ? error.failedDimensions.filter((value) => typeof value === "string" && /^[a-z-]{1,40}$/.test(value)).join(",")
+                            : "background-geometry-or-scene";
+                        console.warn(`[1차 이미지 배경 검수] ${preset.id} · attempt=${attempt} · ${dimensions || "background-scene"}`);
+                    }
                     if (attempt === maximumAttempt) {
                         const terminalFeedback = mergeSettingShotRetryAuditFeedback(retryAuditFeedback, mergeSettingShotRetryAuditFeedback(acceptedBackgroundAuditFeedback, error?.retryAuditFeedback ?? {
                             failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
@@ -2398,7 +2412,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                             ],
                         });
                     }
-                    if (error?.safeForRetryComparison === true) {
+                    if (error?.safeForRetryComparison === true && !firstDraftScenes) {
                         await retainRejectedBackground(generated, attempt);
                     }
                     retryConflictAssetIds = [...new Set([
@@ -2760,6 +2774,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                 throw new Error(`${preset.id} 1차 이미지 재시도 상태가 없습니다.`);
             const outputFile = join(jobDir, preset.file);
             const generated = await generateVerifiedFirstDraftCandidate({
+                firstDraftScenes: true,
                 result: studioResult,
                 outputFile,
                 preset,
@@ -2788,6 +2803,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
             };
         },
         findPostGenerationConflict: ({ spec: preset, attempt, candidate, acceptedCandidates, signal }) => findProductImageBatchSemanticConflict({
+            firstDraftScenes: true,
             result: studioResult,
             preset,
             attempt,
@@ -2982,13 +2998,13 @@ function productImageBatchConflictFeedback(conflict) {
         failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"],
     };
 }
-function resolveProductImageBatchBackgroundAuditContext(result, preset, attempt) {
+function resolveProductImageBatchBackgroundAuditContext(result, preset, attempt, firstDraftScenes = false) {
     const baseSettingShot = resolveProductSettingShot(result, preset.id);
     if (!baseSettingShot)
         throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
     const backgroundContactMode = resolveIdentityBackgroundContactMode(result, baseSettingShot);
     const retryIndex = attempt - 1;
-    const settingShot = retryIndex > 0
+    const settingShot = retryIndex > 0 && !firstDraftScenes
         ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex, backgroundContactMode)
         : baseSettingShot;
     const generationPreset = {
@@ -3014,7 +3030,7 @@ function completeProductImageBatchBackgroundShot(candidate) {
         ? backgroundShot
         : null;
 }
-async function findProductImageBatchSemanticConflict({ result, preset, attempt, candidate, acceptedCandidates, jobId, claimToken, leaseSignal, }) {
+async function findProductImageBatchSemanticConflict({ firstDraftScenes = false, result, preset, attempt, candidate, acceptedCandidates, jobId, claimToken, leaseSignal, }) {
     if (!settingShotAssetIds.includes(preset.id))
         return null;
     const candidateBackground = completeProductImageBatchBackgroundShot(candidate);
@@ -3029,12 +3045,13 @@ async function findProductImageBatchSemanticConflict({ result, preset, attempt, 
             throw new Error(`${accepted.assetId} 승인 배경판 lineage가 없습니다.`);
         return backgroundShot;
     });
-    const { generationPreset, backgroundContactMode, backgroundContract, } = resolveProductImageBatchBackgroundAuditContext(result, preset, attempt);
+    const { generationPreset, backgroundContactMode, backgroundContract, } = resolveProductImageBatchBackgroundAuditContext(result, preset, attempt, firstDraftScenes);
     try {
         await auditGeneratedIdentityBackground({
+            reviewProfile: firstDraftScenes ? "catalog-scenes" : undefined,
             outputFile: candidateBackground.plateFile,
             preset: generationPreset,
-            expectedEnvironment: [
+            expectedEnvironment: firstDraftScenes ? buildFirstDraftSceneBrief(result, preset) : [
                 `장소=${backgroundContract.location.description}`,
                 `가시적 시간대 조명=${backgroundContract.moment.description}`,
                 `표면=${backgroundContract.surface.description}`,
@@ -3049,7 +3066,7 @@ async function findProductImageBatchSemanticConflict({ result, preset, attempt, 
                 spatialDepth: backgroundContract.spatialDepth.key,
             },
             expectedPropKey: backgroundContract.prop.key,
-            expectedPropDescription: backgroundContract.prop.description,
+            expectedPropDescription: firstDraftScenes ? "No specific fixture is required; record only visible fixed architectural cues." : backgroundContract.prop.description,
             expectedPlateDigest: candidateBackground.plateDigest,
             expectedPlateBytes: candidateBackground.plateBytes,
             contactMode: backgroundContactMode,

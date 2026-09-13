@@ -1258,6 +1258,7 @@ export async function assertIdentityBackgroundPlate(
   background: Buffer,
   spec: IdentityAssetSpec,
   contactMode: IdentityBackgroundContactMode,
+  reviewProfile?: "catalog-scenes",
 ) {
   if (!Buffer.isBuffer(background) || background.length < 1 || background.length > 20 * 1024 * 1024) {
     throw new Error(`${spec.id} 배경판 바이트 크기가 안전 한도를 벗어났습니다.`);
@@ -1368,7 +1369,10 @@ export async function assertIdentityBackgroundPlate(
   if (highContrastEdges / comparisons > 0.16) {
     throw new Error(`${spec.id} 배경판의 상품 배치 구역에 글자·포장처럼 보이는 고대비 물체가 있습니다.`);
   }
-  if (contactMode === "surface-supported") {
+  // Catalog photos may place a product within a tabletop, away from its rear
+  // seam. Their mandatory independent visual audit verifies the support plane;
+  // retain every opacity/content check above and the strict detail default.
+  if (contactMode === "surface-supported" && reviewProfile !== "catalog-scenes") {
     await assertSurfaceSupportedReservedZoneGeometry(source, spec);
   }
 }

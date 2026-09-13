@@ -8,6 +8,7 @@ import {
 import {
   AI_ASSET_PROMPT_VERSION,
   buildAssetImagePrompt,
+  buildFirstDraftBackgroundPrompt,
   requiresSourceIdentityProtection,
   resolveIdentityBackgroundContactMode,
   resolveProductImageStyleCategory,
@@ -464,4 +465,21 @@ test("generated shots reject exact and perceptually close duplicates", () => {
   assert.equal(visualHashDistance(base.visualHash, Uint8Array.from([255, 255, 255, 255])), 32);
   assert.ok(MINIMUM_SHOT_HASH_DISTANCE > 32);
   assert.match(buildDuplicateRetryGuidance("detail-use", "hero", 2), /different camera height and angle/);
+});
+
+test("first-draft background briefs keep six category roles and source protection without an architectural checklist", () => {
+  const beverage = { ...result, product: { ...result.product, name: "나랑드사이다", category: "탄산음료" } };
+  const briefs = ["portrait", "wide", "detail-overview", "detail-use", "detail-routine", "detail-scale"].map((id) => {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === id)!;
+    const prompt = buildFirstDraftBackgroundPrompt(beverage, `/tmp/${spec.file}`, spec);
+    assert.ok(prompt.length < 2600);
+    assert.match(prompt, /탄산음료/);
+    assert.ok(prompt.includes(`사진 역할: ${id}`));
+    assert.match(prompt, /병, 캔, 포장, 컵, 사람, 손, 글자, 로고, 바코드/);
+    assert.match(prompt, /검증된 원본 사진의 픽셀/);
+    assert.ok(prompt.includes(resolveProductSettingShot(beverage, spec.id)!.location.split(";")[0]));
+    assert.doesNotMatch(prompt, /Fixed room-recognition contract|HARD ROLE BLACKLIST/);
+    return prompt;
+  });
+  assert.equal(new Set(briefs).size, 6);
 });

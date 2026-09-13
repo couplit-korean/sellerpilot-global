@@ -207,6 +207,35 @@ export function resolveProductSettingShot(result: ProductStudioResult, assetId: 
   return settingPlan[assetId as keyof typeof settingPlan];
 }
 
+export function buildFirstDraftSceneBrief(result: ProductStudioResult, preset: AssetSpec) {
+  const shot = resolveProductSettingShot(result, preset.id);
+  if (!shot) throw new Error(`${preset.id} 1차 이미지의 카테고리 장면 계획이 없습니다.`);
+  // The first clause is the category/role assignment. Later clauses add the
+  // detail-page architectural choreography, which is not a first-draft gate.
+  const roleClause = (value: string) => value.split(";")[0].trim();
+  return `카테고리: ${result.product.category}. 장소: ${roleClause(shot.location)}. 조명: ${roleClause(shot.moment)}. 표면: ${roleClause(shot.surface)}. 구도: ${roleClause(shot.camera)}.`;
+}
+
+export function buildFirstDraftBackgroundPrompt(result: ProductStudioResult, outputPath: string, preset: AssetSpec) {
+  const shot = resolveProductSettingShot(result, preset.id);
+  if (!shot) throw new Error(`${preset.id} 1차 이미지의 카테고리 장면 계획이 없습니다.`);
+  const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result));
+  const contact = Number((placement.top + placement.height).toFixed(4));
+  const contactMode = resolveIdentityBackgroundContactMode(result, shot);
+  return [
+    "내장 image_gen 도구로 사실적인 상품 촬영용 빈 배경 이미지 한 장을 생성하고 아래 지정 파일에 저장하세요. Python/SVG/Canvas로 대체 이미지를 그리지 마세요.",
+    `사진 역할: ${preset.id} / ${preset.purpose}. 상품 카테고리: ${result.product.category}.`,
+    buildFirstDraftSceneBrief(result, preset),
+    "상품은 이후 검증된 원본 사진의 픽셀로 합성합니다. 지금은 상품, 병, 캔, 포장, 컵, 사람, 손, 글자, 로고, 바코드, 상품 그림자나 상품 반사상을 그리지 마세요. 실제 카테고리와 장소를 알아볼 수 있는 자연스러운 배경과 입체감을 만드세요.",
+    `이미지 크기 ${preset.width}x${preset.height}. 나중에 상품이 들어갈 빈 영역의 정규화 좌표: ${JSON.stringify(placement)}. 이 영역은 단순하고 가려지지 않아야 하며 주변에는 장면을 알아볼 수 있는 공간이 보여야 합니다.`,
+    contactMode === "surface-supported"
+      ? `방 전체의 바닥 사진이 아니라 선반·테이블·조리대 가까이에서 찍는 상품 촬영 배경입니다. 상품 바닥 좌표 y=${contact}가 자연스럽게 수평 받침 표면 안쪽에 놓이게 하세요. 받침은 이 좌표보다 위에서 시작해 상품 영역의 좌우와 이미지 하단까지 이어져야 합니다. 받침의 뒷 경계와 상품 바닥을 정확히 일치시킬 필요는 없습니다. 방 바닥, 세로 벽, 빈 공중을 상품 받침으로 대신하지 마세요.`
+      : "상품 전체가 놓이거나 걸릴 수 있는 연속된 배경면을 비워 두세요. 이 역할에는 탁자·선반 또는 하단 접촉선을 억지로 넣지 마세요.",
+    "가구의 특정 모서리·환기구 같은 미세한 건축 요소를 모두 넣기보다 자연스러운 상품 촬영 장면을 우선하세요. 반복된 단색 벽이나 다른 역할의 장면을 단순히 자른 이미지는 만들지 마세요.",
+    `결과 PNG 저장 경로: ${outputPath}`,
+  ].join("\n");
+}
+
 export function buildAssetImagePrompt(
   result: ProductStudioResult,
   outputPath: string,

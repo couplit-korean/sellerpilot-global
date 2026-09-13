@@ -702,6 +702,11 @@ func normalizedImage(_ image: CIImage) -> CIImage {
     )
 }
 
+func orientedSourceImage(at inputURL: URL) -> CIImage? {
+    guard let source = CIImage(contentsOf: inputURL, options: [.applyOrientationProperty: true]) else { return nil }
+    return normalizedImage(source)
+}
+
 struct RecognitionScore {
     let horizontal: Double
     let confidence: Double
@@ -851,7 +856,9 @@ func run() throws {
     guard inputURLs.count <= 8 else { throw CutoutError.noSafeCandidate }
     var candidates: [Candidate] = []
     for (index, inputURL) in inputURLs.enumerated() {
-        guard let source = CIImage(contentsOf: inputURL),
+        // Vision's URL handler honors EXIF orientation. Composite its mask and
+        // rectangle coordinates onto the same oriented pixels, not raw sensor rows.
+        guard let source = orientedSourceImage(at: inputURL),
               source.extent.width >= 120,
               source.extent.height >= 120,
               source.extent.width * source.extent.height <= 16_000_000 else { continue }
