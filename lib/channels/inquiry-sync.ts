@@ -691,7 +691,7 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       if (!conversationId || conversationId.length > 240
           || conversationType !== "FROM_MEMBERS" && conversationType !== "FROM_EBAY"
           || !messageId || messageId.length > 240
-          || !sender || !recipient
+          || !sender || conversationType === "FROM_MEMBERS" && !recipient
           || role !== "customer" && role !== "seller" && role !== "system") {
         throw new Error("INQUIRY_RECORD_INVALID:ebayConversation");
       }
@@ -716,7 +716,7 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
         conversationStatus: text(row.conversationStatus),
         messageId,
         senderUsername: sender,
-        recipientUsername: recipient,
+        recipientUsername: recipient || null,
         read: row.read === true,
         replySupported,
         ...(media.length ? { nativeMedia: { media } } : {}),

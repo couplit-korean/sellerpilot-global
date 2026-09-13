@@ -247,3 +247,37 @@ test("Commerce reply blocks FROM_EBAY, stale customer lineage and a newer seller
     assert.equal(posts, 0);
   } finally { globalThis.fetch = previous; }
 });
+
+test("system notification without recipient survives provider parsing and CS normalization", async () => {
+  const previous = globalThis.fetch;
+  const body = "<html>" + "system notice ".repeat(2200) + "</html>";
+  globalThis.fetch = async url => {
+    const target = new URL(String(url));
+    if (target.pathname === "/commerce/message/v1/conversation") return Response.json({
+      conversations: [{ conversationId: "system-thread", conversationType: "FROM_EBAY",
+        conversationStatus: "ACTIVE", conversationTitle: "eBay notice", createdDate: "2026-09-01T01:00:00Z", referenceType: "LISTING" }], total: 1, limit: 10, offset: 0,
+    });
+    return Response.json({ conversationType: "FROM_EBAY", conversationStatus: "ACTIVE", conversationTitle: "eBay notice",
+      messages: [{ ...rawMessage("system-message", "ebay"), recipientUsername: undefined,
+        messageBody: body }], total: 1, limit: 25, offset: 0 });
+  };
+  try {
+    const observed = await executeEbayInquiry({ ...input,
+      arguments: { kind: "conversation", conversationType: "FROM_EBAY", conversationOffset: 0 },
+    });
+    assert.equal(observed.steps.at(-1)?.ok, true);
+    const normalized = normalizeChannelInquiries("ebay", { ...observed, ok: true, channel: "ebay", operation: "inquiries.list", safeMessage: "fixture" }, "2026-09-08T00:00:00Z");
+    assert.equal(normalized.length, 1);
+    assert.equal(normalized[0].message, body);
+    assert.equal(normalized[0].senderRole, "system");
+    assert.equal(normalized[0].status, "resolved");
+    assert.equal(normalized[0].providerContext.recipientUsername, null);
+    assert.equal(normalized[0].providerContext.replySupported, false);
+    const step = observed.steps.at(-1)!;
+    const row = step.data.conversationMessages[0];
+    assert.throws(() => normalizeChannelInquiries("ebay", { ok: true, channel: "ebay", operation: "inquiries.list",
+      steps: [{ ...step, data: { conversationMessages: [{ ...row, conversationType: "FROM_MEMBERS", role: "customer" }] } }],
+      safeMessage: "fixture",
+    }, "2026-09-08T00:00:00Z"), /INQUIRY_RECORD_INVALID:ebayConversation/);
+  } finally { globalThis.fetch = previous; }
+});

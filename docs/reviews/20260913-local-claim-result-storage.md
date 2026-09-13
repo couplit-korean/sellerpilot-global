@@ -17,3 +17,11 @@ At 06:40 UTC production Vercel, Supabase schedules, Mac gateway and AI worker ru
 - Static inventory: 764 source files, 664 RPC calls, 381 resolved function names, zero missing names in live DB. 38 dynamic call sites retain the prior separate classification. This does not prove every SQL dependency/signature/permission or channel end-to-end mutation.
 
 No customer reply, new listing, or shipment mutation was sent as a test. Live publishing/reply/shipping evidence remains separate from database/name/build/readiness checks.
+
+## 06:46 UTC follow-up
+
+The 5c1eaf1 candidate built successfully but was not promoted: runtime logs exposed an additional eBay normalization guard still requiring a recipient for FROM_EBAY notifications. The current forward code retains a null recipient only for system notices; FROM_MEMBERS still requires one and system notices remain resolved/non-replyable. A provider-to-normalization regression failed before the fix. Afterward 31 focused tests and TypeScript passed, and all 21 actual eBay system messages passed both API parsing and CS normalization in a read-only Mac probe at 06:46:21 UTC. This is still separate from the DB ledger completing 21 messages.
+
+The Lazada IM credential successor left the existing Mac read routes pointing at the revoked predecessor. A reviewed rollback and exact successor operation transferred only three existing read routes (inquiries, orders, diagnostic) after verifying the successful IM diagnostic receipt, same certified seller and same credential owner. All write routes remained untouched. Bootstrap admission is now true; processing is queued behind a Mac completion retry.
+
+Latest stored reads: SmartStore product and customer inquiries, 11st Q&A and urgent notices, and the first Shopee shop completed with receipts. A later Shopee shop still has an uncertain refresh and has not been counted as a full multi-shop success.
