@@ -426,6 +426,10 @@ test("first-draft photo review keeps truthful optional mismatches without discar
   };
   assert.throws(() => assertSafeBackgroundSemanticAudit(photo, "fixed-window-frame"));
   assert.doesNotThrow(() => assertSafeBackgroundSemanticAudit(photo, "fixed-window-frame", undefined, "catalog-scenes"));
+  assert.doesNotThrow(() => assertSafeBackgroundSemanticAudit({ ...photo, observedLocationKey: "deep-pantry-with-shelves" }, undefined, {
+    location: "legacy-skylight-id", moment: "morning", surface: "wood", camera: "low", palette: "warm", spatialDepth: "deep",
+  }, "catalog-scenes"));
+  assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, observedLocationKey: "unknown" }, undefined, undefined, "catalog-scenes"));
   for (const field of ["merchandisePresent", "packageOrContainerPresent", "labelBarcodeOrCertificationPresent", "humanPresent"] as const) {
     assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, [field]: true }, undefined, undefined, "catalog-scenes"));
   }

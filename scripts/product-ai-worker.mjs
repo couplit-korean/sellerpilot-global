@@ -2310,7 +2310,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
             if (backgroundOnly && !compositeSource)
                 throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
             if (backgroundOnly) {
-                generated = await normalizeIdentityBackgroundPlate(generated, generationPreset);
+                generated = await normalizeIdentityBackgroundPlate(generated, generationPreset, firstDraftScenes ? "catalog-scenes" : undefined);
                 await writeFile(outputFile, generated);
                 try {
                     let semanticAudit = null;

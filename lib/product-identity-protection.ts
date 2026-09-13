@@ -1211,6 +1211,7 @@ export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
 export async function normalizeIdentityBackgroundPlate(
   background: Buffer,
   spec: IdentityAssetSpec,
+  reviewProfile?: "catalog-scenes",
 ) {
   if (!Buffer.isBuffer(background) || background.length < 1 || background.length > 20 * 1024 * 1024) {
     throw new Error(`${spec.id} 배경판 바이트 크기가 안전 한도를 벗어났습니다.`);
@@ -1227,6 +1228,13 @@ export async function normalizeIdentityBackgroundPlate(
     throw new Error(`${spec.id} 배경판 규격이 지정된 이미지 역할과 일치하지 않습니다.`);
   }
   if (stats.isOpaque) return background;
+
+  if (reviewProfile === "catalog-scenes") {
+    // Composite visible alpha over white before the mandatory pixel/scene
+    // audits. Replacing every alpha<255 pixel with white erased whole photos.
+    return source.flatten({ background: { r: 255, g: 255, b: 255 } })
+      .png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  }
 
   const decoded = await source.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   if (decoded.info.width !== spec.width

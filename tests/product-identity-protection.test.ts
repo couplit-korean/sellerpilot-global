@@ -601,6 +601,17 @@ test("opaque background normalization is byte-identical and retains stripe and g
   await assert.doesNotReject(assertIdentityBackgroundPlate(normalizedSupported, spec, "surface-supported"));
 });
 
+test("first-draft alpha flattening preserves visible scene pixels without exposing fully hidden RGB", async () => {
+  const spec = { ...aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait")!, width: 32, height: 40 };
+  for (const alpha of [0, 128, 254, 255]) {
+    const candidate = await sharp({ create: { width: 32, height: 40, channels: 4, background: { r: 42, g: 88, b: 123, alpha: alpha / 255 } } }).png().toBuffer();
+    const normalized = await normalizeIdentityBackgroundPlate(candidate, spec, "catalog-scenes");
+    const pixels = await sharp(normalized).ensureAlpha().raw().toBuffer();
+    for (const [index, channel] of [42, 88, 123].entries()) assert.ok(Math.abs(pixels[index] - (channel * alpha / 255 + 255 - alpha)) <= 1);
+    assert.equal(pixels[3], 255);
+  }
+});
+
 test("surface-supported background plates require one horizontal seam inside the contact band", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);
