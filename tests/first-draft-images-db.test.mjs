@@ -393,6 +393,7 @@ test("explicit bounded retry preserves attempts and recovery exposes exhaustion 
     await db.exec("alter table sellerpilot_private.ai_cli_jobs add column completed_at timestamptz;");
     await db.exec(await readFile(new URL("../supabase/migrations/20260830090000_recover_product_research_context.sql", import.meta.url), "utf8"));
     await db.exec(await readFile(new URL("../supabase/migrations/20260913141310_first_draft_retry_status.sql", import.meta.url), "utf8"));
+    await db.exec(await readFile(new URL("../supabase/migrations/20260914003500_first_draft_operator_retry_budget.sql", import.meta.url), "utf8"));
     await setActor(db, ownerId);
     await db.query("select public.sellerpilot_enqueue_first_draft_image_request($1)", [jobId]);
     await db.query("update sellerpilot_private.first_draft_image_requests set attempts=3,last_error='previous-failure' where job_id=$1", [jobId]);
@@ -416,7 +417,8 @@ test("explicit bounded retry preserves attempts and recovery exposes exhaustion 
     assert.equal((await recovery()).result.firstDraftGeneration.exhausted, true);
     await setActor(db, claimToken);
     assert.equal((await recovery()).result, null);
-    await assert.rejects(db.query("update sellerpilot_private.first_draft_image_requests set max_attempts=7"));
+    await db.query("update sellerpilot_private.first_draft_image_requests set max_attempts=7");
+    await assert.rejects(db.query("update sellerpilot_private.first_draft_image_requests set max_attempts=9"));
   } finally {
     await db.close();
   }

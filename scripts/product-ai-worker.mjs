@@ -816,11 +816,12 @@ async function executeSourceProductCutout(mode, productName, outputFile, inputs,
     await access(sourceProductCutoutScript);
     if (leaseSignal?.aborted)
         throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
-    if (mode === "background" && (inputs.length !== 1 || !inputs[0]?.file)) {
+    const backgroundGuard = mode === "background" || mode === "background-catalog";
+    if (backgroundGuard && (inputs.length !== 1 || !inputs[0]?.file)) {
         throw new Error("검증할 배경판 파일이 없습니다.");
     }
-    const args = mode === "background"
-        ? [sourceProductCutoutScript, "background", inputs[0].file]
+    const args = backgroundGuard
+        ? [sourceProductCutoutScript, mode, inputs[0].file]
         : [
             sourceProductCutoutScript,
             mode,
@@ -916,12 +917,12 @@ async function executeSourceProductCutout(mode, productName, outputFile, inputs,
         },
     });
     const report = JSON.parse(String(result).split("\n").at(-1) || "{}");
-    if (mode === "background") {
+    if (backgroundGuard) {
         if (report.textCount !== 0
             || report.barcodeCount !== 0
             || report.humanCount !== 0
-            || report.packageRectangleCount !== 0
-            || report.merchandiseClassificationCount !== 0) {
+            || ![report.packageRectangleCount, report.merchandiseClassificationCount].every((count) => Number.isInteger(count) && count >= 0)
+            || (mode === "background" && (report.packageRectangleCount !== 0 || report.merchandiseClassificationCount !== 0))) {
             throw new Error("생성 배경판에서 글자·바코드·사람 또는 상품·용기형 물체가 감지되어 상품 합성을 중단했습니다.");
         }
         return report;
@@ -2334,7 +2335,10 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                         await writeFile(outputFile, generated);
                         console.warn(`[배경 지지면 결정 보정] ${jobId} · ${preset.id} · attempt=${attempt}`);
                     }
-                    await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
+                    // Catalog photos retain OCR/barcode/human checks here. Weak
+                    // image-class/rectangle hints are resolved by the mandatory
+                    // independent whole-scene audit immediately below.
+                    await executeSourceProductCutout(firstDraftScenes ? "background-catalog" : "background", "", "", [{ file: outputFile }], leaseSignal);
                     semanticAudit = await auditGeneratedIdentityBackground({
                         reviewProfile: firstDraftScenes ? "catalog-scenes" : undefined,
                         outputFile,

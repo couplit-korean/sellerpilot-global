@@ -73,6 +73,7 @@ enum CutoutError: Error, CustomStringConvertible {
     case noSafeCandidate
     case cannotRender
     case transientVisionExecution
+    case unsafeBackground
 
     var description: String {
         switch self {
@@ -80,6 +81,8 @@ enum CutoutError: Error, CustomStringConvertible {
             return "usage: source-product-cutout <front|evidence|view|subject|alternate> <expected-name> <output.png> <input> [input ...]"
         case .noSafeCandidate:
             return "원본 사진에서 단일 상품 포장을 신뢰도 높게 분리하지 못했습니다. 흰 배경 정면 사진을 추가해 주세요."
+        case .unsafeBackground:
+            return "생성 배경판에서 글자·바코드·사람 또는 상품 형태가 감지됐습니다."
         case .cannotRender:
             return "원본 상품 픽셀을 PNG로 렌더링하지 못했습니다."
         case .transientVisionExecution:
@@ -107,7 +110,7 @@ struct BackgroundGuardReport: Encodable {
     let merchandiseClassificationCount: Int
 }
 
-func guardBackground(at inputURL: URL) throws -> BackgroundGuardReport {
+func guardBackground(at inputURL: URL, catalogScenes: Bool = false) throws -> BackgroundGuardReport {
     guard let source = CIImage(contentsOf: inputURL),
           source.extent.width >= 120,
           source.extent.height >= 120,
@@ -168,9 +171,9 @@ func guardBackground(at inputURL: URL) throws -> BackgroundGuardReport {
     guard report.textCount == 0,
           report.barcodeCount == 0,
           report.humanCount == 0,
-          report.packageRectangleCount == 0,
-          report.merchandiseClassificationCount == 0 else {
-        throw CutoutError.noSafeCandidate
+          (catalogScenes || report.packageRectangleCount == 0),
+          (catalogScenes || report.merchandiseClassificationCount == 0) else {
+        throw CutoutError.unsafeBackground
     }
     return report
 }
@@ -837,8 +840,8 @@ func render(_ image: CIImage, tokens: [String], mode: String, to outputURL: URL)
 }
 
 func run() throws {
-    if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "background" {
-        let report = try guardBackground(at: URL(fileURLWithPath: CommandLine.arguments[2]))
+    if CommandLine.arguments.count == 3 && ["background", "background-catalog"].contains(CommandLine.arguments[1]) {
+        let report = try guardBackground(at: URL(fileURLWithPath: CommandLine.arguments[2]), catalogScenes: CommandLine.arguments[1] == "background-catalog")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         FileHandle.standardOutput.write(try encoder.encode(report))
