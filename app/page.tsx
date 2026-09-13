@@ -170,6 +170,7 @@ import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
+import { CompetitorSearchTerms } from "./_publishing/competitor-search-terms";
 import {
   buildCompetitorResearchRetryPath,
   isCompetitorResearchBlockingAnalysis,
@@ -4349,6 +4350,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               retryAvailable={firstDraftRetryAvailable}
               onRetry={() => { void startFirstDraftConceptImages(sourceResearchJobId); }}
             />
+            <CompetitorSearchTerms requestPath={competitorResearchRetryInput} state={competitorResearchState} />
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
           </section>
           <section className="product-context-section required-product-intake">
