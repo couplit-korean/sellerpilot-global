@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
-export function assertLocalWorkspace(root = process.cwd()) {
+export function assertLocalWorkspace(root = process.cwd(), environment = process.env) {
   const home = homedir();
   const blocked = ["Documents", "Desktop", "Library/Mobile Documents", "Library/CloudStorage"]
     .map(part => join(home, part));
@@ -21,10 +21,22 @@ export function assertLocalWorkspace(root = process.cwd()) {
     if (existsSync(join(root, entry))) check(join(root, entry));
   }
   if (existsSync(join(root, ".git"))) {
+    check(join(root, ".git"));
     for (const flag of ["--git-dir", "--git-common-dir"]) {
-      const value = execFileSync("git", ["rev-parse", "--path-format=absolute", flag], {
-        cwd: root, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
+      let value;
+      try {
+        value = execFileSync("git", ["rev-parse", "--path-format=absolute", flag], {
+          cwd: root, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+      } catch (error) {
+        // Vercel Git-source builds can retain an incomplete .git directory.
+        // Every source/dependency path above still receives the cloud-path check.
+        const hostedMetadataOnly = environment.VERCEL === "1"
+          && environment.VERCEL_PROJECT_ID === "prj_9fRYsoTT4fD6XVEMe4NX9mpPlljA"
+          && /not a git repository/.test(String(error.stderr ?? ""));
+        if (hostedMetadataOnly) break;
+        throw error;
+      }
       check(resolve(root, value));
     }
   }
