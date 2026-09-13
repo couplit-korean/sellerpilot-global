@@ -109,3 +109,8 @@
 
 - Candidate212a100 passed six no-op canaries. Its official completion API accepted the same current-claim payload with HTTP200; production DB shows succeeded at2026-09-13 22:55:33UTC, product c0bdb493-6447-41bf-af0a-46a3da7a75a8, SKU AUTO-00BF58A2E8434FF09667, stock10 and16 saved assets. Aside history now shows channel-registration-ready and opens the product. This is product preparation completion, not marketplace publication.
 - A separate Coupang issue re-appended old localized AI statements after saved Puck edits. The server's approved detail manifest now binds HTML rendered from the saved approved document; client-forged replacement HTML is removed. Coupang uses this approved copy with all8 approved images and retains separate item notices. Legacy unapproved-copy behavior remains. Focused regressions27/27, TypeScript and diff passed.
+
+## Live detail save and signed URL rotation
+
+- Aside Puck edits corrected the four buyer-copy blocks. Initial save exposed a token-only signed URL mismatch: job result and publish-context GETs freshly sign the same objects with different TTLs, while persistence matched full strings. The helper now rebinds only the same HTTPS origin/current job/claim/file despite a rotated query. Different objects/origins and conflicting imageRole still fail. Seven regressions plus TypeScript passed.
+- Existing on-screen edits were preserved. Manually using the already displayed8 exact image roles allowed the official save: Aside reports version1 and8/8 image linkage. Common channel form was then updated to USD2.24, F3 manufacturer, full ingredients and500ml1bottle. No marketplace CREATE has run at this checkpoint.

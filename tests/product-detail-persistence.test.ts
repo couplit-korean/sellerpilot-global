@@ -71,6 +71,51 @@ test("persisted Puck envelopes require an optimistic version and valid root/cont
   assert.equal(parsePersistedProductDetailPage({ data: { root: {}, content: "bad" }, version: 1 }), null);
 });
 
+const signedRoles = ["detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-dimensions", "detail-contents", "detail-care"];
+const signedBase = "https://project.supabase.co/storage/v1/object/sign/sellerpilot-ai/results/10000000-0000-4000-8000-000000000001/claims/20000000-0000-4000-8000-000000000001/";
+const freshSignedAssets = Object.fromEntries(signedRoles.map((role) => [role, `${signedBase}${role}.png?token=fresh`]));
+function editedSignedDocument() {
+  return {
+    root: { props: { title: "판매자가 수정한 제목" } },
+    content: signedRoles.map((role, index) => ({ type: "ImageStoryBlock", props: {
+      id: `edited-${index}`, imageUrl: `${signedBase}${role}.png?token=previous`, imageRole: role,
+      imageAlt: `확인한 상세 ${index + 1}`, body: `직접 편집한 본문 ${index + 1}`, evidence: "실물 확인 내용",
+    } })),
+  };
+}
+
+test("Puck edits survive signed-token rotation only for the same approved claim object", () => {
+  const edited = editedSignedDocument();
+  const original = structuredClone(edited);
+  const saved = makeValidatedProductDetailPersistable(edited, freshSignedAssets);
+  assert.deepEqual(edited, original);
+  assert.deepEqual(saved.root, original.root);
+  for (const [index, block] of saved.content.entries()) {
+    assert.deepEqual(block.props, { ...original.content[index]!.props, imageUrl: `sellerpilot-asset://${signedRoles[index]}` });
+  }
+  const hydrated = resolveProductDetailAssets(saved, freshSignedAssets);
+  assert.equal(hydrated.content[5]!.props.imageUrl, freshSignedAssets["detail-dimensions"]);
+  assert.equal(hydrated.content[5]!.props.body, original.content[5]!.props.body);
+});
+
+test("a declared image role cannot authorize a different origin, job, claim or file", () => {
+  const mutations = [
+    (url: string) => url.replace("project.supabase.co", "foreign.supabase.co"),
+    (url: string) => url.replace("10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"),
+    (url: string) => url.replace("20000000-0000-4000-8000-000000000001", "20000000-0000-4000-8000-000000000002"),
+    (url: string) => url.replace("detail-overview.png", "external.png"),
+    (url: string) => url.replace("https:", "http:"),
+  ];
+  for (const mutate of mutations) {
+    const edited = editedSignedDocument();
+    edited.content[0]!.props.imageUrl = mutate(edited.content[0]!.props.imageUrl);
+    assert.throws(() => makeValidatedProductDetailPersistable(edited, freshSignedAssets), /운영 자산 역할/);
+  }
+  const conflicting = editedSignedDocument();
+  conflicting.content[0]!.props.imageRole = "detail-care";
+  assert.throws(() => makeValidatedProductDetailPersistable(conflicting, freshSignedAssets), /역할과 운영 자산 참조/);
+});
+
 test("studio, product detail, API and DB persistence stay connected by the same version fence", async () => {
   const [studio, savedPage, route] = await Promise.all([
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),

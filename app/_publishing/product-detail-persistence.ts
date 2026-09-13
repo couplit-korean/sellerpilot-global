@@ -56,6 +56,19 @@ function mapImageUrl<T extends PersistablePuckData>(
   };
 }
 
+function signedStudioAssetIdentity(value: string): string | null {
+  try {
+    const url = new URL(value);
+    // The signature may rotate while Puck holds an edited document. Only the
+    // exact current claim object can rebind; a role or filename alone cannot.
+    if (url.protocol !== "https:" || url.username || url.password || url.hash
+        || !/^\/storage\/v1\/object\/sign\/sellerpilot-ai\/results\/[0-9a-f-]{36}\/claims\/[0-9a-f-]{36}\/[a-z0-9-]+\.png$/.test(url.pathname)) return null;
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
 export function makeProductDetailPersistable<T extends PersistablePuckData>(
   data: T,
   assetUrls: Record<string, string>,
@@ -65,8 +78,14 @@ export function makeProductDetailPersistable<T extends PersistablePuckData>(
       .filter((entry): entry is [string, string] => Boolean(entry[0] && entry[1]))
       .map(([assetId, url]) => [url, assetId]),
   );
+  const assetBySignedIdentity = new Map<string, string>();
+  for (const [url, assetId] of assetByUrl) {
+    const identity = signedStudioAssetIdentity(url);
+    if (identity) assetBySignedIdentity.set(identity, assetId);
+  }
   return mapImageUrl(data, (imageUrl) => {
-    const assetId = assetByUrl.get(imageUrl);
+    const identity = signedStudioAssetIdentity(imageUrl);
+    const assetId = assetByUrl.get(imageUrl) ?? (identity ? assetBySignedIdentity.get(identity) : undefined);
     return assetId ? `${productDetailAssetReferencePrefix}${assetId}` : imageUrl;
   });
 }
