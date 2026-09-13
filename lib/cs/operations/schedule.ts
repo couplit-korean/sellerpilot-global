@@ -77,6 +77,10 @@ export function serverlessCsRepairInquiryEnqueues(
 ) {
   const korea = new Date(now.getTime() + 9 * 60 * 60 * 1_000);
   if (korea.getUTCMinutes() >= 5) return [];
+  // Hourly catch-up must offer the same daily job keys. Millisecond-varying
+  // windows bypass the DB's 24-hour cooldown and multiply retained history.
+  // Current syncs keep the real clock and cover changes after this KST cutoff.
+  const repairAnchor = new Date(Date.UTC(korea.getUTCFullYear(), korea.getUTCMonth(), korea.getUTCDate()) - 9 * 60 * 60 * 1_000);
   const enabled = new Set(staticEgressChannels);
   const enqueues: Array<{
     channel: "coupang" | "elevenst" | "smartstore" | "qoo10" | "shopee" | "ebay" | "temu";
@@ -84,7 +88,7 @@ export function serverlessCsRepairInquiryEnqueues(
     payload: ReturnType<typeof inquiryHistorySyncRequests>[number];
   }> = [];
   if (enabled.has("coupang")) {
-    const coupang = inquiryHistorySyncRequests("coupang", now, 30);
+    const coupang = inquiryHistorySyncRequests("coupang", repairAnchor, 30);
     const requestsPerWindow = 5;
     const windowCount = Math.ceil(coupang.length / requestsPerWindow);
     const dayNumber = Math.floor(Date.UTC(korea.getUTCFullYear(), korea.getUTCMonth(), korea.getUTCDate()) / 86_400_000);
@@ -94,26 +98,26 @@ export function serverlessCsRepairInquiryEnqueues(
     }
   }
   if (enabled.has("smartstore")) {
-    for (const payload of inquiryHistorySyncRequests("smartstore", now, 30)) {
+    for (const payload of inquiryHistorySyncRequests("smartstore", repairAnchor, 30)) {
       enqueues.push({ channel: "smartstore", operation: "inquiries.list", payload });
     }
   }
   if (enabled.has("elevenst")) {
-    for (const payload of inquiryHistorySyncRequests("elevenst", now, 30)) {
+    for (const payload of inquiryHistorySyncRequests("elevenst", repairAnchor, 30)) {
       enqueues.push({ channel: "elevenst", operation: "inquiries.list", payload });
     }
   }
   if (enabled.has("temu")) {
-    for (const payload of inquiryHistorySyncRequests("temu", now, 30)) {
+    for (const payload of inquiryHistorySyncRequests("temu", repairAnchor, 30)) {
       enqueues.push({ channel: "temu", operation: "inquiries.list", payload });
     }
   }
-  for (const payload of inquiryHistorySyncRequests("shopee", now, 30)) {
+  for (const payload of inquiryHistorySyncRequests("shopee", repairAnchor, 30)) {
     enqueues.push({ channel: "shopee", operation: "inquiries.list", payload });
   }
   for (const channel of ["qoo10", "ebay"] as const) {
     const historyDays = channel === "ebay" ? 365 : 30;
-    for (const payload of inquiryHistorySyncRequests(channel, now, historyDays)) {
+    for (const payload of inquiryHistorySyncRequests(channel, repairAnchor, historyDays)) {
       enqueues.push({ channel, operation: "inquiries.list", payload });
     }
   }

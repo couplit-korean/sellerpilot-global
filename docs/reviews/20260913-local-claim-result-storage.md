@@ -40,3 +40,11 @@ Lazada bootstrap reached the provider but its HTTP completion was rejected (400)
 - 운영 callback 스위치는 이미 `1`임을 값 노출 없이 확인했다. 환경변수를 추가하거나 변경하지 않았다. 실제 OAuth 성공과 8개 숍 재검증은 별도 증거가 필요하다.
 - Shopee/Lazada 화면 및 Shopee exact 계약 39개 테스트, TypeScript 검증 통과. 기존 Lazada exact 경로 회귀 테스트도 포함한다.
 - Lazada MY 첫 작업 `3ea61c22-20c8-4cd1-8705-6a476eef8cf7`과 연속 작업 `2d0e4c7f-dfff-40f7-a7c2-1f8049600e23` 모두 succeeded와 completion receipt 확인. 저장 13건은 모두 system 메시지이며 고객 문의가 아니다.
+
+## 과거 이력 중복 예약 방지
+
+- 운영 eBay 대기열에서 같은 31일 구간이 시간/밀리초만 달라져 반복 예약된 것을 확인했다. 기존 24시간 cooldown은 `periodicKey`가 같을 때만 작동하므로 매시간 새 날짜 문자열이 들어가는 설계가 중복 예약을 유발했다.
+- `serverlessCsRepairInquiryEnqueues`의 보충 조회만 KST 당일 00:00 기준으로 고정했다. 같은 날 매시간 catch-up은 같은 key와 arguments를 재사용한다. 현재 문의 조회는 실제 시각을 유지하여 보충 기준 이후 변경을 계속 가져온다.
+- eBay는 시간별 37개(하루 최대 888개) 신규 key 대신 하루 37개 key를 사용한다. 실제 API 완료·대기열 소진과 다른 수치이며, 기존 대기열은 삭제/성공 처리하지 않았다.
+- 회귀 재현: 수정 전 동일 KST 날짜의 두 번째 실행에서 key/range 비교 실패. 수정 후 24시 경계·현재 조회 분리·Coupang/Qoo10/11st 범위 통합 검사 11개 및 운영 scheduler 관련 3개, 타입 검사 통과.
+- Shopee 메모의 기존 메인 로그인으로 휴대폰 OTP 화면까지 진행했다. 새 권한/토큰 교환 성공은 아직 아니다. 첫 exact 세션은 코드 교환 전 만료되어 실행기가 종료됐다. OTP 이후 새 세션을 준비해야 하며 만료 세션을 연장/재사용하지 않는다.
