@@ -256,6 +256,14 @@ export function useFirstDraftImages(dependencies: FirstDraftImageHookDependencie
       });
       if (signal.aborted || !fence.isCurrent(token)) return "stale" as const;
       if (read.status === 401) return "authentication-required" as const;
+      if ([400, 403, 404, 409, 422].includes(read.status)) {
+        const failure = await read.json().catch(() => null) as { message?: unknown } | null;
+        if (signal.aborted || !fence.isCurrent(token)) return "stale" as const;
+        const reason = typeof failure?.message === "string" ? failure.message.slice(0, 180) : "저장된 이미지 결과를 불러오지 못했습니다.";
+        setPhase("failed", confirmedGeneratedCountRef.current, `${reason} 같은 작업 다시 확인으로 저장된 결과를 다시 불러올 수 있습니다.`);
+        setFirstDraftRetryAvailable(true);
+        return "failed" as const;
+      }
       if (!read.ok) return "pending" as const;
       const payload = await read.json() as { jobId?: string; result?: FirstDraftImageResult };
       if (payload.jobId !== jobId || signal.aborted || !fence.isCurrent(token)) return "stale" as const;
@@ -268,7 +276,7 @@ export function useFirstDraftImages(dependencies: FirstDraftImageHookDependencie
       }
       return "pending" as const;
     }
-  }, [applySnapshot, fence, fetcher, getAccessToken]);
+  }, [applySnapshot, fence, fetcher, getAccessToken, setPhase]);
 
   const beginFirstDraftPolling = useCallback((jobId: string, token: FirstDraftJobToken) => {
     const pollController = new AbortController();

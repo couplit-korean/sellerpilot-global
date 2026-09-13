@@ -116,6 +116,66 @@ test("normal and StrictMode mounts both activate and enqueue exactly once", asyn
   }
 });
 
+test("a recovery conflict stops loading and a same-job retry reads stored images without enqueueing again", async () => {
+  let enqueueCount = 0;
+  let recoverCount = 0;
+  const fixture = await mountedHook({
+    getAccessToken: async () => "token",
+    fetcher: async (input) => {
+      if (String(input).includes("first-draft-images-enqueue")) {
+        enqueueCount += 1;
+        return jsonResponse({ jobId: firstJobId }, 202);
+      }
+      recoverCount += 1;
+      return recoverCount === 1
+        ? jsonResponse({ code: "PRODUCT_RESEARCH_RECOVERY_INVALID", message: "원본·결과 연결을 확인하지 못했습니다." }, 409)
+        : jsonResponse({ jobId: firstJobId, result: completeResult() });
+    },
+    pollDelayMs: 2,
+  });
+  await act(async () => {
+    fixture.api().activateFirstDraftJob(firstJobId, catalogResult());
+    await fixture.api().startFirstDraftConceptImages(firstJobId);
+  });
+  await waitForTimers();
+  assert.equal(fixture.api().firstDraftImagePhase, "failed");
+  assert.equal(fixture.api().firstDraftRetryAvailable, true);
+  assert.match(fixture.api().firstDraftConceptStatus, /원본·결과 연결/);
+  assert.equal(recoverCount, 1);
+  await act(async () => { await fixture.api().startFirstDraftConceptImages(firstJobId); });
+  await waitForTimers();
+  assert.equal(enqueueCount, 1);
+  assert.equal(fixture.api().firstDraftImagePhase, "complete");
+  assert.equal(fixture.api().confirmedGeneratedCount, 8);
+  await unmount(fixture.root, fixture.container);
+});
+
+test("explicit pending recovery stays queued until the stored eight-role result arrives", async () => {
+  let complete = false;
+  const fixture = await mountedHook({
+    getAccessToken: async () => "token",
+    fetcher: async (input) => {
+      if (String(input).includes("first-draft-images-enqueue")) return jsonResponse({ jobId: firstJobId }, 202);
+      return complete
+        ? jsonResponse({ jobId: firstJobId, result: completeResult() })
+        : jsonResponse({ jobId: firstJobId, status: "pending", code: "PRODUCT_RESEARCH_IMAGES_PENDING", result: { ...catalogResult(), generatedImages: [] } }, 202);
+    },
+    pollDelayMs: 2,
+  });
+  await act(async () => {
+    fixture.api().activateFirstDraftJob(firstJobId, catalogResult());
+    await fixture.api().startFirstDraftConceptImages(firstJobId);
+  });
+  await waitForTimers();
+  assert.equal(fixture.api().firstDraftImagePhase, "queued");
+  assert.equal(fixture.api().firstDraftImages.length, 0);
+  complete = true;
+  await waitForTimers();
+  assert.equal(fixture.api().confirmedGeneratedCount, 8);
+  assert.equal(fixture.api().firstDraftImagePhase, "complete");
+  await unmount(fixture.root, fixture.container);
+});
+
 test("polling session loss releases the job and relogin resumes polling without a second enqueue", async () => {
   let accessToken: string | undefined = "token";
   let enqueueCount = 0;

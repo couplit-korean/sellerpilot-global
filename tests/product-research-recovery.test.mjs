@@ -154,7 +154,7 @@ test("recovery migration, route, and UI keep the ownership, image, and stale-wri
   const storedRequestValidation = route.indexOf("productResearchJobRequestSchema.safeParse");
   const preservedPathValidation = route.indexOf("validatePreservedStudioUploadPaths(", storedRequestValidation);
   const sourceVerification = route.indexOf("verifyPreservedStudioImages({", preservedPathValidation);
-  const sourceHash = route.indexOf("sha256PreservedStudioOriginalImage(", preservedPathValidation);
+  const sourceHash = route.indexOf("verifyProductResearchRecoveryOriginals({", preservedPathValidation);
   const generatedVerification = route.indexOf("verifyGeneratedStudioImages({", sourceHash);
   const responseSigning = route.indexOf("const [sourceSigning, generatedSigning]", generatedVerification);
   assert.ok(authentication >= 0);

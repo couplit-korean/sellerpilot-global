@@ -11,6 +11,10 @@ import {
   productResearchLineageReceiptConfigured,
 } from "../../../../../lib/product-research-lineage-receipt";
 import { productResearchInputSha256 } from "../../../../../lib/product-research-lineage-receipt-core";
+import {
+  productResearchRecoveryImagesPending,
+  verifyProductResearchRecoveryOriginals,
+} from "../../../../../lib/product-research-recovery";
 import { withPromiseTimeout } from "../../../../../lib/promise-timeout";
 import {
   validateSucceededProductResearchPreflight,
@@ -19,7 +23,6 @@ import {
 import { validatePreservedStudioUploadPaths } from "../../../../../lib/studio-image-paths";
 import {
   createSignedStudioImageDownloader,
-  sha256PreservedStudioOriginalImage,
   verifyGeneratedStudioImages,
   verifyPreservedStudioImages,
 } from "../../../../../lib/studio-image-validation";
@@ -96,8 +99,6 @@ export async function POST(request: Request) {
       || !storedResult.success
       || !visible.valid
       || storedRequest.data.jobId !== body.data.jobId
-      || storedRequest.data.imagePaths.length !== 1
-      || storedRequest.data.imageSpecs.length !== 1
       || storedResult.data.preflightVersion !== 1
       || storedResult.data.researchInputSha256 !== productResearchInputSha256(storedRequest.data.researchInput)
       || storedResult.data.sourcePhotoSha256 !== storedRequest.data.sourcePhotoFingerprint) {
@@ -147,9 +148,12 @@ export async function POST(request: Request) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  const imagesPending = productResearchRecoveryImagesPending(
+    job.firstDraftGeneration, storedResult.data.preflightAssetLineage,
+  );
   const verificationPaths = [
     ...preserved.allPaths,
-    ...generatedEntries.map(([, path]) => path),
+    ...(imagesPending ? [] : generatedEntries.map(([, path]) => path)),
   ];
   const download = await signedDownloader(verificationPaths, admin);
   const verified = download ? await verifyPreservedStudioImages({
@@ -158,15 +162,13 @@ export async function POST(request: Request) {
     specs: storedRequest.data.imageSpecs,
     download,
   }) : { normalized: false, originals: false };
-  const sourcePhotoSha256 = download ? await sha256PreservedStudioOriginalImage(
-    preserved.originalPaths[0],
-    storedRequest.data.imageSpecs[0],
+  const sourcePhotoSha256 = download ? await verifyProductResearchRecoveryOriginals({
+    originalPaths: preserved.originalPaths,
+    specs: storedRequest.data.imageSpecs,
+    sourcePhotoFingerprint: storedRequest.data.sourcePhotoFingerprint,
+    sourcePhotoEvidence: preflight.preflight.sourcePhotoEvidence,
     download,
-  ) : null;
-  const generatedVerified = download ? await verifyGeneratedStudioImages({
-    entries: generatedValidationEntries,
-    download,
-  }) : false;
+  }) : null;
   if (!verified.normalized
       || !verified.originals
       || sourcePhotoSha256 !== storedRequest.data.sourcePhotoFingerprint) {
@@ -175,6 +177,23 @@ export async function POST(request: Request) {
       message: "완료된 1차 작업의 원본 사진을 다시 확인하지 못했습니다.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
+  if (imagesPending) {
+    return NextResponse.json({
+      jobId: body.data.jobId,
+      status: "pending",
+      code: "PRODUCT_RESEARCH_IMAGES_PENDING",
+      result: {
+        ...storedResult.data,
+        asset_storage_paths: undefined,
+        firstDraftGeneration: recordValue(job.firstDraftGeneration),
+        generatedImages: [],
+      },
+    }, { status: 202, headers: noStoreHeaders });
+  }
+  const generatedVerified = download ? await verifyGeneratedStudioImages({
+    entries: generatedValidationEntries,
+    download,
+  }) : false;
   if (!generatedVerified) {
     return NextResponse.json({
       code: "PRODUCT_RESEARCH_GENERATED_ASSETS_UNAVAILABLE",
