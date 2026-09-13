@@ -1,5 +1,22 @@
 # 1차 이미지가 원본 사진으로 남던 오류 — 2026-09-13
 
+## 최종 확인 — 실제 6장 저장 완료, 2026-09-14
+
+대상 나랑드사이다 `7a576183-bf60-401e-9dea-10af89efc0b8`은 누적 시도 9를 보존하고 `done`으로 완료됐다. 원본 촬영 배경을 대체한 세로·가로·전체 준비·사용·루틴·크기 6장을 생성했고, 개별 검사와 배치 중복 검사를 통과했다. 원본 병과 라벨 픽셀은 보존한다. 자연스러운 접촉 그림자까지 별도 개선한 것은 아니다.
+
+마지막 완료 시 Vercel 로그는 `first draft image quality manifest upload failed / StorageApiError`였다. 실제 버킷 MIME 목록은 JPEG/PNG/WebP만 허용하고 JSON을 거부했다. `20260914012500_first_draft_quality_manifest_storage.sql`은 기존 비공개 설정·20 MiB 제한·기존 MIME을 보존하고 application/json만 추가한다. 운영 migration journal의 version/name/원문 SHA-256 `931a6fdfaf7f4559982947c5ae6bff2b75432f23b01f96f1d6eb0306f9193e74`를 대조했다.
+
+이미지 6개는 모두 업로드됐고 5개의 검수 기록은 저장돼 있었다. 새 생성이나 상태 직접 덮어쓰기 없이 마지막 detail-scale 완료 metadata를 재구성했다. 기존 5개의 검수 영수증을 같은 상품 사실·원본 해시로 검증하고, 마지막 서버 PNG와 배치에서 채택된 로컬 PNG의 bytes 일치, 실제 원본 컷아웃 재합성의 RGBA 픽셀 완전 일치, 저장된 독립 배경 검수, 6장 전체 dHash 중복 검사를 통과시켰다. 생산 worker는 6장 전체 검수 장벽 뒤에만 업로드를 시작하므로 기존 5개 업로드 기록도 배치 완료 근거다. 검증한 마지막 한 역할만 기존 worker 인증과 정상 POST API로 제출해 HTTP 200 / done을 받았다. attempts·권한·계정은 바꾸지 않았다.
+
+최종 DB 재조회에서 verified_assets=6, result의 6개 auditMode=segmented-source-composite, 서로 다른 SHA-256=6이다. Storage에서 PNG 6장과 first-draft-quality-v1.json을 다시 내려받아 각 파일의 실제 SHA-256·bytes·크기·검수 기록과 DB를 대조했다. 기존 source-photo-catalog 6개의 digest와도 모두 다르다. 프런트엔드의 실제 분류 함수에 저장된 6개 경로·계보를 넣어 complete/6을 확인했다. 사용자의 인증된 브라우저 렌더링을 확인했다고 주장하지 않는다.
+
+로컬 확인 자료: `outputs/first-draft-verification/7a576183-bf60-401e-9dea-10af89efc0b8/index.html`, `storage-readback.json`, `display-classification.json`, `first-draft-quality-v1.json`, PNG 6개. 이 사용자 이미지 자료는 Git 제외 경로에 보관한다.
+
+배포 구분: Vercel Production과 gateway 코드는 `8fcad7b6a69ceeb3f5c0b49cae2cf80294a90437`, Mac 이미지 코드 및 설치본은 `044f2680a5971c0d7a8cdea72b59388abcef450f`. 마지막 MIME 수정은 운영 DB 설정이며 웹 재배포나 이미지 worker 재시작이 필요 없다. 해당 범위의 코드·설정·문서를 integration-aside 양쪽 remote에 남긴다. 별도로 같은 시간대 credential-refresh의 DB 57014/503이 관측됐으므로 이 이미지 완료를 전체 채널 정상으로 확대하지 않는다.
+
+## 아래는 수정 중의 시점별 기록
+
+
 ## 재현과 원인
 
 최신 나랑드사이다 조사 작업의 1차 이미지 요청은 3회 실패한 뒤 queued 상태로 남았고 검증 자산은 0개였다. 조사 자체의 succeeded와 1차 이미지 생성 완료는 다른 상태다. 직전 파일 해시·카테고리 테스트 확인은 이 작업의 이미지 생성 성공을 증명하지 않았다.
