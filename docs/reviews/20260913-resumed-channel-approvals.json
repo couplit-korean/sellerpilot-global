@@ -1,0 +1,167 @@
+{
+  "observedAt": "2026-09-13T08:20:00Z",
+  "runtimeRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+  "publicationGate": {
+    "open": true,
+    "state": "open",
+    "contract": "verified_publication_release_gate_v1",
+    "openedAt": "2026-09-13T08:15:49.01605+00:00",
+    "updatedAt": "2026-09-13T08:15:49.01605+00:00",
+    "effectiveOpen": true,
+    "openedChannel": null,
+    "openedRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "attestedRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "queuedOrRunning": 0,
+    "qoo10AdapterReady": true,
+    "qoo10EffectiveOpen": true,
+    "coupangAdapterReady": true,
+    "activeRuntimeRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "coupangEffectiveOpen": true,
+    "orphanPendingReviews": 0,
+    "qoo10AttestedRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "qoo10QueuedOrRunning": 0,
+    "qoo10ReviewViolations": 0,
+    "runtimeReleaseMatches": true,
+    "coupangAttestedRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "coupangQueuedOrRunning": 0,
+    "qoo10ReleaseConsistent": true,
+    "reconciliationRequired": 0,
+    "smartstoreAdapterReady": true,
+    "coupangReviewViolations": 0,
+    "listingMutationsRunning": 0,
+    "smartstoreEffectiveOpen": true,
+    "coupangReleaseConsistent": true,
+    "publicationAdaptersReady": 8,
+    "publicationRecheckerReady": true,
+    "smartstoreAttestedRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "smartstoreQueuedOrRunning": 0,
+    "qoo10RuntimeReleaseMatches": true,
+    "smartstoreReviewViolations": 0,
+    "qoo10ReconciliationRequired": 0,
+    "smartstoreReleaseConsistent": true,
+    "coupangRuntimeReleaseMatches": true,
+    "publicationReleaseConsistent": true,
+    "coupangReconciliationRequired": 0,
+    "smartstoreRuntimeReleaseMatches": true,
+    "smartstoreReconciliationRequired": 0
+  },
+  "migration": {
+    "version": "20260913082500",
+    "name": "lazada_im_preserve_country_capabilities",
+    "source_sha256": "f8bc41181669f5c7069de38c46620d8b2dee14fea97ffd0cfa8015e92181cb38"
+  },
+  "validation": {
+    "publicationTests": {
+      "passed": 130,
+      "failed": 0
+    },
+    "countryCapabilityDbTests": {
+      "passed": 6,
+      "failed": 0
+    },
+    "typecheck": "passed"
+  },
+  "database": {
+    "blocked": 0,
+    "runtime": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "activity": [
+      {
+        "count": 12,
+        "state": "active",
+        "wait_event_type": null
+      },
+      {
+        "count": 3,
+        "state": "idle",
+        "wait_event_type": "Client"
+      },
+      {
+        "count": 1,
+        "state": null,
+        "wait_event_type": "Extension"
+      }
+    ],
+    "csCounts": [
+      {
+        "count": 13,
+        "channel_key": "lazada",
+        "sender_role": "system"
+      },
+      {
+        "count": 18,
+        "channel_key": "ebay",
+        "sender_role": "system"
+      }
+    ],
+    "database": {
+      "backends": 16,
+      "deadlocks": 0,
+      "statsReset": null,
+      "temporaryBytes": 3014656
+    },
+    "oldTransactions": 0
+  },
+  "gateway": {
+    "status": "ready",
+    "release": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "activeJobs": 0,
+    "lastContact": "2026-09-13T08:19:57.515Z",
+    "httpStatus": 200,
+    "lastErrorAt": null
+  },
+  "browser": {
+    "shopeeDeveloper": {
+      "app": "Couplit",
+      "partnerId": "2031489",
+      "status": "Online",
+      "liveKeyExpiresAt": "2026-09-15T00:59:00+09:00",
+      "loginVerified": true
+    },
+    "shopeeSeller": {
+      "account": "gjrxn:main",
+      "loginVerified": true
+    },
+    "shopeeAuthorization": {
+      "passwordAccepted": true,
+      "pending": "email OTP",
+      "apiTokenExchangeCompleted": false
+    },
+    "lazadaDeveloper": {
+      "imAppKey": "137571",
+      "permissionGroupsActive": [
+        "Security",
+        "System Tools",
+        "ERP IM Chat",
+        "Product Management",
+        "Product Information",
+        "Order Information"
+      ],
+      "whitelistedCountries": [
+        "MY",
+        "PH",
+        "SG",
+        "TH",
+        "VN"
+      ]
+    },
+    "lazadaSeller": {
+      "site": "MY",
+      "displayName": "Couplet Seoul",
+      "access": "Seller Full Access",
+      "loginVerified": true
+    }
+  },
+  "remaining": {
+    "shopee": "fresh bound OAuth session and eight-shop readback after OTP; live key rotation before expiry",
+    "lazada": "IM Cross-border OAuth flow and real non-MY country grants; existing exact route is MY commerce-only",
+    "transactions": "actual product, customer reply and shipment targets/readback remain separate"
+  },
+  "externalActions": {
+    "newListingSubmitted": false,
+    "customerReplySent": false,
+    "shipmentCreated": false
+  },
+  "sources": [
+    "https://open.lazada.com/apps/doc/doc?docId=108260&nodeId=10777"
+  ]
+}

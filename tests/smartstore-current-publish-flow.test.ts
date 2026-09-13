@@ -88,7 +88,7 @@ function context(): PublishContext {
       name: "스마트스토어 현재 흐름 검사 상품",
       description: "로컬 fixture로만 검사하는 상품입니다.",
       sourceUrl: null,
-      status: "ready",
+      status: "active",
     },
     manualFields: {
       productName: "스마트스토어 현재 흐름 검사 상품",
@@ -615,7 +615,7 @@ test("SmartStore current UI draft survives save/reload and only complete input r
     }),
   });
   const blockedResponse = await route.POST(request(firstRestored));
-  assert.equal(blockedResponse.status, 422);
+  assert.equal(blockedResponse.status, 422, JSON.stringify(await blockedResponse.clone().json()));
   assert.equal(providerAudits[0]?.error, "NAVER_CREATE_CERTIFICATION_DECISION_REQUIRED");
   assert.deepEqual(providerAudits[0]?.calls, []);
   assert.equal(providerAudits[0]?.mutations, 0);
@@ -657,4 +657,13 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   assert.equal(mismatchPayload.jobCreated, false);
   assert.equal(routeAudit.claims, 1, "title/price/stock drift must stop before claim");
   assert.equal(providerAudits.length, 1, "title/price/stock drift must stop before gateway/provider");
+
+  const completeResponse = await route.POST(request(restored));
+  const completePayload = await completeResponse.json();
+  assert.equal(completeResponse.status, 200, JSON.stringify(completePayload));
+  assert.equal(routeAudit.claims, 2);
+  assert.equal(providerAudits.length, 2);
+  assert.equal(providerAudits[1].error, undefined);
+  assert.equal(providerAudits[1].creates, 1);
+  assert.equal(providerAudits[1].puts, 0);
 });

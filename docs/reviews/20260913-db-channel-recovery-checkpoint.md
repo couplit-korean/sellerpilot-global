@@ -1,3 +1,5 @@
+> 2026-09-13 17:20 KST 후속: 준비된 Shopee 개발자/셀러센터 로그인 확인. 현재 배포 `191e5cc`의 등록 어댑터 8개·재조회 승인과 gate 활성화 완료(관련 130개 검사/타입 통과). Lazada 국가별 IM 권한 기록 상호 해제 결함은 회귀 6개 후 운영 DB 적용. gateway ready/HTTP 200, eBay 시스템 알림 저장 18건. Shopee 추가 이메일 OTP·앱 키 만료 전 갱신, Lazada IM Cross-border OAuth 연결, 실제 거래 검증은 남음. [이번 승인·DB 후속 검토](20260913-resumed-channel-approvals.md). 아래는 이전 시점 기록이다.
+
 # DB·채널 복구 최신 체크포인트 — 2026-09-13 16:43 KST
 
 정규 폴더는 `/Users/kimchangheemac/dev/sellerpilot-app` 하나다. 운영 코드 `191e5cc02789d4b1dfdbedb0ae0ad08db07fa510`, Vercel `dpl_8FNnfFXHBU9n1eegYiRU3ztVMPix`, Supabase `sqaoqucxakebqkiygdxb`와 Mac gateway/AI 설치 버전을 맞췄다. 두 GitHub 원격의 `integration-aside`에 푸시했다. 이 문서만 추가한 후속 commit은 운영 코드 SHA와 구분한다.

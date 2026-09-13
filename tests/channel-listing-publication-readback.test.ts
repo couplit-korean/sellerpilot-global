@@ -9,6 +9,19 @@ import {
 import { executeChannelOperation } from "../lib/channels/operations";
 import type { RemoteResponse } from "../lib/channels/protocols";
 import { smartstoreListingCreateContract } from "../lib/channels/smartstore-listing-create-contract";
+import {
+  buildSmartstoreCategoryProductAttributes,
+  smartstoreCategoryAttributeAssignmentContract,
+  smartstoreCategoryAttributeAssignmentDigest,
+  smartstoreCategoryAttributeOfficialReadbackContract,
+  smartstoreCategoryAttributeOfficialReadbackDigest,
+} from "../lib/channels/smartstore-category-attribute-mapping";
+import {
+  buildSmartstoreCreateTransport,
+  smartstoreCreateBodyBindingSha256,
+  smartstoreCreateTransportStageContract,
+} from "../lib/channels/smartstore-create-transport";
+import { smartstoreCreateSourceBindingContract } from "../lib/server-smartstore-listing-create-binding";
 
 const fingerprint = "a".repeat(64);
 const smartstoreSellerSku = "SMARTSTORE-PUBLICATION-TEST";
@@ -128,6 +141,7 @@ function smartstoreStrictCreateBody() {
         claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3000, exchangeDeliveryFee: 6000, shippingAddressId: 123, returnAddressId: 456 },
       },
       detailAttribute: {
+        productAttributes: [],
         naverShoppingSearchInfo: { brandName: "TEST" },
         afterServiceInfo: { afterServiceTelephoneNumber: "02-1234-5678", afterServiceGuideContent: "판매자 안내에 따라 접수합니다." },
         originAreaInfo: { originAreaCode: "04", content: "대한민국" },
@@ -153,6 +167,61 @@ function smartstoreStrictCreateBody() {
       naverShoppingRegistration: true,
       channelProductName: "검증된 스마트스토어 신규 상품명",
       channelProductDisplayStatusType: "ON",
+    },
+  };
+}
+
+// Local executor fixtures model the records produced by category/source preparation
+// and durable transport staging. They do not authorize a production job.
+function smartstoreCreateArguments(intent: "safe_test" | "live") {
+  const body = smartstoreStrictCreateBody();
+  if (intent === "safe_test") {
+    body.originProduct.statusType = "SUSPENSION";
+    body.smartstoreChannelProduct.channelProductDisplayStatusType = "SUSPENSION";
+  }
+  const assignmentSource = {
+    contract: smartstoreCategoryAttributeAssignmentContract,
+    channel: "smartstore" as const, operation: "listing.create" as const,
+    environment: "production" as const, market: "KR" as const,
+    status: "confirmed" as const, categoryId: body.originProduct.leafCategoryId,
+    revision: 1, providedAttributes: [],
+  };
+  const assignment = {
+    ...assignmentSource,
+    digest: smartstoreCategoryAttributeAssignmentDigest(assignmentSource),
+  };
+  const officialSource = {
+    contract: smartstoreCategoryAttributeOfficialReadbackContract,
+    categoryId: assignment.categoryId,
+    assignmentRevision: assignment.revision, assignmentDigest: assignment.digest,
+    category: { id: assignment.categoryId, name: "생활용품", last: true },
+    attributes: [], attributeValues: [], attributeValueUnits: [],
+  };
+  const mapping = buildSmartstoreCategoryProductAttributes({
+    assignment,
+    officialReadback: {
+      ...officialSource,
+      digest: smartstoreCategoryAttributeOfficialReadbackDigest(officialSource),
+    },
+  });
+  assert.equal(mapping.ok, true);
+  const transport = buildSmartstoreCreateTransport(body);
+  return {
+    ...publicationArguments(intent), body,
+    sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+    sellerpilotSmartstoreCategoryAttributeMapping: mapping,
+    sellerpilotSmartstoreCreateTransport: transport,
+    sellerpilotSmartstoreCreateTransportStage: {
+      contract: smartstoreCreateTransportStageContract,
+      jobId: "11111111-1111-4111-8111-111111111111",
+      bodySha256: transport.bodySha256, bodyByteLength: transport.bodyByteLength,
+      staged: true,
+    },
+    sellerpilotSmartstoreCreateSource: {
+      contract: smartstoreCreateSourceBindingContract,
+      productName: body.originProduct.name, salePrice: body.originProduct.salePrice,
+      stockQuantity: body.originProduct.stockQuantity,
+      bodyBindingSha256: smartstoreCreateBodyBindingSha256(body),
     },
   };
 }
@@ -709,12 +778,18 @@ test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () 
 
 test("SmartStore safe-test create writes SUSPENSION and verifies it after origin-product GET", async () => {
   const originalFetch = globalThis.fetch;
+  const arguments_ = smartstoreCreateArguments("safe_test");
   let created = false;
   let createBody: Record<string, unknown> = {};
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const providerState = smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" });
+    providerState.originProduct = structuredClone(arguments_.body.originProduct);
+    providerState.smartstoreChannelProduct = {
+      ...providerState.smartstoreChannelProduct,
+      ...arguments_.body.smartstoreChannelProduct,
+    };
     calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
     if (url.endsWith("/v1/oauth2/token")) {
       return Response.json({ access_token: "naver-token", expires_in: 10_800 });
@@ -744,20 +819,16 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       channel: "smartstore",
       operation: "listing.create",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
-      arguments: {
-        ...publicationArguments("safe_test"),
-        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
-        body: smartstoreStrictCreateBody(),
-      },
+      arguments: arguments_,
       environment: "production",
     });
+    assert.equal(operation.ok, true, JSON.stringify(operation));
     assert.equal((createBody.originProduct as Record<string, unknown>).statusType, "SUSPENSION");
     assert.equal(
       (createBody.smartstoreChannelProduct as Record<string, unknown>).channelProductDisplayStatusType,
       "SUSPENSION",
     );
     assert.equal(calls.filter((call) => call === "GET /external/v2/products/origin-products/10000001").length, 3);
-    assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteState?.visibility, "non_public");
     assert.equal(operation.remoteState?.locale, "ko-KR");
@@ -768,10 +839,17 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
 
 test("SmartStore WAIT readback remains pending_review and is never counted as published", async () => {
   const originalFetch = globalThis.fetch;
+  const arguments_ = smartstoreCreateArguments("live");
   let created = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const providerState = smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" });
+    providerState.originProduct = { ...structuredClone(arguments_.body.originProduct), statusType: "WAIT" };
+    providerState.smartstoreChannelProduct = {
+      ...providerState.smartstoreChannelProduct,
+      ...arguments_.body.smartstoreChannelProduct,
+      channelProductDisplayStatusType: "WAIT",
+    };
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.endsWith("/v2/products") && init?.method === "POST") {
       created = true;
@@ -797,16 +875,12 @@ test("SmartStore WAIT readback remains pending_review and is never counted as pu
       channel: "smartstore",
       operation: "listing.create",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
-      arguments: {
-        ...publicationArguments("live"),
-        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
-        body: smartstoreStrictCreateBody(),
-      },
+      arguments: arguments_,
       environment: "production",
     });
-    assert.equal(operation.ok, true);
+    assert.equal(operation.ok, true, JSON.stringify(operation));
     assert.equal(operation.publicationFulfilled, false);
-    assert.equal(operation.remoteState?.visibility, "pending_review");
+    assert.equal(operation.remoteState?.visibility, "pending_review", JSON.stringify(operation));
   } finally {
     globalThis.fetch = originalFetch;
   }
