@@ -31,3 +31,12 @@ Latest stored reads: SmartStore product and customer inquiries, 11st Q&A and urg
 Release 390e93dd57791ecd2aa749ca7637d89e9820387f passed Vercel build/canary, was promoted, and is active in Supabase plus both Mac runtimes. Temu job 3357798f-d694-4c98-b988-5f7ccd4f975a succeeded with a completion receipt at 06:52:48 UTC after actual provider identity/after-sales reads. A subsequent periodic read was queued normally. eBay DB now stores the second system notice, including the absent recipient, with its real body preserved.
 
 Lazada bootstrap reached the provider but its HTTP completion was rejected (400): the completion schema had no Lazada inquiries continuation branch, although the provider reader emits durable session/message continuations. Added pure bounded validation for both cursor forms, explicit bootstrap, session count and paired IDs/timestamps; foreign/orphan/forward cursors are rejected. Regression failed before, 35 focused tests and TypeScript passed after. The actual first-page read-only probe passes the HTTP schema; it does not store a completion or reset the consumed bootstrap. Deploy this forward change and resume the existing lineage.
+
+## Shopee 인증 화면 연결 복구 (후속 배포)
+
+- 활성 credential의 대표 숍 1개는 실제 GET 성공, 나머지 7개는 `invalid_acceess_token` 403을 확인했다. 대표 숍 토큰의 다른 숍 재사용은 불가능하므로 복사하지 않는다.
+- `sellerpilot:shopee-exact-start` 발행만 있고 구독자가 없었던 화면을 기존 exact admin/전용 Mac 실행기에 연결했다. callback도 기존 일반 authorize로 빠지지 않고 exact bind로 전달한다.
+- 브라우저 저장 세션은 관리자 actor·credential·UUID·만료·43자 state를 검증한다. 공식 origin/path/partner/callback URI를 검증하고, callback은 main_account_id를 필수로 제출하여 DB의 기존 메인 계정/8개 숍 계약과 비교한다.
+- 운영 callback 스위치는 이미 `1`임을 값 노출 없이 확인했다. 환경변수를 추가하거나 변경하지 않았다. 실제 OAuth 성공과 8개 숍 재검증은 별도 증거가 필요하다.
+- Shopee/Lazada 화면 및 Shopee exact 계약 39개 테스트, TypeScript 검증 통과. 기존 Lazada exact 경로 회귀 테스트도 포함한다.
+- Lazada MY 첫 작업 `3ea61c22-20c8-4cd1-8705-6a476eef8cf7`과 연속 작업 `2d0e4c7f-dfff-40f7-a7c2-1f8049600e23` 모두 succeeded와 completion receipt 확인. 저장 13건은 모두 system 메시지이며 고객 문의가 아니다.

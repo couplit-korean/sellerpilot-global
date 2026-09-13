@@ -6519,6 +6519,28 @@ function readLazadaExactBrowserSession(actorId: string): LazadaExactBrowserSessi
   }
 }
 
+const shopeeExactBrowserKey = "sellerpilot.shopee-exact-session.v1";
+type ShopeeExactBrowserSession = {
+  sessionId: string;
+  credentialId: string;
+  actorId: string;
+  expiresAt: number;
+  state?: string;
+};
+
+function readShopeeExactBrowserSession(actorId: string): ShopeeExactBrowserSession | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(shopeeExactBrowserKey) ?? "null") as ShopeeExactBrowserSession | null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.actorId !== actorId
+      || (value.state !== undefined && !/^sellerpilot-shopee-exact-[A-Za-z0-9_-]{43}$/u.test(value.state))
+      || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userId, setUserId] = useState("");
@@ -6532,6 +6554,7 @@ export default function Home() {
   const [oauthToastMessage, setOAuthToastMessage] = useState("");
   const oauthHandled = useRef(false);
   const lazadaExactStarting = useRef(false);
+  const shopeeExactStarting = useRef(false);
   const accountSwitchingRef = useRef(false);
   const clearOAuthToastMessage = useCallback(() => setOAuthToastMessage(""), []);
 
@@ -6601,6 +6624,77 @@ export default function Home() {
     const listener = (event: Event) => { void startExact(event); };
     window.addEventListener("sellerpilot:lazada-exact-start", listener);
     return () => window.removeEventListener("sellerpilot:lazada-exact-start", listener);
+  }, [accessState, userId]);
+
+  useEffect(() => {
+    if (accessState !== "admin" || !userId) return;
+    const startShopeeExact = async (event: Event) => {
+      const credentialId = (event as CustomEvent<{ credentialId?: string }>).detail?.credentialId;
+      if (!credentialId || !/^[0-9a-f-]{36}$/i.test(credentialId) || shopeeExactStarting.current) return;
+      shopeeExactStarting.current = true;
+      try {
+        const { data, error } = await createSupabaseClient().auth.getSession();
+        const session = data.session;
+        if (error || !session || session.user.id !== userId) throw new Error("session_unavailable");
+        const postExact = async (body: object) => {
+          const response = await fetch("/api/admin/channel-credentials/shopee/exact", {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify(body),
+          });
+          const payload = await response.json().catch(() => ({ status: "invalid_response" })) as {
+            status?: string;
+            sessionId?: string;
+            authorizationUrl?: string;
+          };
+          return { response, payload };
+        };
+        let prepared = readShopeeExactBrowserSession(userId);
+        if (!prepared || prepared.credentialId !== credentialId) {
+          const { response, payload } = await postExact({ action: "prepare", credentialId });
+          if (!response.ok || payload.status !== "executor_required" || !payload.sessionId) throw new Error("prepare_blocked");
+          prepared = {
+            sessionId: payload.sessionId,
+            credentialId,
+            actorId: userId,
+            expiresAt: Date.now() + 9 * 60_000,
+          };
+          window.sessionStorage.setItem(shopeeExactBrowserKey, JSON.stringify(prepared));
+          setOAuthToastMessage(`Shopee exact 세션: ${prepared.sessionId}. 전용 실행기를 시작한 뒤 OAuth 재연결을 다시 눌러 주세요. 아직 공식 승인·토큰 교환 전입니다.`);
+          return;
+        }
+        const { response, payload } = await postExact({
+          action: "start",
+          sessionId: prepared.sessionId,
+          credentialId,
+        });
+        if (!response.ok || payload.status !== "ready" || !payload.authorizationUrl) {
+          setOAuthToastMessage(`Shopee 전용 실행기 준비를 확인해 주세요. 세션: ${prepared.sessionId}. 공식 승인은 시작하지 않았습니다.`);
+          return;
+        }
+        const url = new URL(payload.authorizationUrl);
+        const exactState = url.searchParams.get("state") ?? "";
+        if (url.origin !== "https://open.shopee.com" || url.pathname !== "/auth"
+          || url.username || url.password || url.searchParams.get("partner_id") !== "2031489"
+          || url.searchParams.get("auth_type") !== "seller" || url.searchParams.get("response_type") !== "code"
+          || url.searchParams.get("redirect_uri") !== new URL("/", window.location.origin).toString() || !/^sellerpilot-shopee-exact-[A-Za-z0-9_-]{43}$/u.test(exactState)) {
+          throw new Error("invalid_authorization_url");
+        }
+        window.sessionStorage.setItem(shopeeExactBrowserKey, JSON.stringify({ ...prepared, state: exactState }));
+        window.location.assign(url.toString());
+      } catch {
+        setOAuthToastMessage("Shopee exact 시작을 완료하지 못했습니다. 전용 실행기와 인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
+      } finally {
+        shopeeExactStarting.current = false;
+      }
+    };
+    const listener = (event: Event) => { void startShopeeExact(event); };
+    window.addEventListener("sellerpilot:shopee-exact-start", listener);
+    return () => window.removeEventListener("sellerpilot:shopee-exact-start", listener);
   }, [accessState, userId]);
 
   useEffect(() => {
@@ -6757,6 +6851,36 @@ export default function Home() {
           }
           setOAuthToastMessage("Lazada 승인을 전용 실행기에 결속했습니다. 토큰 교환·Vault 저장·판매자 읽기 검증 결과를 확인하고 있습니다.");
           window.sessionStorage.removeItem(lazadaExactBrowserKey);
+          return;
+        }
+        if (pendingChannelOAuth.channel === "shopee" && pendingChannelOAuth.state.startsWith("sellerpilot-shopee-exact-")) {
+          const exact = readShopeeExactBrowserSession(userId);
+          if (!exact || exact.state !== pendingChannelOAuth.state || !/^\d+$/.test(pendingChannelOAuth.mainAccountId ?? "")) {
+            if (exact) window.sessionStorage.removeItem(shopeeExactBrowserKey);
+            throw new Error("Shopee exact 세션과 승인 state가 일치하지 않아 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          }
+          const response = await fetch("/api/admin/channel-credentials/shopee/exact", {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${sessionData.session.access_token}`,
+            },
+            body: JSON.stringify({
+              action: "bind",
+              sessionId: exact.sessionId,
+              credentialId: exact.credentialId,
+              code: pendingChannelOAuth.code,
+              mainAccountId: pendingChannelOAuth.mainAccountId,
+              state: pendingChannelOAuth.state,
+            }),
+          });
+          const payload = await response.json().catch(() => ({ status: "invalid_response" })) as { status?: string };
+          if (!response.ok || payload.status !== "bound") {
+            throw new Error("Shopee exact 결속을 확인하지 못했습니다. 승인 코드를 다시 교환하지 않고 해당 세션을 확인해 주세요.");
+          }
+          setOAuthToastMessage("Shopee 승인을 전용 실행기에 결속했습니다. 토큰 교환·Vault 저장·판매자 읽기 검증 결과를 확인하고 있습니다.");
+          window.sessionStorage.removeItem(shopeeExactBrowserKey);
           return;
         }
         const response = await fetch(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {

@@ -29,8 +29,8 @@ export async function POST(request: NextRequest) {
     p_request: input.action === "bind" ? { code: input.code, mainAccountId: input.mainAccountId } : {},
   });
   if (error || !data || typeof data !== "object") return NextResponse.json({ status: "exact_executor_blocked" }, { status: 409 });
-  // Root callback UI still needs the exact-session dispatcher, not the legacy
-  // authorize endpoint. Fail closed until that reviewed deployment is present.
+  // Enable only on a deployment containing the actor/state-bound exact UI dispatcher.
+  // Keep a server-side release switch; never fall back to generic authorize.
   if (input.action === "start" && process.env.SELLERPILOT_SHOPEE_EXACT_CALLBACK_READY !== "1") {
     return NextResponse.json({ status: "callback_integration_required" }, { status: 503 });
   }
