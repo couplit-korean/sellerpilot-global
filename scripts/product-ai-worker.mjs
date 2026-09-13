@@ -32,6 +32,7 @@ import { isWorkerTokenConfigured, workerClaimBackoffMs } from "./worker-claim-ba
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
 import { optimizePngLocally } from "./product-ai-worker.oxipng-lossless.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
+import { generateStudioTextWithCheckpoint } from "./studio-text-generation.mjs";
 import { firstDraftUsageLimitWaitMs, readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
 import {
     buildFirstDraftImageQualityReceipt,
@@ -2229,6 +2230,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
         let acceptedBackgroundAuditFeedback = null;
         let observedBackgroundProps = null;
         let labelReferenceFiles = [];
+        let labelSupportReferenceFiles = [];
         let missingIdentityEvidence = false;
         let usedVerifiedSourceComposite = false;
         let sourceForegroundSha256 = null;
@@ -2294,9 +2296,15 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                         : await renderIdentityOnNeutralCanvas(source.foreground, preset);
                 await writeFile(outputFile, normalized);
                 await writeFile(sourcePixelBaselineFile, normalized, { flag: "wx", mode: 0o400 });
-                labelReferenceFiles = preset.id === "detail-package"
+                // Compare at the exact rendered scale/layout. OCR on the
+                // original cutout can read different tokens after the trusted
+                // source is resized into a panel or a two-source board.
+                // The separate baseline and candidate stay byte-checked below;
+                // selected source views remain additional OCR references.
+                labelReferenceFiles = [sourcePixelBaselineFile];
+                labelSupportReferenceFiles = preset.id === "detail-package"
                     ? packageEvidencePlanSources.map((candidate) => candidate.referenceFile)
-                    : [sourcePixelBaselineFile];
+                    : [];
             }
         }
         else {
@@ -2585,6 +2593,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                             requiredReferencePath,
                             referencePaths: [
                                 ...requiredReferencePaths,
+                                ...labelSupportReferenceFiles,
                                 ...referenceIndexes.map((index) => imageFiles[index].file),
                             ],
                             leaseSignal,
@@ -3758,16 +3767,23 @@ async function processJob(job) {
             ? JSON.stringify(references.map((reference) => ({ url: reference.url, title: reference.title, status: reference.status, text: reference.text }))).slice(0, 60000)
             : "참고 링크 없음 · 판매자 입력 텍스트만 사용";
         const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
-        let result = await generateSegmentedStudioResult({
+        const studioText = await generateStudioTextWithCheckpoint({
             job,
-            jobDir,
             imageFiles,
             referenceText,
             competitorContext,
             referenceWarnings,
-            claimToken,
-            leaseSignal: jobHeartbeat.signal,
+            cacheDir: join(homedir(), "Library", "Application Support", "SellerPilot", "studio-text-checkpoints"),
+            hmacKey: createHash("sha256").update("sellerpilot-studio-text-checkpoint/v1\0").update(aiWorkerToken).digest(),
+            validateResult: (candidate) => cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(candidate)).success,
+            generate: () => generateSegmentedStudioResult({
+                job, jobDir, imageFiles, referenceText, competitorContext, referenceWarnings,
+                claimToken, leaseSignal: jobHeartbeat.signal,
+            }),
         });
+        await assertJobLeaseHealthy();
+        let result = cliStudioResultSchema.parse(normalizeStudioResultForTerminalValidation(studioText.result));
+        if (studioText.digest) console.log(`[상품 본문 ${studioText.reused ? "재사용" : "보존"}] ${job.id} · sha256=${studioText.digest}`);
         const preparedFacts = firstDraftImageProductFactsSchema.safeParse(job.request?.firstDraftProductFacts);
         if (job.request?.firstDraftSourceResearchJobId && preparedFacts.success) {
             result = bindPreparedImageProduct(result, preparedFacts.data);

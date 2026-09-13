@@ -599,10 +599,30 @@ test("individual regeneration rejects exact and near duplicates of the pre-repla
   assert.equal(near?.distance, 1);
 });
 
-test("both full-series and individual-regeneration worker paths use the same hash gate and initial-plus-three-retry loop", async () => {
+test("first-draft, remaining studio assets and individual regeneration share the bounded image gate while prepared assets bypass regeneration", async () => {
   const worker = await readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
   const claimRoute = await readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8");
-  assert.equal(worker.match(/await generateDistinctAsset\(\{/g)?.length, 2);
+  const firstDraftStart = worker.indexOf("async function generateVerifiedFirstDraftAssets(");
+  const firstDraftEnd = worker.indexOf("function reusableFirstDraftContext(", firstDraftStart);
+  const regenerationStart = worker.indexOf('if (job.kind === "product_asset_regeneration")');
+  const studioStart = worker.indexOf('if (job.kind !== "product_studio")', regenerationStart);
+  assert.ok(firstDraftStart >= 0 && firstDraftEnd > firstDraftStart);
+  assert.ok(regenerationStart >= 0 && studioStart > regenerationStart);
+  const firstDraft = worker.slice(firstDraftStart, firstDraftEnd);
+  const regeneration = worker.slice(regenerationStart, studioStart);
+  const studio = worker.slice(studioStart);
+  assert.match(firstDraft, /coreFirstDraftAssetIds\.filter\(\(assetId\) => !completedIds\.has\(assetId\)\)/);
+  assert.match(firstDraft, /await generateDistinctAsset\(\{[\s\S]*firstDraftScenes: preparedDetailProfile,[\s\S]*startingAttempt: attempt,[\s\S]*maximumAttempt: MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
+  assert.match(regeneration, /shots: existingShots, backgroundShots: existingBackgroundShots,[\s\S]{0,20}= previousComparisons/);
+  assert.match(regeneration, /await generateDistinctAsset\(\{[\s\S]*existingShots,[\s\S]*existingBackgroundShots,[\s\S]*comparisonShots: settingShotAssetIds\.includes\(preset\.id\) \? crossProductArchive\.shots : \[\]/);
+  assert.match(studio, /remainingImagePresets = imagePresets\.filter\(\(preset\) => !reusableFirstDraftAssets\.has\(preset\.id\)\)/);
+  assert.match(studio, /specs: remainingImagePresets,[\s\S]*generateCandidate:[\s\S]*await generateDistinctAsset\(\{/);
+  const reuseUploadStart = studio.indexOf("for (const assetId of coreFirstDraftAssetIds)");
+  const remainingBatchStart = studio.indexOf("await runDeterministicProductImageBatches(", reuseUploadStart);
+  assert.ok(reuseUploadStart >= 0 && remainingBatchStart > reuseUploadStart);
+  const reuseUpload = studio.slice(reuseUploadStart, remainingBatchStart);
+  assert.match(reuseUpload, /imageBytes: reused\.bytes/);
+  assert.doesNotMatch(reuseUpload, /generateDistinctAsset|runCodex/, "verified prepared bytes are copied without a new generation call");
   assert.match(worker, /for \(let attempt = startingAttempt; attempt <= maximumAttempt; attempt \+= 1\)/);
   assert.match(worker, /maximumAttempt > MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
   assert.match(worker, /await runDeterministicProductImageBatches\(\{/);
@@ -656,7 +676,8 @@ test("both full-series and individual-regeneration worker paths use the same has
   const retryComparisonGate = worker.match(/const safeForRetryComparison = parsed\.data\.confidence[\s\S]*?&& !parsed\.data\.humanPresent;/)?.[0] ?? "";
   assert.match(retryComparisonGate, /confidence === "high"/);
   assert.doesNotMatch(retryComparisonGate, /reservedZoneClear|assignedLocationSatisfied|assignedCameraSatisfied/);
-  assert.match(worker, /expectedPropDescription: backgroundContract\.prop\.description/);
+  assert.match(worker, /expectedPropDescription: firstDraftScenes \? "No specific fixture is required; record only visible fixed architectural cues\." : backgroundContract\.prop\.description/);
+  assert.match(worker, /backgroundProps = firstDraftScenes \? observedBackgroundProps : \[backgroundContract\.prop\.key\]/, "prepared scenes retain observed fixtures while full-studio keeps its assigned fixture contract");
   assert.match(worker, /retryAuditFeedback = mergeSettingShotRetryAuditFeedback\(/);
   assert.match(worker, /\.\.\.retryConflictAssetIds,[\s\S]*error\?\.conflictingAssetIds/);
   assert.match(worker, /Source-composited output duplicate reason[\s\S]*retryAuditFeedback = mergeSettingShotRetryAuditFeedback|retryAuditFeedback = mergeSettingShotRetryAuditFeedback\([\s\S]*Source-composited output duplicate reason/);
@@ -742,8 +763,13 @@ test("individual regeneration fetches the cross-product archive only for setting
   );
   assert.match(
     worker,
-    /if \(job\.kind !== "product_studio"\)[\s\S]{0,500}const \[imageFiles, crossProductArchive\] = await Promise\.all\(\[\s*downloadInputs\(job, jobDir, jobHeartbeat\.signal\),\s*downloadCrossProductComparisonArchive\(job, jobDir, jobHeartbeat\.signal\),/,
+    /const \[imageFiles, crossProductArchive, reusableFirstDraftCache\] = await Promise\.all\(\[\s*downloadInputs\(job, jobDir, jobHeartbeat\.signal\),\s*downloadCrossProductComparisonArchive\(job, jobDir, jobHeartbeat\.signal\),\s*prepareReusableFirstDraftCache\(job, jobDir, jobHeartbeat\.signal\),/,
   );
+  const studio = worker.slice(worker.indexOf('if (job.kind !== "product_studio")'));
+  const earlyCache = studio.indexOf("prepareReusableFirstDraftCache(");
+  const textGeneration = studio.indexOf("generateSegmentedStudioResult(");
+  assert.ok(earlyCache >= 0 && textGeneration > earlyCache, "signed URLs are consumed before long-running text generation");
+  assert.match(studio, /loadReusableFirstDraftAssets\([\s\S]{0,240}reusableFirstDraftCache,/);
 });
 
 test("cross-product UUID fences canonicalize case variants before self and duplicate checks", async () => {
@@ -799,7 +825,8 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /planIdentityEvidenceAttempt\(sourceCandidates\.length, attempt\)/);
   assert.match(worker, /packageEvidencePlan\?\.mode === "two-source-board"[\s\S]*renderIdentityEvidenceBoard\([\s\S]*packageEvidencePlanSources\.map\(\(candidate\) => candidate\.foreground\)/);
   assert.match(worker, /packageEvidencePlan\?\.mode === "single-source-panel"[\s\S]*renderIdentityEvidencePanel\([\s\S]*source\.foreground/);
-  assert.match(worker, /labelReferenceFiles = preset\.id === "detail-package"[\s\S]*candidate\.referenceFile/);
+  assert.match(worker, /labelReferenceFiles = \[sourcePixelBaselineFile\];[\s\S]*labelSupportReferenceFiles = preset\.id === "detail-package"[\s\S]*candidate\.referenceFile/);
+  assert.match(worker, /referencePaths: \[[\s\S]*\.\.\.requiredReferencePaths,[\s\S]*\.\.\.labelSupportReferenceFiles,/);
   assert.match(worker, /for \(const requiredReferencePath of requiredReferencePaths\)[\s\S]*verifyGeneratedLabelFidelity\([\s\S]*referencePaths: \[[\s\S]*\.\.\.requiredReferencePaths,[\s\S]*\.\.\.referenceIndexes\.map/);
   assert.match(worker, /hasNextPackageEvidencePlan = preset\.id === "detail-package"[\s\S]*planIdentityEvidenceAttempt\(identitySourceCandidateCount, attempt \+ 1\)/);
   assert.match(worker, /rejectedSourceEvidenceShots[\s\S]*\.\.\.existingShots, \.\.\.comparisonShots, \.\.\.rejectedSourceEvidenceShots/);
@@ -807,7 +834,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /strictLabelEvidenceAssetIds = new Set\(\["detail-feature", "detail-package"\]\)/);
   assert.match(worker, /sourcePixelEvidencePolicy:[\s\S]*strictLabelEvidenceAssetIds\.has\(preset\.id\)[\s\S]*"strict-label"[\s\S]*"crop"/);
   assert.match(worker, /sourcePixelBaselineFile[\s\S]*renderIdentityOnNeutralCanvas[\s\S]*writeFile\(sourcePixelBaselineFile/);
-  assert.match(worker, /: \[sourcePixelBaselineFile\]/);
+  assert.match(worker, /labelReferenceFiles = \[sourcePixelBaselineFile\]/);
   assert.match(worker, /labelCandidateSnapshotFile[\s\S]*expectedPixelDigest = imageLabelPixelDigest\(normalized\)[\s\S]*assertSourcePixelLabelBaseline/);
   assert.match(worker, /candidatePath: labelCandidateSnapshotFile/);
   assert.match(worker, /finally \{[\s\S]*await assertLabelInputsIntact\(\)/);
@@ -825,7 +852,9 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
   assert.match(worker, /sourceHandle\.readFile\(\)/);
   assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
-  assert.match(worker, /if \(backgroundOnly\) \{[\s\S]*normalizeIdentityBackgroundPlate\(generated, generationPreset\)[\s\S]*writeFile\(outputFile, generated\)[\s\S]*assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
+  assert.match(worker, /if \(backgroundOnly\) \{[\s\S]*normalizeIdentityBackgroundPlate\(generated, generationPreset, firstDraftScenes \? "catalog-scenes" : undefined\)[\s\S]*writeFile\(outputFile, generated\)[\s\S]*assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode, firstDraftScenes \? "catalog-scenes" : undefined\)/);
+  assert.match(worker, /const mayRepairSupportBoundary = !firstDraftScenes && attempt === maximumAttempt/, "catalog validation cannot silently enter the full-studio support repair");
+  assert.match(worker, /executeSourceProductCutout\(firstDraftScenes \? "background-catalog" : "background"[\s\S]*auditGeneratedIdentityBackground\(\{\s*reviewProfile: firstDraftScenes \? "catalog-scenes" : undefined,/, "pixel and semantic validators receive the same explicit background profile");
   assert.match(worker, /attempt === maximumAttempt[\s\S]*backgroundContactMode === "surface-supported"[\s\S]*isRepairableMissingIdentitySupportBoundary\(error\)/);
   assert.doesNotMatch(worker, /mayRepairSupportBoundary[\s\S]{0,180}preset\.id === "portrait"/);
   assert.match(worker, /repairMissingIdentitySupportSurface\(generated, generationPreset\)[\s\S]*assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
@@ -842,6 +871,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(cutout, /VNDetectHumanRectanglesRequest/);
   assert.match(cutout, /for quarterTurns in 1\.\.\.3/);
   assert.match(cutout, /barcodePayloads\.insert\(payload\)\.inserted/);
-  assert.match(cutout, /CommandLine\.arguments\[1\] == "background"/);
+  assert.match(cutout, /\["background", "background-catalog"\]\.contains\(CommandLine\.arguments\[1\]\)/);
+  assert.match(cutout, /guardBackground\(at:[\s\S]{0,140}catalogScenes: CommandLine\.arguments\[1\] == "background-catalog"\)/);
   assert.match(worker, /front\.report\.inputIndex === evidence\.report\.inputIndex/);
 });

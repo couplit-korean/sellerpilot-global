@@ -130,3 +130,17 @@ test("AI worker distinguishes the exact gateway rate limit without leaking upstr
     assert.equal(sellerSafeAiJobFailure(value), "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.");
   }
 });
+test("known label OCR failures survive completion sanitization without exposing raw OCR tokens", () => {
+  const safe = sellerSafeAiJobFailure(new Error("detail-package 라벨 OCR 검증 실패: unsupported-token, missing-token"));
+  assert.equal(safe, "포장 근거 이미지의 라벨 검증에 실패했습니다. 표시된 글자·수량·바코드를 확인해 주세요. [image-package-label-fidelity]");
+  assert.equal(sellerSafeAiJobFailure(safe), safe);
+  assert.match(sellerSafeAiJobFailure("detail-feature 라벨 OCR 검증 실패: missing-token"), /\[image-label-fidelity\]/);
+  for (const raw of [
+    "detail-package 라벨 OCR 검증 실패: unsupported-token, customer-private-value",
+    "detail-package 라벨 OCR 검증 실패: missing-token /Users/private/photo.png",
+    "detail-package 라벨 OCR 검증 실패: missing-token password=private",
+    "unknown-asset 라벨 OCR 검증 실패: missing-token",
+  ]) {
+    assert.equal(sellerSafeAiJobFailure(raw), "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.");
+  }
+});

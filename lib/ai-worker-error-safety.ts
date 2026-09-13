@@ -4,6 +4,9 @@ const GENERIC_AI_JOB_FAILURE = "AI 상품 작업을 완료하지 못했습니다
 const AI_TOOL_CONNECTION_FAILURE = "AI 생성 도구 연결이 중단되었습니다. 작업자를 다시 시작한 뒤 다시 실행해 주세요.";
 const AI_IMAGE_RESPONSE_FAILURE = "AI 이미지 생성 도구가 올바른 결과를 반환하지 못했습니다. 작업자를 다시 시작한 뒤 다시 실행해 주세요.";
 const AI_GATEWAY_RATE_LIMIT_FAILURE = "AI 제공자의 요청 한도에 도달했습니다. 연속 재시도하지 말고 잠시 후 같은 작업을 다시 실행해 주세요. [gateway-rate-limited]";
+const AI_PACKAGE_LABEL_FAILURE = "포장 근거 이미지의 라벨 검증에 실패했습니다. 표시된 글자·수량·바코드를 확인해 주세요. [image-package-label-fidelity]";
+const AI_IMAGE_LABEL_FAILURE = "상품 이미지의 라벨 검증에 실패했습니다. 표시된 글자·수량을 확인해 주세요. [image-label-fidelity]";
+const IMAGE_LABEL_FAILURE_PATTERN = /^(hero|square|portrait|wide|detail-(?:overview|feature|use|package|routine|scale|storage|context|material|dimensions|contents|care)) 라벨 OCR 검증 실패: (?:token-count-overflow|reference-token-empty|required-token-empty|candidate-token-empty|required-token-not-in-reference|unsupported-token|missing-token|report-token-mismatch)(?:, (?:token-count-overflow|reference-token-empty|required-token-empty|candidate-token-empty|required-token-not-in-reference|unsupported-token|missing-token|report-token-mismatch))*$/;
 
 const CONNECTION_FAILURE_PATTERN = /(?:authrequired|www_authenticate|bearer\s+realm|rmcp::|transport\s+channel\s+closed|mcp\.[a-z0-9.-]+)/i;
 const PROMPT_LEAK_PATTERN = /(?:```|sketch-to-render|primary\s+request:|style\/medium:|subject:|features\s+enabled:|under-development\s+features)/i;
@@ -30,6 +33,8 @@ const SAFE_SELLER_FACING_MESSAGES = new Set<string>([
   AI_IMAGE_RESPONSE_FAILURE,
   AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
   AI_GATEWAY_RATE_LIMIT_FAILURE,
+  AI_PACKAGE_LABEL_FAILURE,
+  AI_IMAGE_LABEL_FAILURE,
   ...Object.values(STUDIO_SEGMENT_FAILURES),
 ]);
 
@@ -62,6 +67,8 @@ export function sellerSafeAiJobFailure(error: unknown) {
   if (PRIVATE_RUNTIME_PATTERN.test(compact) || SECRET_MATERIAL_PATTERN.test(compact)) {
     return GENERIC_AI_JOB_FAILURE;
   }
+  const imageLabelFailure = IMAGE_LABEL_FAILURE_PATTERN.exec(compact);
+  if (imageLabelFailure) return imageLabelFailure[1] === "detail-package" ? AI_PACKAGE_LABEL_FAILURE : AI_IMAGE_LABEL_FAILURE;
   // Upstream text is untrusted even when it contains Korean. Only the exact
   // fixed messages and structured reason codes above may reach seller UI.
   return GENERIC_AI_JOB_FAILURE;
