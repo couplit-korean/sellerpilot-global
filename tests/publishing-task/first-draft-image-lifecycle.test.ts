@@ -29,11 +29,14 @@ function resultWithLineage(
   };
 }
 
-test("six source-photo catalog URLs stay provisional rather than becoming generated-complete", () => {
+test("source-photo catalog URLs stay provisional rather than becoming generated-complete", () => {
   const snapshot = classifyFirstDraftImageResult(resultWithLineage(["source-photo-catalog"]));
   assert.equal(snapshot.phase, "source-photo-catalog");
   assert.equal(snapshot.images.length, 0);
   assert.equal(snapshot.confirmedGeneratedCount, 0);
+  const hidden = resultWithLineage(["source-photo-catalog"]);
+  hidden.generatedImages = coreFirstDraftAssetIds.map(id => ({ id, url: null }));
+  assert.deepEqual(classifyFirstDraftImageResult(hidden), { phase: "source-photo-catalog", images: [], confirmedGeneratedCount: 0 });
 });
 
 test("missing lineage, partial assets, mixed lineage, and genuine eight-role completion are distinct", () => {
