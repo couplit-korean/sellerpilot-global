@@ -34,15 +34,15 @@ function rejectionMessage(reason: FirstDraftImageRejection) {
   if (reason === "result_invalid" || reason === "next_result_invalid" || reason === "preflight_invalid") {
     return "1차 작업 결과의 이미지 계보를 확인하지 못했습니다.";
   }
-  return "1차 작업 결과의 이미지 6장 계보를 확인하지 못했습니다.";
+  return "1차 작업 결과의 이미지 8장 계보를 확인하지 못했습니다.";
 }
 
 /**
  * Operator entry point for the Mac first-draft image lane.
  *
  * The Vercel preflight cannot call the image model for this account, so a
- * completed research job whose six canonical assets are `source-photo-catalog`
- * crops is queued here. The Mac worker draws the six concept images and adopts
+ * completed research job whose eight canonical assets are `source-photo-catalog`
+ * crops is queued here. The Mac worker draws the eight concept images and adopts
  * them back into the same result through the worker endpoints.
  */
 export async function POST(request: Request) {
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
         || typeof asset.signedUrl !== "string"
         || !asset.signedUrl)) {
     return NextResponse.json({
-      message: "1차 작업의 이미지 6장 경로를 확인하지 못했습니다. 1차 자동생성을 다시 실행해 주세요.",
+      message: "1차 작업의 이미지 8장 경로를 확인하지 못했습니다. 1차 자동생성을 다시 실행해 주세요.",
       code: "asset_storage_missing",
     }, { status: 409, headers: noStore });
   }

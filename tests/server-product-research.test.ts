@@ -365,7 +365,7 @@ test("permanent gateway failures stop instead of leaving mobile research polling
   }
 });
 
-test("one first-stage claim starts research and the six-image preflight together", async () => {
+test("one first-stage claim starts research and the eight-image preflight together", async () => {
   const researchGate = deferred<ServerProductResearchResult>();
   const preflightGate = deferred<ReturnType<typeof validPreflightResult>>();
   let researchStarted = false;
@@ -442,7 +442,7 @@ test("a failed research half removes a completed preflight and never marks the c
   assert.equal(calls.includes("sellerpilot_service_complete_product_research_ai_job"), false);
 });
 
-test("default safe preflight skips every image provider and builds six distinct source-photo composites", async () => {
+test("default safe preflight skips every image provider and builds eight distinct source-photo composites", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 205, g: 45, b: 65 } },
   }).png().toBuffer();
@@ -490,10 +490,10 @@ test("default safe preflight skips every image provider and builds six distinct 
 
   assert.equal(segmentationCalls, 0, "safe mode must not spend a segmentation request");
   assert.equal(backgroundCalls, 0, "fallback must not ask a model to redraw the product or background");
-  assert.equal(uploads.size, 6);
+  assert.equal(uploads.size, coreFirstDraftAssetIds.length);
   assert.deepEqual(Object.keys(result.asset_storage_paths), [...coreFirstDraftAssetIds]);
   assert.equal(Object.values(result.preflightAssetLineage).every((item) => item.auditMode === "source-photo-catalog"), true);
-  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, 6);
+  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, coreFirstDraftAssetIds.length);
   assert.deepEqual(removed, []);
   let savedBytes = 0;
   for (const [variant, id] of coreFirstDraftAssetIds.entries()) {
@@ -507,11 +507,11 @@ test("default safe preflight skips every image provider and builds six distinct 
     assert.equal(createHash('sha256').update(uploaded).digest('hex'), result.preflightAssetLineage[id].digest);
     savedBytes += rendered.byteLength - uploaded.byteLength;
   }
-  assert.ok(savedBytes > 0, 'all six preflight roles must pass through final PNG compression before their upload digests');
+  assert.ok(savedBytes > 0, 'all eight preflight roles must pass through final PNG compression before their upload digests');
   assert.equal(createHash('sha256').update(source).digest('hex'), digest, 'source photo must remain unchanged');
 });
 
-test("successful text research plus a segmentation failure still completes with exactly six source-photo assets", async () => {
+test("successful text research plus a segmentation failure still completes with exactly eight source-photo assets", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 135, g: 75, b: 195 } },
   }).png().toBuffer();
@@ -570,10 +570,10 @@ test("successful text research plus a segmentation failure still completes with 
     Object.values(completedLineage).every((item) => item.auditMode === "source-photo-catalog"),
     true,
   );
-  assert.equal(new Set(Object.values(completedLineage).map((item) => item.digest)).size, 6);
+  assert.equal(new Set(Object.values(completedLineage).map((item) => item.digest)).size, coreFirstDraftAssetIds.length);
 });
 
-test("one image 429 stops later model calls and rebuilds all six from the source photo", async () => {
+test("one image 429 stops later model calls and rebuilds all eight from the source photo", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 35, g: 165, b: 105 } },
   }).png().toBuffer();
@@ -626,7 +626,7 @@ test("one image 429 stops later model calls and rebuilds all six from the source
     Object.values(result.preflightAssetLineage).every((item) => item.auditMode === "source-photo-catalog"),
     true,
   );
-  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, 6);
+  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, coreFirstDraftAssetIds.length);
 });
 
 test("source-photo digest drift fails before image generation and clears canonical paths", async () => {
@@ -913,9 +913,9 @@ test("segmented preflight caps each claim at one image call and records uploaded
   });
 
   assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY, 1);
-  assert.equal(backgroundCalls, 6);
+  assert.equal(backgroundCalls, coreFirstDraftAssetIds.length);
   assert.equal(peak, 1);
-  assert.equal(uploaded.size, 6);
+  assert.equal(uploaded.size, coreFirstDraftAssetIds.length);
   for (const assetId of coreFirstDraftAssetIds) {
     const path = result.asset_storage_paths[assetId];
     const bytes = uploaded.get(path);
@@ -1000,10 +1000,10 @@ test("three first-stage claims keep image generation concurrent without exceedin
   }));
 
   assert.equal(SERVER_PRODUCT_RESEARCH_WAKE_WIDTH, 3);
-  assert.equal(backgroundCalls, 18);
+  assert.equal(backgroundCalls, 3 * coreFirstDraftAssetIds.length);
   assert.equal(peak, 3);
   assert.equal(results.length, 3);
-  assert.equal(results.every((result) => Object.keys(result.asset_storage_paths).length === 6), true);
+  assert.equal(results.every((result) => Object.keys(result.asset_storage_paths).length === coreFirstDraftAssetIds.length), true);
 });
 
 test("a hard preflight storage upload failure removes every canonical claim path without fallback", async () => {
@@ -1396,7 +1396,7 @@ test("an enqueue wake claims a bounded three-job burst so an older job cannot st
   assert.ok(outcomes.every((outcome) => outcome.status === "fulfilled"));
 });
 
-test("three safe-mode claims share one analyze permit and each complete six catalog assets without image-provider calls", async () => {
+test("three safe-mode claims share one analyze permit and each complete eight catalog assets without image-provider calls", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 65, g: 135, b: 205 } },
   }).png().toBuffer();
@@ -1482,7 +1482,7 @@ test("three safe-mode claims share one analyze permit and each complete six cata
   assert.equal(peakAnalyze, 1);
   assert.equal(segmentationCalls, 0);
   assert.equal(backgroundCalls, 0);
-  assert.equal(uploads.size, 18);
+  assert.equal(uploads.size, 3 * coreFirstDraftAssetIds.length);
   assert.equal(completedPayloads.length, 3);
   assert.deepEqual(bodies, Array.from({ length: 3 }, () => ({ ok: true, status: "succeeded", processed: 1 })));
   for (const payload of completedPayloads) {
@@ -1491,10 +1491,10 @@ test("three safe-mode claims share one analyze permit and each complete six cata
       auditMode: string;
       digest: string;
     }>;
-    assert.equal(Object.keys(paths).length, 6);
+    assert.equal(Object.keys(paths).length, coreFirstDraftAssetIds.length);
     assert.equal(Object.values(paths).every((path) => uploads.has(path)), true);
     assert.equal(Object.values(lineage).every((item) => item.auditMode === "source-photo-catalog"), true);
-    assert.equal(new Set(Object.values(lineage).map((item) => item.digest)).size, 6);
+    assert.equal(new Set(Object.values(lineage).map((item) => item.digest)).size, coreFirstDraftAssetIds.length);
   }
 });
 
@@ -1577,7 +1577,7 @@ test("multi-photo first draft uses side and back cutouts, retains label facts an
     },
   });
   assert.deepEqual(new Set(segmented), new Set(["main", "extra-1", "extra-3"]));
-  assert.equal(segmented.length, 3, "each physical view is segmented only once across six shots");
+  assert.equal(segmented.length, 3, "each physical view is segmented only once across eight shots");
   assert.equal(output.sourcePhotoEvidence?.length, 4);
   assert.equal(output.sourcePhotoEvidence?.[2].facts[0].value, "사과초모식초 5%");
   assert.deepEqual(new Set(Object.values(output.preflightAssetLineage).map(value => value.sourceRole)), new Set(["main", "left", "back"]));

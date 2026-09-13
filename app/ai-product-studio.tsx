@@ -747,7 +747,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         setDetailPageVersion(null);
       }
       // 같은 자산 id(portrait·wide·detail-*)의 고품질 생성 결과를 1차 이미지 자리에도
-      // 반영해, 1차 6장이 상세페이지와 같은 파이프라인 결과로 갱신되게 한다.
+      // 반영해, 1차 8장이 상세페이지와 같은 파이프라인 결과로 갱신되게 한다.
       onGeneratedAssets?.(generatedImages ?? []);
       const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/admin/products/snapshot", {
         method: "POST",
@@ -770,8 +770,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       submittedIntakesByJobIdRef.current.delete(job.jobId);
       if (canDisplay()) onResultReady?.(nextResult, productId, job.jobId, submittedIntake);
       if (studioMountedRef.current) notify(recovered
-        ? "이전 서버 AI 작업을 복구해 핵심 생활 설정샷 6개와 대표·근거 보조 자산, 상세페이지 AI 초안/내부 draft를 준비했습니다. 외부 채널에는 게시하지 않았습니다."
-        : "핵심 생활 설정샷 6개와 대표·근거 보조 자산, 상세페이지 AI 초안/내부 draft를 준비했습니다. 외부 채널에는 게시하지 않았습니다.");
+        ? "이전 서버 AI 작업을 복구해 핵심 생활 설정샷 8개와 대표·근거 보조 자산, 상세페이지 AI 초안/내부 draft를 준비했습니다. 외부 채널에는 게시하지 않았습니다."
+        : "핵심 생활 설정샷 8개와 대표·근거 보조 자산, 상세페이지 AI 초안/내부 draft를 준비했습니다. 외부 채널에는 게시하지 않았습니다.");
     } finally {
       jobMonitors.end(job.jobId, monitor);
     }
@@ -1452,12 +1452,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>검토 완료 정보로 상세페이지 제작</h3><p>1차에서 만든 핵심 이미지 8장을 그대로 재사용하고, 사람이 확인한 상품정보를 기준으로 후속 자산과 상세페이지 내부 draft를 서버에서 준비합니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "상세페이지 제작 중" : "Supabase 큐 대기 중" : result ? "상세페이지 준비됨" : submissionMode === "manual_mvp" ? "AI 없이 원본 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "상세페이지 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "상세페이지 제작 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? submissionUnavailableMessage : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 상품 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : result ? "상세페이지 다시 만들기" : "상세페이지 제작 시작"}</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "상세페이지 제작 중" : "Supabase 큐 대기 중" : result ? "상세페이지 준비됨" : submissionMode === "manual_mvp" ? "AI 없이 원본 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "상세페이지 처리 중" : !hasResearchDraft ? "1차 정보·8장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "상세페이지 제작 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? submissionUnavailableMessage : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 상품 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !hasResearchDraft ? "1차 정보·8장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : result ? "상세페이지 다시 만들기" : "상세페이지 제작 시작"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
         <span><Sparkles size={15} /><b>상세 기획</b><small>8–12개 이미지 중심 섹션</small></span>
-        <span><ImageIcon size={15} /><b>자동 이미지</b><small>핵심 생활 설정샷 6개 · 대표/근거 보조 자산 10개</small></span>
+        <span><ImageIcon size={15} /><b>자동 이미지</b><small>핵심 생활 설정샷 8개 · 대표/근거 보조 자산 8개</small></span>
         <a href={CODEX_IMAGE_SOURCE} target="_blank" rel="noreferrer"><WandSparkles size={15} /><b>Codex Image 규칙</b><small>gpt-image-2 · MIT</small><ExternalLink size={12} /></a>
       </div>
       <div className="studio-workspace">
@@ -1468,7 +1468,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
             {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           <details className="studio-detail-assets-disclosure">
-            <summary><span><b>상세페이지 이미지 {detailThumbnails.length || detailPresets.length}종</b><small>핵심 생활 설정샷 6개와 대표·근거 보조 자산을 상세 본문에 연결</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
+            <summary><span><b>상세페이지 이미지 {detailThumbnails.length || detailPresets.length}종</b><small>핵심 생활 설정샷 8개와 대표·근거 보조 자산을 상세 본문에 연결</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
             <div className="thumbnail-grid detail-assets">
               {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
             </div>

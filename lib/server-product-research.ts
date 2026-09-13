@@ -845,7 +845,9 @@ async function loadPreflightMainSource(
   } satisfies ServerStudioSource;
 }
 
-const catalogBackgrounds = ["#f7f3ed", "#eef3f6", "#f5f0e8", "#eef2ea", "#f1edf5", "#edf3f2"] as const;
+// Keep the internal catalog distinct for all eight prepared roles, including equal-size pairs.
+// These source-photo placeholders are never presented as generated scene images.
+const catalogBackgrounds = ["#f7f3ed", "#eef3f6", "#f5f0e8", "#eef2ea", "#f1edf5", "#edf3f2", "#f6efea", "#eaf0f7"] as const;
 
 export async function buildServerProductResearchSourcePhotoCatalog(
   asset: CoreFirstDraftAssetSpec,

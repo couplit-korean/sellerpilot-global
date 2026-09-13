@@ -51,14 +51,14 @@ test("the UI names first-stage concurrency, human review, detail authoring, then
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(resolvedProductId\)\}/);
 });
 
-test("first-stage upload keeps its main-photo contract and approval follows editable seller fields", async () => {
+test("first-stage upload keeps its multi-photo contract and approval follows editable seller fields", async () => {
   const page = await readFile(pageUrl, "utf8");
   const firstStageStart = page.indexOf("const researchProductInformation = async () =>");
   const firstStageEnd = page.indexOf("const selectSlotPhoto", firstStageStart);
   const firstStage = page.slice(firstStageStart, firstStageEnd);
-  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto\]/);
+  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto, \.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\]/);
   assert.match(firstStage, /optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
-  assert.doesNotMatch(firstStage, /sourceSelectionSha256/);
+  assert.match(firstStage, /sourceSelectionSha256/);
 
 
   const sellerFields = page.indexOf('className="product-context-section required-product-intake"');

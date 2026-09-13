@@ -23,3 +23,9 @@
 - 이전 방식으로 진행 중이던 나랑드사이다 `f2a23e7b-d55b-4d01-a9ca-ecbe85631cb8`은 중지했다. 입력·원본·조사 결과는 삭제하지 않았고 새 이미지 작업을 임의로 중복 접수하지 않았다.
 - Mac AI PID 52663 재시작 후 변경된 5개 파일 바이트를 운영 커밋과 대조했다. 기존 gateway도 새 SHA로 전환해 ready/HTTP 200을 확인했다.
 - Aside 기존 SellerPilot 탭을 새로고침하여 운영 화면의 8장 준비 안내 및 버튼을 확인했다. 뒤로 가기가 연결 화면으로 이동하고, 다음 상품 등록이 빈 입력 화면을 여는 것을 직접 확인했다. 실제 생성 중 스크롤/버튼 상태는 모바일 브라우저 자동 검사 근거이며, 새로운 실제 이미지 생성은 수행하지 않았다.
+
+## Actual UI follow-up: six Narangd source photos
+
+The first live Aside test (`c2ceb8cd-fbf1-46f4-99db-80d664a7b4ea`) failed before AI scene generation with `preflight_result_invalid`. Reproduced in the default preflight test: the six-color/three-position placeholder cycle made portrait/storage and wide/context byte-identical after expanding to eight roles. Extended the internal palette to eight; duplicate detection remains enforced and these placeholders remain hidden from the generated-image gallery.
+
+The user then requested all six new Downloads photos. First-stage submission now includes every selected role/additional photo and binds pending retries to a digest of the full ordered selection. Corrected residual six-image labels. Server-research tests: 44 passed; UI submission/lifecycle tests: 16 passed; TypeScript passed. Deployment and actual generated result verification are pending for this follow-up.

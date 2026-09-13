@@ -17,9 +17,9 @@ test("first-stage 5xx handling clears only definite cleaned pre-enqueue failures
   assert.doesNotMatch(page, /response\.status === 408 \|\| response\.status === 425 \|\| response\.status === 429 \|\| response\.status >= 500/);
 });
 
-test("first-stage uploads only the main photo while supporting photos invalidate review only", () => {
-  assert.match(page, /const sourcePhotos = \[sourceMainPhoto\];[\s\S]*?optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
-  assert.doesNotMatch(page, /selectProductResearchSourcePhotos/);
+test("first-stage uploads all selected photos and binds retries to their content", () => {
+  assert.match(page, /const sourcePhotos = \[sourceMainPhoto, \.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\];[\s\S]*?optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
+  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256\)/);
 
   const supportingEffect = page.match(/useEffect\(\(\) => \{\s*const nextSelections = \[\.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\][\s\S]*?\}, \[closeGeneratedProductRegistration, extraPhotos, firstDraftGenerated, notify, slotPhotos\]\);/)?.[0] ?? "";
   assert.match(supportingEffect, /if \(!changed \|\| !firstDraftGenerated\) return;/);
@@ -29,9 +29,9 @@ test("first-stage uploads only the main photo while supporting photos invalidate
   assert.match(page, /invalidatedExistingContext = window\.sessionStorage\.getItem\(productResearchPendingStorageKey\) !== null/);
 });
 
-test("first-stage photo copy states the main-only contract honestly", () => {
-  assert.match(page, /대표사진 1장과 판매페이지·모델명·카톡 설명으로 정보와 이미지 6개를 동시에 만듭니다/);
-  assert.match(page, /상세페이지 제작 단계의 OCR·상품 근거에 사용합니다/);
-  assert.match(page, /최대 100장 보관 · 1차는 대표사진 1장 · 추가 사진은 상세페이지 제작에 사용/);
-  assert.match(page, /1차 입력 \{mainPhoto \? 1 : 0\}장/);
+test("first-stage photo copy states the multi-photo contract honestly", () => {
+  assert.match(page, /대표사진·역할별·추가 사진과 설명을 함께 분석해 상품정보와 연출 이미지 8개를 준비합니다/);
+  assert.match(page, /1차 분석부터 OCR·상품 근거에 사용하며 상세페이지 제작에도 이어서 사용합니다/);
+  assert.match(page, /최대 100장 · 선택한 사진을 모두 1차 분석과 상세페이지 제작에 사용/);
+  assert.match(page, /1차 입력 \{totalPhotoCount\}장/);
 });

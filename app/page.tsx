@@ -3751,7 +3751,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     resetFirstDraftImages();
     setFirstDraftReviewed(false);
     try {
-      const sourcePhotoSha256 = await productSourcePhotoSha256(sourceMainPhoto.file);
+      const sourcePhotos = [sourceMainPhoto, ...Object.values(slotPhotos), ...extraPhotos];
+      assertStudioPhotoBatch(sourcePhotos.map((photo) => photo.file));
+      const sourceDigests = [];
+      for (const photo of sourcePhotos) {
+        sourceDigests.push([photo.role, await productSourcePhotoSha256(photo.file)]);
+      }
+      const selectionDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(sourceDigests)));
+      const sourceSelectionSha256 = Array.from(new Uint8Array(selectionDigest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const sourcePhotoSha256 = sourceDigests[0][1];
       if (!productSourcePhotoSha256Pattern.test(sourcePhotoSha256)) {
         throw new Error("대표사진 원본 확인값을 만들지 못했습니다. 사진을 다시 선택해 주세요.");
       }
@@ -3769,7 +3777,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       let pendingResearch: PendingProductResearch | null = null;
       try {
         const stored = JSON.parse(window.sessionStorage.getItem(productResearchPendingStorageKey) ?? "null") as unknown;
-        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256);
+        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256);
         if (stored !== null && !pendingResearch) window.sessionStorage.removeItem(productResearchPendingStorageKey);
       } catch {
         window.sessionStorage.removeItem(productResearchPendingStorageKey);
@@ -3780,10 +3788,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       let imageSpecs = pendingResearch?.imageSpecs ?? [];
       let cleanupPaths = pendingResearch?.cleanupPaths ?? [];
       if (pendingResearch && lineageReceipt) {
-        notify("이전에 접수한 1차 정보·6개 이미지 작업 상태를 다시 확인합니다.");
+        notify("이전에 접수한 1차 정보·8개 이미지 작업 상태를 다시 확인합니다.");
       } else {
         if (!pendingResearch) {
-          const sourcePhotos = [sourceMainPhoto];
           const uploaded = await optimizeAndUploadStudioPhotos(
             sourcePhotos,
             ownerId,
@@ -3802,6 +3809,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           researchInput,
           ownerId,
           sourcePhotoSha256,
+          sourceSelectionSha256,
           lineageReceipt,
           imagePaths,
           imageSpecs,
@@ -3864,6 +3872,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             researchInput,
             ownerId,
             sourcePhotoSha256,
+            sourceSelectionSha256,
             lineageReceipt,
             imagePaths,
             imageSpecs,
@@ -4353,7 +4362,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </section>
 
           <section className="option-photo-section">
-            <div className="upload-section-heading"><div><b>옵션 사진</b><span className="optional-chip">선택</span><small>1차 생성 뒤 사람이 확인하며, 상세페이지 제작 단계의 OCR·상품 근거에 사용합니다.</small></div><em>{Object.keys(slotPhotos).length} / {optionalPhotoSlots.length}장</em></div>
+            <div className="upload-section-heading"><div><b>옵션 사진</b><span className="optional-chip">선택</span><small>1차 분석부터 OCR·상품 근거에 사용하며 상세페이지 제작에도 이어서 사용합니다.</small></div><em>{Object.keys(slotPhotos).length} / {optionalPhotoSlots.length}장</em></div>
             <div className="option-photo-grid">
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
@@ -4376,9 +4385,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </section>
 
           <section className="extra-photo-section">
-            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>1차 생성 뒤 사람이 확인하며, 상세컷·구성품·포장 근거로 상세페이지 제작에 사용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
+            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>1차 분석부터 상세컷·구성품·포장 근거로 함께 사용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
             <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotoInputDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 보관 · 1차는 대표사진 1장 · 추가 사진은 상세페이지 제작에 사용"}</small></span></label>
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 · 선택한 사진을 모두 1차 분석과 상세페이지 제작에 사용"}</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식" aria-disabled={extraPhotoInputDisabled || undefined}>
               <label htmlFor="extra-product-photo-camera" aria-disabled={extraPhotoInputDisabled || undefined}><Camera size={18} /><span><b>사진 촬영</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "한 장씩 바로 추가"}</small></span></label>
               <label htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined}><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "여러 장 한 번에 첨부"}</small></span></label>
@@ -4387,8 +4396,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </section>
 
           <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
-            <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>상품 분석 · 이미지 준비</em></span><small>대표사진 1장과 판매페이지·모델명·카톡 설명으로 정보와 이미지 8개를 동시에 만듭니다. 역할별·추가 사진은 다음 상세페이지 제작에 사용합니다.</small></div>
-            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" disabled={recoveringProductResearch} /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : recoveringProductResearch || intake.researchInput.trim().length < 2 || !mainPhoto || photoSelectionsProcessing || running || !studioWorkerAvailable} title={!researchingProduct && !mainPhoto ? "대표사진을 먼저 등록해 주세요." : !researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "생성 중단" : !mainPhoto ? "대표사진 필요" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 정보·6장 생성"}</button></div>
+            <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>상품 분석 · 이미지 준비</em></span><small>대표사진·역할별·추가 사진과 설명을 함께 분석해 상품정보와 연출 이미지 8개를 준비합니다. 확인한 결과는 상세페이지에서 재사용합니다.</small></div>
+            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" disabled={recoveringProductResearch} /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : recoveringProductResearch || intake.researchInput.trim().length < 2 || !mainPhoto || photoSelectionsProcessing || running || !studioWorkerAvailable} title={!researchingProduct && !mainPhoto ? "대표사진을 먼저 등록해 주세요." : !researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "생성 중단" : !mainPhoto ? "대표사진 필요" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 정보·8장 생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
             {!initialProduct?.id && !researchResult && <div className="product-research-recovery">
               <span><Clock3 size={15} /><span><b>완료된 1차 작업 이어서</b><small>다른 탭·기기에서 완료된 작업 ID로 원본사진과 이미지 8장을 안전하게 다시 불러옵니다.</small></span></span>
@@ -4456,7 +4465,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>{firstDraftContentReady ? "수정한 1차 정보와 생성 이미지 8개를 최종 확인하세요." : "역할별 생성 이미지 8개의 완료 확인을 기다려 주세요."}</b><small>{firstDraftContentReady ? "위 판매자 필수 입력값을 실물 기준으로 수정하고 이미지 8장을 확인한 뒤 상세페이지 제작을 승인하세요." : firstDraftConceptStatus || "원본사진 기반 임시 초안은 사람 검토 승인과 상세페이지 제작 조건을 충족하지 않습니다."}</small><label htmlFor="first-draft-reviewed"><input id="first-draft-reviewed" aria-label="1차 상품정보와 이미지 8개 검토 확인" type="checkbox" checked={firstDraftReviewed} disabled={!firstDraftContentReady} onChange={(event) => setFirstDraftReviewed(event.target.checked)} /><span><b>수정한 1차 상품정보와 이미지 8개를 모두 확인했습니다.</b><small>이 확인 이후 입력이나 사진을 바꾸면 승인과 기존 채널 업로드 준비가 해제됩니다.</small></span></label></span></div>}
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !recoveringProductResearch && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {mainPhoto ? 1 : 0}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 생성 확인 {studioDraftImagesMerged ? "6 / 8장" : `${confirmedGeneratedCount} / 8장`} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{recoveringProductResearch ? "완료된 1차 작업의 원본사진과 결과를 확인하고 있습니다." : !firstDraftContentReady ? firstDraftConceptStatus || "먼저 사진과 설명으로 1차 정보와 이미지 8개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 8개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={() => startAutomation()} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || recoveringProductResearch || photoSelectionsProcessing || Boolean(resolvedProductId)} title={!firstDraftContentReady ? firstDraftConceptStatus || "1차 정보와 이미지 8개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·6장 생성 중</> : recoveringProductResearch ? <><LoaderCircle className="spin" size={17} />완료 작업 복구 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !recoveringProductResearch && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {totalPhotoCount}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 생성 확인 {studioDraftImagesMerged ? "8 / 8장" : `${confirmedGeneratedCount} / 8장`} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{recoveringProductResearch ? "완료된 1차 작업의 원본사진과 결과를 확인하고 있습니다." : !firstDraftContentReady ? firstDraftConceptStatus || "먼저 사진과 설명으로 1차 정보와 이미지 8개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 8개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={() => startAutomation()} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || recoveringProductResearch || photoSelectionsProcessing || Boolean(resolvedProductId)} title={!firstDraftContentReady ? firstDraftConceptStatus || "1차 정보와 이미지 8개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·8장 생성 중</> : recoveringProductResearch ? <><LoaderCircle className="spin" size={17} />완료 작업 복구 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
