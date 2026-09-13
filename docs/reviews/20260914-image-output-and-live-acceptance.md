@@ -13,7 +13,7 @@
 
 ## 현재 증거 범위
 
-현재 상품 분석은 성공, 연출 8장 파일 수령 수정 후 동일 작업을 재시도 중이다. 최종 상세/상품 생성/판매채널 원격 ID/게시 완료는 아직 검증되지 않았다. 이 문서를 전체 완료 근거로 사용하지 않는다.
+현재 상품 분석과 가공 이미지 8장 생성·저장·Aside 화면 표시까지 확인했다. 최종 상세는 최초 접수 후 gateway_forbidden으로 실패하여 같은 작업의 Mac 인계 경로를 수정 중이다. 상품 생성/판매채널 원격 ID/게시 완료는 아직 검증되지 않았다. 이 문서를 전체 완료 근거로 사용하지 않는다.
 
 ## 854e0b0 운영 반영 확인
 
@@ -53,3 +53,17 @@
 - Aside 화면이 여전히 0/8로 대기한 직접 원인은 recover API의 원본 정확히 1장 제한이었다. 실제 job에는 6개 sourcePhotoEvidence가 있으나 recovery RPC가 해당 키를 빼고 반환하는 추가 결함도 확인했다.
 - 복원 경로는 6원본 각각의 index·role·SHA와 실제 bytes를 확인하도록 수정했다. 제작 중 부분 저장은 202 pending으로 분리하고 완성 8개 bytes 검증은 유지했다. 소유자·관리자 권한은 유지하면서 RPC 응답에 기존 evidence만 추가하는 최소 migration을 작성했다.
 - 브라우저가 409 등의 확정 복원 오류를 30분 동안 pending으로 숨기지 않도록 즉시 오류와 같은 작업 재확인을 제공한다. 재확인은 새 enqueue 없이 저장 결과만 조회하며 202 정상 대기는 유지한다. 복원 관련 29개, 브라우저 14개, 타입 검사 통과. 이 시점에서 최종 상세/상품 ID/채널 실등록은 아직 시작하지 않았다.
+
+## ca897b4 운영·화면 확인과 최종 상세 접수
+
+- Vercel dpl_39prEHxsAfqW4YMDRRN9UJsWFFsX 운영 승격 후 6개 canary가 ca897b4로 일치하고 DB 활성화·8개 등록 route gate·로컬 Gateway ready=true를 확인했다. 6원본 evidence 응답 최소 migration 20260914060000은 owner/admin ACL·기존 함수 보존 PGlite 검증 후 적용했다.
+- 기존 Aside 폼을 새로고침하거나 6원본을 다시 분석하지 않고, polling으로 8/8 이미지가 표시됐다. 역할별 실제 이미지 확인 중 가로 카드의 중앙 cover crop으로 오른쪽 상품이 숨는 UI 결함을 확인했다. 새 탭에서 실제 1600×900 detail-context 파일을 열어 병·라벨이 정상적으로 포함됨을 확인했고, 갤러리만 contain으로 수정했다.
+- 유사상품 가격 다시 확인을 실제 클릭해 기준 상품명 '나랑드사이다 제로 500 ml', 요청어 '나랑드사이다 제로'가 이번 요청으로 표시됐다. 공급자 오류/후보 없음은 가격 확인 불가로 남으며 최저가 성공으로 표시하지 않는다.
+- 8장 검토 확인 후 상세페이지 제작을 1회 접수했다. product_studio a51eb670-9ae8-46f0-ba92-1c860f284ec6은 21:03:43 UTC 생성, 21:03:48 gateway_forbidden 실패. 아직 상품 ID/채널 CREATE는 없다. Vercel Studio catch의 같은 작업 Mac fallback 누락을 확인하여 수정 중이며 준비된 이미지 8장은 재생성하지 않는다.
+- 사진005의 보관/개봉후 냉장/고온 밀폐장소 금지 문구를 직접 확인해 채널 식품 안전 고시 준비값에 추가했다. 해외 기준 USD2.24는 2026-09-11 ECB reference로 KRW3000을 환산한 준비값이며 최종 각국 통화 가격의 실시간 일치를 의미하지 않는다.
+
+## 최종 상세 Mac 인계 보완 검증
+
+- 신규 최종 제작(reuse_first_draft_assets=true)의 Gateway 연결 오류 5종만 exact job/claim/owner로 Mac에 인계한다. 불확정 RPC는503보존하며 failed로 덮지 않는다. 원본·digest·품질 실패, legacy/revision/개별 재생성은 제외한다. 서버 전체55개 및 보강3개 검사 통과.
+- 신규 DB migration은 기존 claimer prosrc MD5 drift guard, 기존 공유 AI worker 권한과 서비스 ACL을 유지한다. Vercel은 studio_runtime=local을 받지 않고 Mac이 같은 job을 새 claim으로 수령한다. 7개 PGlite 검사 통과. 이 기록 시점은 작성·검증이며 운영 적용은 별도 확인한다.
+- Mac은 상세 본문 전에8장을 받아 실제SHA를 확인하고 작업별 캐시에 저장한다. 본문후 캐시SHA와 기존facts/scene/manifest/PNG 검사를 다시 통과해야 재사용한다.1시간 signed URL 만료후 재다운로드하지 않는다. 신규4개+기존12개 검사 통과.

@@ -1,4 +1,5 @@
 import { adoptGeneratedImageFromInvocation } from "./image-generation-artifact.mjs";
+import { cacheFirstDraftAssetBytes, readCachedFirstDraftAssetBytes } from "./first-draft-reuse-cache.mjs";
 import { runLocalProductResearchOnce } from "./local-product-research-lane.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -2967,7 +2968,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
     }
     return verifiedAssets;
 }
-async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
+function reusableFirstDraftContext(job) {
     const sourceResearchJobId = typeof job.request?.firstDraftSourceResearchJobId === "string"
         ? job.request.firstDraftSourceResearchJobId
         : "";
@@ -2979,10 +2980,11 @@ async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
     const entries = Array.isArray(job.request?.reusableFirstDraftAssets)
         ? job.request.reusableFirstDraftAssets
         : [];
+    if (!sourceResearchJobId && !entries.length) return null;
     if (!UUID_PATTERN.test(sourceResearchJobId)
         || !productFacts.success || !manifest.success || !/^[a-f0-9]{64}$/.test(sourcePhotoSha256)
         || entries.length !== coreFirstDraftAssetIds.length) {
-        return new Map();
+        throw new Error("상세페이지에 재사용할 선제작 이미지 계약이 완전하지 않습니다.");
     }
     const assetDigests = Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => [
             assetId,
@@ -2995,14 +2997,46 @@ async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
         assetDigests,
         manifest: manifest.data,
     })
-        || !firstDraftImageFactsMatchStudioRequest(productFacts.data, job.request?.manualFields)
-        || !firstDraftImageFactsMatchStudioResult(productFacts.data, result)
-        || !firstDraftImageScenePlansMatchStudioResult(productFacts.data, result)) {
+        || !firstDraftImageFactsMatchStudioRequest(productFacts.data, job.request?.manualFields)) {
         throw new Error("선제작 이미지와 상품 사실 또는 장면 계획이 달라졌습니다. 이미지 준비 단계에서 변경 내용을 확인해 주세요. 상세 단계에서 자동 재생성하지 않습니다.");
     }
     const entryById = new Map(entries.map((entry) => [entry?.id, entry]));
     if (entryById.size !== coreFirstDraftAssetIds.length) {
         throw new Error("재사용할 1차 이미지 역할이 중복되거나 불완전합니다.");
+    }
+    for (const assetId of coreFirstDraftAssetIds) {
+        const entry = entryById.get(assetId);
+        if (typeof entry?.signedUrl !== "string" || typeof entry?.path !== "string"
+            || entry.digest !== manifest.data.assets[assetId].digest) {
+            throw new Error(`${assetId} 1차 이미지 재사용 계약이 올바르지 않습니다.`);
+        }
+    }
+    return { productFacts, manifest, entries, entryById };
+}
+async function prepareReusableFirstDraftCache(job, jobDir, leaseSignal) {
+    const context = reusableFirstDraftContext(job);
+    if (!context) return new Map();
+    return cacheFirstDraftAssetBytes({
+        entries: context.entries,
+        jobDir,
+        signal: leaseSignal,
+        downloadBytes: async (entry) => {
+            const response = await fetch(entry.signedUrl, { signal: downloadSignal(leaseSignal) });
+            if (!response.ok)
+                throw new Error(`${entry.id} 1차 이미지 재사용 다운로드 실패 · HTTP ${response.status}`);
+            return readResponseBodyBounded(response, maximumStudioSourceDownloadBytes, `${entry.id} 1차 재사용 이미지`);
+        },
+    });
+}
+async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal, cachedAssets) {
+    // Revalidate the complete request contract after text generation as well as
+    // the resulting product/scene; early download does not approve the result.
+    const context = reusableFirstDraftContext(job);
+    if (!context) return new Map();
+    const { productFacts, manifest, entryById } = context;
+    if (!firstDraftImageFactsMatchStudioResult(productFacts.data, result)
+        || !firstDraftImageScenePlansMatchStudioResult(productFacts.data, result)) {
+        throw new Error("선제작 이미지와 상품 사실 또는 장면 계획이 달라졌습니다. 이미지 준비 단계에서 변경 내용을 확인해 주세요. 상세 단계에서 자동 재생성하지 않습니다.");
     }
     const reused = new Map();
     const fingerprints = [];
@@ -3013,10 +3047,7 @@ async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
             || entry.digest !== manifest.data.assets[assetId].digest) {
             throw new Error(`${assetId} 1차 이미지 재사용 계약이 올바르지 않습니다.`);
         }
-        const response = await fetch(entry.signedUrl, { signal: downloadSignal(leaseSignal) });
-        if (!response.ok)
-            throw new Error(`${assetId} 1차 이미지 재사용 다운로드 실패 · HTTP ${response.status}`);
-        const bytes = await readResponseBodyBounded(response, maximumStudioSourceDownloadBytes, `${assetId} 1차 재사용 이미지`);
+        const bytes = await readCachedFirstDraftAssetBytes(cachedAssets, entry, leaseSignal);
         const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
         if (metadata.format !== "png" || metadata.width !== preset.width || metadata.height !== preset.height) {
             throw new Error(`${assetId} 1차 재사용 이미지 규격이 일치하지 않습니다.`);
@@ -3717,9 +3748,10 @@ async function processJob(job) {
         const competitorContext = job.request?.competitorContext == null
             ? null
             : studioCompetitorContextSchema.parse(job.request.competitorContext);
-        const [imageFiles, crossProductArchive] = await Promise.all([
+        const [imageFiles, crossProductArchive, reusableFirstDraftCache] = await Promise.all([
             downloadInputs(job, jobDir, jobHeartbeat.signal),
             downloadCrossProductComparisonArchive(job, jobDir, jobHeartbeat.signal),
+            prepareReusableFirstDraftCache(job, jobDir, jobHeartbeat.signal),
         ]);
         const references = await fetchReferencePages(String(job.request?.researchInput || job.request?.manualFields?.researchInput || ""), String(job.request?.productUrl || ""), jobHeartbeat.signal);
         const referenceText = references.length
@@ -3746,6 +3778,7 @@ async function processJob(job) {
             result,
             jobDir,
             jobHeartbeat.signal,
+            reusableFirstDraftCache,
         );
         if (job.request?.firstDraftSourceResearchJobId && reusableFirstDraftAssets.size !== coreFirstDraftAssetIds.length) {
             throw new Error("상세페이지에 재사용할 선제작 이미지가 완전하지 않습니다. 이미지 준비 단계에서 완료해 주세요.");

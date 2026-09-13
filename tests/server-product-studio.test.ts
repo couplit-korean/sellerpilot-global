@@ -498,6 +498,7 @@ async function runReviewedTransientPipelineFixture(options: {
   requestMode?: "reviewed" | "marker-mismatch" | "revision-reviewed" | "revision-unattested" | "revision-marker-mismatch" | "revision-manual-mismatch" | "legacy";
   providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "terminal-localization-invalid" | "terminal-master-invalid" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget" | "terminal-master-repaired" | "terminal-localization-repaired" | "structural-localization-repaired" | "coverage-localization-repaired" | "repaired-localization-invalid-terminal" | "terminal-localization-over-budget" | "image-preprovider-rate-limit-repaired" | "image-preprovider-rate-limit-exhausted" | "text-preprovider-rate-limit-repaired";
   transientReason?: string;
+  transientTerminal?: boolean;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
   sourcePhotoHashMismatch?: boolean;
@@ -507,6 +508,7 @@ async function runReviewedTransientPipelineFixture(options: {
   transientDiagnostic?: AiGatewayFailureDiagnostic;
   manualFields?: ReturnType<typeof reviewedFallbackManualFields>;
   preflightAuditMode?: "segmented-source-composite" | "source-photo-catalog";
+  localHandoff?: "success" | "refused" | "error" | "missing-owner";
 } = {}) {
   const jobId = "41414141-4141-4141-8141-414141414141";
   const claimToken = "42424242-4242-4242-8242-424242424242";
@@ -642,6 +644,7 @@ async function runReviewedTransientPipelineFixture(options: {
     : {
       ...baseRequest,
       ...preflight.request,
+      ...(options.localHandoff ? { reuse_first_draft_assets: true } : {}),
       human_review_confirmation: {
         first_draft_reviewed: true,
         source: "authenticated_admin_request",
@@ -652,6 +655,7 @@ async function runReviewedTransientPipelineFixture(options: {
     };
   const uploaded = new Map<string, Uint8Array>();
   const completionCalls: Record<string, unknown>[] = [];
+  const handoffCalls: Record<string, unknown>[] = [];
   const rpcNames: string[] = [];
   const logs: Array<{ stage: string; details: Record<string, string | number | boolean> }> = [];
   let structuredCalls = 0;
@@ -673,7 +677,7 @@ async function runReviewedTransientPipelineFixture(options: {
   const transientReason = options.transientReason ?? "gateway_rate_limited";
   const transientError = () => new ServerProductStudioError(
     transientReason,
-    false,
+    options.transientTerminal ?? false,
     options.transientDiagnostic,
   );
   const providerScenario = options.providerScenario ?? "all-transient";
@@ -719,6 +723,7 @@ async function runReviewedTransientPipelineFixture(options: {
         return {
           data: {
             id: jobId,
+            ...(options.localHandoff && options.localHandoff !== "missing-owner" ? { owner_id: userId } : {}),
             claim_token: claimToken,
             kind: "product_studio",
             claim_scope: "product",
@@ -730,6 +735,13 @@ async function runReviewedTransientPipelineFixture(options: {
         };
       }
       if (name === "sellerpilot_touch_ai_job") return { data: "running", error: null };
+      if (name === "sellerpilot_handoff_product_studio_to_local") {
+        handoffCalls.push(structuredClone(arguments_));
+        assert.equal(activeRemoteCalls, 0, "provider branches settle before handing off the claim");
+        return options.localHandoff === "error"
+          ? { data: null, error: { code: "request_failed" } }
+          : { data: options.localHandoff === "success", error: null };
+      }
       if (name === "sellerpilot_complete_ai_job_with_image_context") {
         completionActiveRemoteCounts.push(activeRemoteCalls);
         completionCalls.push(structuredClone(arguments_));
@@ -930,6 +942,7 @@ async function runReviewedTransientPipelineFixture(options: {
     preflight,
     uploaded,
     completionCalls,
+    handoffCalls,
     rpcNames,
     logs,
     structuredCalls,
@@ -965,6 +978,56 @@ async function assertFailedClosed(
   assert.equal(run.uploaded.size, 0);
   assert.equal(run.completionCalls[0].p_result_payload, null);
 }
+
+test("reviewed final studio hands the exact job and claim to Mac for provider connection failures", async () => {
+  for (const reason of [
+    "gateway_forbidden", "gateway_authentication_error", "gateway_billing_required",
+    "gateway_customer_verification_required", "gateway_rate_limited",
+  ]) {
+    const run = await runReviewedTransientPipelineFixture({
+      localHandoff: "success", transientReason: reason,
+      transientTerminal: reason === "gateway_forbidden" || reason === "gateway_authentication_error",
+    });
+    assert.equal(run.response.status, 202);
+    assert.deepEqual(await run.response.json(), { ok: true, status: "queued", runtime: "local", processed: 0 });
+    assert.deepEqual(run.handoffCalls, [{
+      p_token_hash: "f".repeat(64), p_job_id: run.jobId, p_claim_token: run.claimToken,
+      p_owner_id: "43434343-4343-4343-8343-434343434343", p_reason: reason,
+    }]);
+    assert.equal(run.completionCalls.length, 0);
+    assert.equal(run.backgroundCalls, 0);
+    assert.equal(run.uploaded.size, 0);
+    assert.equal(run.rpcNames.some((name) => /enqueue|begin_ai_job_completion|complete_ai_job/.test(name)), false);
+    for (const assetId of coreFirstDraftAssetIds) {
+      const path = run.preflight.request.preflight_asset_storage_paths[assetId];
+      assert.equal(createHash("sha256").update(run.preflight.bytesByPath.get(path)!).digest("hex"),
+        run.preflight.request.preflight_asset_digests[assetId]);
+    }
+  }
+});
+
+test("uncertain or ownerless Mac handoff never overwrites the same claim with failed", async () => {
+  for (const localHandoff of ["refused", "error", "missing-owner"] as const) {
+    const run = await runReviewedTransientPipelineFixture({ localHandoff, transientReason: "gateway_forbidden" });
+    assert.equal(run.response.status, 503);
+    assert.equal(run.handoffCalls.length, localHandoff === "missing-owner" ? 0 : 1);
+    assert.equal(run.completionCalls.length, 0);
+    assert.equal(run.wakeCalls, 0);
+    assert.equal(run.uploaded.size, 0);
+  }
+});
+
+test("Mac handoff does not bypass source provenance or invalid provider content", async () => {
+  for (const options of [
+    { transientReason: "gateway_result_invalid", expected: "gateway_result_invalid" },
+    { preflightAuditMode: "source-photo-catalog" as const, expected: "preflight_assets_require_regeneration" },
+    { corruptPreflightAssetId: "portrait" as const, expected: "preflight_asset_digest_mismatch" },
+  ]) {
+    const run = await runReviewedTransientPipelineFixture({ localHandoff: "success", ...options });
+    await assertFailedClosed(run, options.expected);
+    assert.equal(run.handoffCalls.length, 0);
+  }
+});
 
 test("final server Studio restores all eight scenes and performs no additional scene generation", () => {
   const plan = serverStudioRemoteWorkPlan();

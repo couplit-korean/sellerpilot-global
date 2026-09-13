@@ -35,7 +35,7 @@ export function FirstDraftImageReview({ firstDraftImages, phase, confirmedGenera
                 const image = imagesById.get(id);
                 const label = firstDraftImageLabels[id];
                 return <figure key={id}><span>{image
-                  ? <Image src={image.url} alt={label} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized />
+                  ? <Image src={image.url} alt={label} fill style={{ objectFit: "contain", objectPosition: "center" }} sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized />
                   : <i role="img" aria-label={`${label} 생성 대기`}><ImageIcon aria-hidden="true" size={22} /></i>}</span><figcaption>{label}</figcaption></figure>;
               })}</div>
             </section>);

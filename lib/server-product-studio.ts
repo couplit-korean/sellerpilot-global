@@ -224,6 +224,7 @@ export type ServerProductStudioDependencies = {
 
 const studioClaimSchema = z.object({
   id: z.string().uuid(),
+  owner_id: z.string().uuid().optional(),
   claim_token: z.string().uuid(),
   kind: z.enum(["product_studio", "product_asset_regeneration"]),
   claim_scope: z.literal("product"),
@@ -523,6 +524,16 @@ function safeReason(error: unknown) {
     ? error.safeReason
     : "server_studio_execution_failed";
 }
+
+// These failures concern the Vercel provider connection. The authenticated Mac
+// worker can continue the same reviewed job; content/identity failures cannot.
+const localStudioHandoffReasons = new Set([
+  "gateway_forbidden",
+  "gateway_authentication_error",
+  "gateway_billing_required",
+  "gateway_customer_verification_required",
+  "gateway_rate_limited",
+]);
 
 function gatewayDiagnosticLogDetails(diagnostic: AiGatewayFailureDiagnostic) {
   return {
@@ -3146,6 +3157,27 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
         : { upstreamProviderAttempted: diagnostic.upstreamProviderAttempted }),
       ...safeDetails,
     });
+    if (claim.data.kind === "product_studio"
+        && claim.data.request.reuse_first_draft_assets === true
+        && localStudioHandoffReasons.has(reason)) {
+      // Never complete a possibly handed-off claim as failed. A lost RPC reply
+      // must leave the database's exact-claim transition authoritative.
+      const handedOff = claim.data.owner_id
+        ? await callRpc(dependencies, "sellerpilot_handoff_product_studio_to_local", {
+          p_token_hash: dependencies.tokenHash,
+          p_job_id: claim.data.id,
+          p_claim_token: claim.data.claim_token,
+          p_owner_id: claim.data.owner_id,
+          p_reason: reason,
+        })
+        : { data: false, error: { code: "claim_owner_missing" } };
+      if (handedOff.error || handedOff.data !== true) {
+        logError("local_handoff", { reason, code: handedOff.error?.code ?? "handoff_not_confirmed", status: 503 });
+        return jsonResponse({ message: "동일 상품 제작 작업의 Mac 실행 전환을 아직 확인하지 못했습니다." }, 503);
+      }
+      await wakeNextStudioClaim(dependencies, logError, claim.data.kind);
+      return jsonResponse({ ok: true, status: "queued", runtime: "local", processed: 0 }, 202);
+    }
     const completed = await completeExact(dependencies, {
       jobId: claim.data.id,
       claimToken: claim.data.claim_token,
