@@ -23,7 +23,7 @@ export type PlannedStudioSource = {
 export const detailSourceAssetIds = ["detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-dimensions", "detail-contents", "detail-care"] as const;
 const viewRoles = new Set(["main", "front", "back", "left", "right", "top", "bottom"]);
 const evidencePreferences: Partial<Record<AiGeneratedAssetId, readonly string[]>> = {
-  "detail-feature": ["label", "detail", "front", "main"],
+  "detail-feature": ["label", "barcode", "back", "detail", "front", "main"],
   "detail-package": ["back", "left", "right", "top", "bottom"],
   "detail-contents": ["contents", "left", "right", "back", "top", "bottom"],
   "detail-care": ["label", "back", "bottom"],
@@ -50,6 +50,7 @@ export function studioSourceFacts(source: PlannedStudioSource) {
 export function planStudioSourceAssignments<T extends PlannedStudioSource>(
   sources: readonly T[],
   specs: readonly (typeof aiGeneratedAssetSpecs)[number][] = aiGeneratedAssetSpecs,
+  confirmedSinglePackage = false,
 ) {
   if (!sources.length) throw new Error("source_image_missing");
   const main = sources.find(source => source.role === "main") ?? sources[0];
@@ -63,21 +64,28 @@ export function planStudioSourceAssignments<T extends PlannedStudioSource>(
     - Number(!detailSourceAssetIds.includes(b.id as typeof detailSourceAssetIds[number])));
   for (const asset of ordered) {
     let source: T;
-    if (asset.identityPolicy.mode === "source-catalog") source = main;
+    if (asset.id === "detail-contents" && confirmedSinglePackage
+        && main.observation?.sameProduct === "yes" && main.observation.confidence >= 0.85
+        && main.observation.wholeProduct) source = main;
+    else if (asset.identityPolicy.mode === "source-catalog") source = main;
     else {
       const scene = asset.identityPolicy.mode === "source-composite";
       const preferences: readonly string[] = scene
         ? asset.identityPolicy.sourceRoles.filter(role => viewRoles.has(role))
         : evidencePreferences[asset.id] ?? asset.identityPolicy.sourceRoles;
-      const candidates = sources.filter(candidate => scene ? isStudioSceneSource(candidate) : preferences.includes(effectiveStudioSourceRole(candidate)));
+      const candidates = sources.filter(candidate => scene ? isStudioSceneSource(candidate)
+        : preferences.includes(effectiveStudioSourceRole(candidate))
+          && (asset.id !== "detail-material" || isStudioSceneSource(candidate)));
+      if (asset.id === "detail-material" && !candidates.length) throw new Error("source_view_not_compositable");
       const uses = scene ? sceneUses : detailUses;
       // A dedicated readable label / actual contents photo wins its semantic
       // slot; remaining views rotate before reusing the same original.
       const dedicated = candidates.filter(candidate =>
-        (asset.id === "detail-feature" && effectiveStudioSourceRole(candidate) === "label")
+        (asset.id === "detail-feature" && ["label", "barcode", "back"].includes(effectiveStudioSourceRole(candidate)))
         || (asset.id === "detail-contents" && effectiveStudioSourceRole(candidate) === "contents"));
       source = [...(dedicated.length ? dedicated : candidates)].sort((a, b) =>
-        (uses.get(a.path) ?? 0) - (uses.get(b.path) ?? 0)
+        (asset.id === "detail-feature" ? preferences.indexOf(effectiveStudioSourceRole(a)) - preferences.indexOf(effectiveStudioSourceRole(b)) : 0)
+        || (uses.get(a.path) ?? 0) - (uses.get(b.path) ?? 0)
         || preferences.indexOf(effectiveStudioSourceRole(a)) - preferences.indexOf(effectiveStudioSourceRole(b)))[0] ?? main;
       uses.set(source.path, (uses.get(source.path) ?? 0) + 1);
     }
@@ -90,6 +98,7 @@ export function planStudioSourceAssignments<T extends PlannedStudioSource>(
     if (effectiveStudioSourceRole(source) === "unknown" || displayed.some(asset => plan.get(asset.id)?.path === source.path)) continue;
     const target = displayed.find(asset => asset.identityPolicy.mode === "source-evidence"
       && (evidencePreferences[asset.id] ?? asset.identityPolicy.sourceRoles).includes(effectiveStudioSourceRole(source))
+      && (asset.id !== "detail-material" || isStudioSceneSource(source))
       && displayed.filter(other => plan.get(other.id)?.path === plan.get(asset.id)?.path).length > 1
       && asset.id !== "detail-feature" && asset.id !== "detail-contents");
     if (target) plan.set(target.id, source);

@@ -18,7 +18,7 @@ import { createStudioLocalizedChunkOutputSchema, createStudioMasterOutputSchema,
 import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "../lib/studio-source-integrity.ts";
 import { buildAssetImagePrompt, buildFirstDraftBackgroundPrompt, buildFirstDraftSceneBrief, requiresSourceIdentityProtection, resolveIdentityBackgroundContactMode, resolveProductSceneIdentityText, resolveProductSettingShot, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
 import { buildSettingShotRetryGuidance, buildSettingShotRetryVariant, mergeSettingShotRetryAuditFeedback, settingShotAssetIds } from "../lib/product-setting-shots.ts";
-import { assertIdentityBackgroundPlate, assertIdentityEvidenceLinkage, compositeIdentityForeground, isRepairableMissingIdentitySupportBoundary, loadVisionIdentityForeground, normalizeIdentityBackgroundPlate, planIdentityEvidenceAttempt, repairMissingIdentitySupportSurface, renderIdentityEvidenceBoard, renderIdentityEvidencePanel, renderIdentityOnNeutralCanvas, renderMissingIdentityEvidence, selectCanonicalWholeProductIdentityView } from "../lib/product-identity-protection.ts";
+import { assertIdentityBackgroundPlate, assertIdentityEvidenceLinkage, compositeIdentityForeground, isRepairableMissingIdentitySupportBoundary, loadVisionIdentityForeground, normalizeIdentityBackgroundPlate, planIdentityEvidenceAttempt, repairMissingIdentitySupportSurface, renderIdentityEvidenceBoard, renderIdentityEvidencePanel, renderIdentityMaterialMacro, renderIdentitySingleContents, renderIdentityOnNeutralCanvas, renderMissingIdentityEvidence, selectCanonicalWholeProductIdentityView } from "../lib/product-identity-protection.ts";
 import { cliStudioResultSchema, normalizeStudioResultForTerminalValidation, productResearchResultSchema, studioCompetitorContextSchema } from "../lib/ai-cli-contract.ts";
 import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { buildDifferenceHash, buildDuplicateRetryGuidance, findDuplicateShot, MAXIMUM_SHOT_GENERATION_ATTEMPTS, SHOT_DHASH_BYTES, SHOT_DHASH_COLUMNS, SHOT_DHASH_ROWS } from "../lib/image-shot-uniqueness.ts";
@@ -37,6 +37,7 @@ import { firstDraftUsageLimitWaitMs, readSourceBytesBounded, runFirstDraftImageL
 import {
     buildFirstDraftImageQualityReceipt,
     bindPreparedImageProduct,
+    hasConfirmedSinglePackageContents,
     firstDraftImageFactsMatchStudioResult,
     firstDraftImageFactsMatchStudioRequest,
     firstDraftImageProductFactsSchema,
@@ -1140,7 +1141,8 @@ async function prepareIdentityCutoutsForJob(result, imageFiles, jobDir, leaseSig
             : null,
         fallbackName: manualProductName ? null : result.product.name,
     };
-    return prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSignal, identityAnchor);
+    const cutouts = await prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSignal, identityAnchor);
+    return { ...cutouts, confirmedSinglePackage: hasConfirmedSinglePackageContents(manualFields) };
 }
 function htmlToText(html) {
     return html
@@ -2079,8 +2081,9 @@ function normalizedIdentityViewRole(view) {
 function identitySourceCandidatesForPreset(identityCutouts, preset) {
     if (!identityCutouts)
         return [];
-    if (preset.identityPolicy.mode === "source-catalog") {
-        return [selectCanonicalWholeProductIdentityView(identityCutouts, preset)];
+    if (preset.identityPolicy.mode === "source-catalog"
+        || (preset.id === "detail-contents" && identityCutouts.confirmedSinglePackage)) {
+        return [selectCanonicalWholeProductIdentityView(identityCutouts, preset, identityCutouts.confirmedSinglePackage)];
     }
     const allowedRoles = preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase());
     const allowedRoleSet = new Set(allowedRoles);
@@ -2289,7 +2292,11 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                 if (!source) {
                     throw new Error(`${preset.id} 이미지에 필요한 검증 원본 역할(${preset.identityPolicy.sourceRoles.join(", ")})이 없습니다.`);
                 }
-                normalized = packageEvidencePlan?.mode === "two-source-board"
+                normalized = preset.id === "detail-contents" && identityCutouts.confirmedSinglePackage
+                    ? await renderIdentitySingleContents(source.foreground, preset)
+                    : preset.id === "detail-material"
+                    ? (await renderIdentityMaterialMacro(source.foreground.buffer, preset, attempt)).bytes
+                    : packageEvidencePlan?.mode === "two-source-board"
                     ? await renderIdentityEvidenceBoard(packageEvidencePlanSources.map((candidate) => candidate.foreground), preset, packageEvidencePlan.variant)
                     : packageEvidencePlan?.mode === "single-source-panel"
                         ? await renderIdentityEvidencePanel(source.foreground, preset, packageEvidencePlan.variant)

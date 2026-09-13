@@ -812,7 +812,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /frontMode !== "subject" && !frontProvidesWholeInstance/);
   assert.match(worker, /canonicalCompletenessProof = "subject-full-instance"/);
   assert.match(worker, /selectCanonicalWholeProductIdentityView\(\{[\s\S]*canonicalWhole,[\s\S]*front,[\s\S]*statutoryIdentity,[\s\S]*\}, preset\)/);
-  assert.match(worker, /preset\.identityPolicy\.mode === "source-catalog"[\s\S]*selectCanonicalWholeProductIdentityView\(identityCutouts, preset\)/);
+  assert.match(worker, /preset\.identityPolicy\.mode === "source-catalog"[\s\S]*selectCanonicalWholeProductIdentityView\(identityCutouts, preset(?:, identityCutouts\.confirmedSinglePackage)?\)/);
   assert.match(worker, /renderMissingIdentityEvidence\(preset\)/);
   assert.match(worker, /packageEvidencePreset[\s\S]*requiredIdentityRoles[\s\S]*return requiredIdentityRoles\.has\(role\)/);
   assert.match(worker, /identitySourceCandidatesForPreset\(identityCutouts, preset\)/);

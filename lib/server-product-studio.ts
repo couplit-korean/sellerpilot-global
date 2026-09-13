@@ -27,6 +27,7 @@ import {
 import { resolveProductSettingShot } from "./ai-image-planning";
 import {
   bindPreparedImageProduct,
+  hasConfirmedSinglePackageContents,
   firstDraftImageFactsMatchStudioResult,
   firstDraftImageProductFactsSchema,
   firstDraftImageQualityManifestSchema,
@@ -39,6 +40,7 @@ import {
 } from "./channels/qoo10-japanese-title";
 import { unapprovedLocalizationReviewMarker } from "./channels/listing-update";
 import { evaluateImageLabelFidelityReport } from "./image-label-fidelity";
+import { renderIdentityMaterialMacro, renderIdentitySingleContents } from "./product-identity-protection";
 import { studioSourceDimensionsMatch } from "./studio-source-integrity";
 import {
   buildDuplicateRetryGuidance,
@@ -2196,6 +2198,10 @@ export async function buildServerSourceEvidencePanel(
   if (asset.identityPolicy.mode !== "source-evidence") {
     throw new ServerProductStudioError("source_evidence_panel_role_invalid", true);
   }
+  if (asset.id === "detail-material") {
+    const macro = await renderIdentityMaterialMacro(source.bytes, asset, variant);
+    return { bytes: new Uint8Array(macro.bytes), left: 0, top: 0, width: asset.width, height: asset.height };
+  }
   const fit = "fit" in asset.identityPolicy && asset.identityPolicy.fit === "cover" ? "cover" : "contain";
   const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === asset.id);
   const pressure = 0.72 + (((assetIndex + variant) % 4) * 0.055);
@@ -2245,6 +2251,9 @@ export async function buildServerSourceDerivedAsset(
 ) {
   if (renderMode === "source-photo-catalog") {
     throw new ServerProductStudioError(sourcePhotoCatalogRenderRejectedReason(), true);
+  }
+  if (renderMode === "source-evidence" && asset.id === "detail-material") {
+    return (await renderIdentityMaterialMacro(cutout, asset, variant)).bytes;
   }
   const palette = paletteFor(asset.id, variant);
   const background = Buffer.from(
@@ -2460,6 +2469,7 @@ async function generateCandidate(input: {
   cutout: Uint8Array;
   attempt: number;
   retryLineage: readonly ServerStudioCandidateRejection[];
+  confirmedSinglePackage?: boolean;
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
   sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
@@ -2471,15 +2481,20 @@ async function generateCandidate(input: {
   }
   const sourceResolution = resolveServerAssetSource(input.asset, input.sources);
   const source = input.sourcePlan?.get(input.asset.id) ?? sourceResolution.source;
-  const auditMode = input.sourcePlan && input.asset.identityPolicy.mode === "source-evidence"
+  const singleContents = input.confirmedSinglePackage === true && input.asset.id === "detail-contents"
+    && source.role === "main" && source.observation?.sameProduct === "yes"
+    && source.observation.confidence >= 0.85 && source.observation.wholeProduct;
+  const auditMode = singleContents ? "source-evidence" : input.sourcePlan && input.asset.identityPolicy.mode === "source-evidence"
     ? (source.role === "main" && requiresDedicatedEvidence(input.asset) ? "source-catalog" : "source-evidence")
     : sourceResolution.auditMode;
-  const cutout = auditMode === "source-evidence" ? input.cutout
+  const cutout = auditMode === "source-evidence" && input.asset.id !== "detail-material" && !singleContents ? input.cutout
     : input.sourceCutout ? await input.sourceCutout(source) : input.cutout;
   const sceneRequired = auditMode === "scene-composite";
   let generated: { bytes: Buffer; rejectedBackground: ServerStudioSource | null };
   try {
-    generated = sceneRequired
+    generated = singleContents
+      ? { bytes: await renderIdentitySingleContents({ buffer: Buffer.from(cutout) }, input.asset), rejectedBackground: null }
+      : sceneRequired
       ? await settingShotAsset({ ...input, cutout, sources: [source, ...input.sources.filter(candidate => candidate.path !== source.path)] })
       : {
         bytes: await buildServerSourceDerivedAsset(
@@ -2530,8 +2545,10 @@ async function generateCandidate(input: {
     });
   });
   const bytes = compression.bytes;
-  const auditSource = auditMode === "source-evidence"
-    ? await buildServerImageAuditReference(input.asset, source, input.attempt)
+  const auditSource = singleContents
+    ? { ...source, bytes: new Uint8Array(await renderIdentitySingleContents({ buffer: Buffer.from(cutout) }, input.asset)) }
+    : auditMode === "source-evidence"
+    ? await buildServerImageAuditReference(input.asset, input.asset.id === "detail-material" ? { ...source, bytes: cutout } : source, input.attempt)
     : source;
   const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
   if (metadata.width !== input.asset.width || metadata.height !== input.asset.height || metadata.format !== "png") {
@@ -2580,6 +2597,7 @@ async function generateAssetWave(input: {
   specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
+  confirmedSinglePackage?: boolean;
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
   sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
@@ -2601,6 +2619,7 @@ async function generateAssetWave(input: {
         cutout: input.cutout,
         attempt,
         retryLineage: retryLineage.get(asset.id) ?? [],
+        confirmedSinglePackage: input.confirmedSinglePackage,
         sourcePlan: input.sourcePlan,
         sourceCutout: input.sourceCutout,
         catalogFallbackSource: input.catalogFallbackSource,
@@ -2671,6 +2690,7 @@ async function generateAssetSet(input: {
   specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
+  confirmedSinglePackage?: boolean;
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
   sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
@@ -2807,7 +2827,8 @@ async function runFullStudioClaim(
     throw new ServerProductStudioError("source_photo_sha256_mismatch", true);
   }
 
-  const sourcePlan = planStudioSourceAssignments(sources);
+  const confirmedSinglePackage = hasConfirmedSinglePackageContents(request.manual_fields);
+  const sourcePlan = planStudioSourceAssignments(sources, aiGeneratedAssetSpecs, confirmedSinglePackage);
   if (parsedRequest.mode === "preflight") {
     for (const id of coreFirstDraftAssetIds) {
       const digest = parsedRequest.data.preflight_asset_audit_lineage[id].sourceSha256;
@@ -2904,7 +2925,8 @@ async function runFullStudioClaim(
       specs: settingSpecs,
       sources,
       cutout: cutoutResolution.cutout,
-      sourcePlan: sources.length > 1 ? sourcePlan : undefined,
+      confirmedSinglePackage,
+      sourcePlan: sources.length > 1 || confirmedSinglePackage ? sourcePlan : undefined,
       sourceCutout,
       restored: generated,
       jobId: claim.id,
@@ -2918,7 +2940,8 @@ async function runFullStudioClaim(
       specs: sourceSpecs,
       sources,
       cutout: cutoutResolution.cutout,
-      sourcePlan: sources.length > 1 ? sourcePlan : undefined,
+      confirmedSinglePackage,
+      sourcePlan: sources.length > 1 || confirmedSinglePackage ? sourcePlan : undefined,
       sourceCutout,
       restored: generated,
       jobId: claim.id,
@@ -3042,7 +3065,8 @@ async function runRegenerationClaim(
   const sources = await analyzeServerStudioSources(await loadStudioSources(sourceRequest, dependencies.download, signal), dependencies, signal);
   const mainSource = sources.find((source) => source.role.toLocaleLowerCase() === "main") ?? sources[0];
   if (!mainSource) throw new ServerProductStudioError("source_image_missing", true);
-  const sourcePlan = planStudioSourceAssignments(sources, [asset]);
+  const confirmedSinglePackage = hasConfirmedSinglePackageContents(request.data.manual_fields);
+  const sourcePlan = planStudioSourceAssignments(sources, [asset], confirmedSinglePackage);
   const selectedSource = sourcePlan.get(asset.id)!;
   const regenerationAuditMode = resolveServerAssetSource(asset, sources).auditMode;
   const sourceCutout = createStudioSourceCutoutResolver(dependencies, signal);
@@ -3053,6 +3077,7 @@ async function runRegenerationClaim(
     specs: [asset],
     sources,
     cutout,
+    confirmedSinglePackage,
     sourcePlan,
     sourceCutout,
     restored: history,

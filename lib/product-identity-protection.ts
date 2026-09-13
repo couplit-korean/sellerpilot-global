@@ -523,13 +523,15 @@ export function selectCanonicalWholeProductIdentityView<T extends VerifiedIdenti
     statutoryIdentity: boolean;
   },
   spec: IdentityAssetSpec,
+  confirmedSinglePackage = false,
 ) {
-  if (spec.identityPolicy.mode !== "source-catalog" && spec.identityPolicy.mode !== "source-composite") {
+  const singleContents = spec.id === "detail-contents" && confirmedSinglePackage;
+  if (!singleContents && spec.identityPolicy.mode !== "source-catalog" && spec.identityPolicy.mode !== "source-composite") {
     throw new Error(`${spec.id} 전체 상품 원본 선택은 catalog 또는 composite 이미지에만 사용할 수 있습니다.`);
   }
   const canonicalWhole = identityCutouts.canonicalWhole;
   const role = String(canonicalWhole?.report?.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
-  const allowedRoles = new Set(spec.identityPolicy.sourceRoles.map((value) => String(value).toLowerCase()));
+  const allowedRoles = new Set((singleContents ? ["main", "front"] : spec.identityPolicy.sourceRoles).map((value) => String(value).toLowerCase()));
   const report = canonicalWhole.report;
   const foreground = canonicalWhole.foreground;
   if (!foreground
@@ -824,7 +826,7 @@ export async function assertIdentityEvidenceLinkage(
 
 export async function compositeIdentityForeground(
   background: Buffer,
-  foreground: IdentityForeground,
+  foreground: Pick<IdentityForeground, "buffer">,
   spec: IdentityAssetSpec,
   contactMode: IdentityBackgroundContactMode = "surface-supported",
 ) {
@@ -943,7 +945,7 @@ export async function compositeIdentityForeground(
 }
 
 export async function renderIdentityOnNeutralCanvas(
-  foreground: IdentityForeground,
+  foreground: Pick<IdentityForeground, "buffer">,
   spec: IdentityAssetSpec,
 ) {
   const background = await sharp({
@@ -955,6 +957,63 @@ export async function renderIdentityOnNeutralCanvas(
     },
   }).png().toBuffer();
   return compositeIdentityForeground(background, foreground, spec);
+}
+
+/** A confirmed single item occupies the existing contents panel's right lane.
+ * Keep its whole silhouette; the left lane belongs to HTML configuration copy.
+ */
+export async function renderIdentitySingleContents(
+  foreground: Pick<IdentityForeground, "buffer">,
+  spec: IdentityAssetSpec,
+) {
+  if (spec.id !== "detail-contents") throw new Error("단일 구성 전체 원본 역할이 올바르지 않습니다.");
+  return renderIdentityOnNeutralCanvas(foreground, { ...spec, identityPolicy: {
+    ...spec.identityPolicy, fit: "inside",
+    placement: { left: 0.38, top: 0.20, width: 0.54, height: 0.66 },
+  } });
+}
+
+/** A macro is a crop of an already verified visible exterior, never a new view.
+ * Each bounded retry selects another real source region. There is no added
+ * background, rotation, reconstruction, sharpening or synthetic material.
+ */
+export async function renderIdentityMaterialMacro(
+  verifiedForegroundBytes: Uint8Array,
+  spec: IdentityAssetSpec,
+  variant: number,
+) {
+  if (spec.id !== "detail-material" || spec.identityPolicy.mode !== "source-evidence"
+      || !Number.isInteger(variant) || variant < 1 || variant > 4) {
+    throw new Error("재질 근거 확대의 원본 역할 또는 시도 번호가 올바르지 않습니다.");
+  }
+  const decoded = await sharp(verifiedForegroundBytes, { failOn: "warning", limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS })
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = decoded.info;
+  const side = Math.floor(Math.min(width, height) * 0.44);
+  if (side < 96 || channels !== 4) throw new Error("재질 근거를 확대할 검증 원본 해상도가 부족합니다.");
+  const seen = new Set<string>();
+  const plans = [[0.28, 0.28], [0.72, 0.72], [0.72, 0.28], [0.28, 0.72]].flatMap(([x, y]) => {
+    const left = Math.max(0, Math.min(width - side, Math.round(width * x - side / 2)));
+    const top = Math.max(0, Math.min(height - side, Math.round(height * y - side / 2)));
+    const key = `${left}:${top}:${side}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    let opaque = 0;
+    for (let row = top; row < top + side; row++) {
+      for (let column = left; column < left + side; column++) {
+        if (decoded.data[(row * width + column) * 4 + 3] >= 224) opaque++;
+      }
+    }
+    // Avoid filling the macro with the cutout's empty surroundings or gaps.
+    return opaque / (side * side) >= 0.98 ? [{ left, top, width: side, height: side }] : [];
+  });
+  const sourceCrop = plans[variant - 1];
+  if (!sourceCrop) throw new Error("다음 재질 근거 확대에 사용할 다른 검증 외부 표면이 없습니다.");
+  const bytes = await sharp(decoded.data, { raw: { width, height, channels: 4 } })
+    .extract(sourceCrop)
+    .resize(spec.width, spec.height, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  return { bytes, sourceCrop, availablePlans: plans.length };
 }
 
 export type IdentityEvidenceAttemptPlan =

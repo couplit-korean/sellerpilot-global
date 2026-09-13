@@ -374,6 +374,14 @@ function normalizedPreparedSaleConfiguration(value: unknown) {
   return count ? `count:${Number(count[1])}` : normalized;
 }
 
+/** Only an explicit, seller-confirmed count-only single unit can stand for contents. */
+export function hasConfirmedSinglePackageContents(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fields = value as Record<string, unknown>;
+  return fields.productFactsConfirmed === true
+    && normalizedPreparedSaleConfiguration(fields.packageContents) === "count:1";
+}
+
 function sameOrConfirmedSinglePackage(facts: FirstDraftImageProductFacts, manual: Record<string, unknown>) {
   const before = normalizedPreparedSaleConfiguration(facts.packageContents);
   const after = normalizedPreparedSaleConfiguration(manual.packageContents);
