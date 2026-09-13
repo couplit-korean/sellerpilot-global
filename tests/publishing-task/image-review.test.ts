@@ -41,5 +41,11 @@ test("the extracted image review renders all six roles without a server or gener
   assert.equal((partial.match(/<figure>/g) ?? []).length, 6);
   assert.equal((partial.match(/생성 대기/g) ?? []).length, 4);
   assert.match(partial, /role="status"/);
+  const stopped = renderToStaticMarkup(createElement(FirstDraftImageReview, {
+    ...props, firstDraftImages: props.firstDraftImages.slice(0, 2),
+    phase: "failed", confirmedGeneratedCount: 2,
+    firstDraftConceptStatus: "나머지 이미지 생성이 중단됐습니다.",
+  }));
+  assert.match(stopped, /생성 확인 2 \/ 6장/);
   assert.equal(renderToStaticMarkup(createElement(FirstDraftImageReview, { ...props, phase: "idle", firstDraftImages: [] })), "");
 });

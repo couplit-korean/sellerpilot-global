@@ -235,6 +235,7 @@ export async function POST(request: Request) {
     },
     result: {
       ...safeResult,
+      firstDraftGeneration: recordValue(job.firstDraftGeneration),
       generatedImages: generatedEntries.map(([assetId], index) => ({
         id: assetId,
         url: generatedSigned[index]!.signedUrl,

@@ -26,9 +26,7 @@ export function FirstDraftImageReview({ firstDraftImages, phase, confirmedGenera
   const imagesById = new Map(firstDraftImages.map((image) => [image.id, image]));
   const statusLabel = phase === "complete"
     ? "생성 확인 6 / 6장"
-    : phase === "source-photo-catalog" || phase === "queued" || phase === "unknown" || phase === "failed"
-      ? "생성 확인 0 / 6장"
-      : `생성 확인 ${confirmedGeneratedCount} / 6장`;
+    : `생성 확인 ${confirmedGeneratedCount} / 6장`;
   return (<section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
               <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small role="status" aria-live="polite">{firstDraftConceptStatus || "역할별 이미지 생성 상태를 확인하고 있습니다."}{retryAvailable && <> <button type="button" onClick={onRetry}>같은 작업 다시 확인</button></>}</small></span><em>{statusLabel}</em></header>
               <div>{coreFirstDraftAssetIds.map((id) => {

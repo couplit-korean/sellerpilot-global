@@ -261,13 +261,18 @@ func parseIdentityAnchor(_ value: String) -> IdentityAnchor {
 func anchorProductTokens(_ anchor: IdentityAnchor) -> [String] {
     let confirmed = anchor.productName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let brandAndManufacturer = Set(identityTokens(anchor.brandName ?? "") + identityTokens(anchor.manufacturer ?? ""))
-    return identityTokens(confirmed.isEmpty ? (anchor.fallbackName ?? "") : confirmed).filter { token in
-        if brandAndManufacturer.contains(token) { return false }
+    let productTokens = identityTokens(confirmed.isEmpty ? (anchor.fallbackName ?? "") : confirmed).filter { token in
         if token.range(of: #"^\d+(?:[.,]\d+)?(?:g|kg|mg|ml|l|개|캔|포|봉|팩)?$"#, options: .regularExpression) != nil {
             return false
         }
         return true
     }
+    let distinguishingTokens = productTokens.filter { !brandAndManufacturer.contains($0) }
+    // A seller may use the full product name as its brand (e.g. 나랑드사이다).
+    // Removing the overlapping name must not erase every product identity token.
+    // Keep specific variant tokens when present; otherwise still require the
+    // actual product-name text and the existing brand/GTIN and silhouette checks.
+    return distinguishingTokens.isEmpty ? productTokens : distinguishingTokens
 }
 
 func normalizedDigits(_ value: String?) -> String {
@@ -402,6 +407,7 @@ func candidateScore(
     return normalizedCenterScore(box) * 5
         + areaPreference * 2
         + min(1, area / 0.20) * 2
+        + min(2, Double(identityEvidence.total))
         + (mode == "alternate" ? Double(inputIndex) * 0.04 : -Double(inputIndex) * 0.04)
 }
 

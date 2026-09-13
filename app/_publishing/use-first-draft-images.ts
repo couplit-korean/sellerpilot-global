@@ -26,10 +26,11 @@ type FirstDraftLineageEntry = {
 export type FirstDraftImageResult = {
   generatedImages?: Array<{ id: string; url: string | null }>;
   preflightAssetLineage?: Record<string, FirstDraftLineageEntry>;
+  firstDraftGeneration?: { exhausted?: boolean; attempts?: number; maxAttempts?: number } | null;
 };
 
 export type FirstDraftImageSnapshot = {
-  phase: Exclude<FirstDraftImagePhase, "idle" | "queued" | "failed">;
+  phase: Exclude<FirstDraftImagePhase, "idle" | "queued">;
   images: FirstDraftGeneratedImage[];
   confirmedGeneratedCount: number;
 };
@@ -67,18 +68,24 @@ function exactKnownImages(generated: FirstDraftImageResult["generatedImages"]) {
  * the authority, and six distinct composite digests are required for complete.
  */
 export function classifyFirstDraftImageResult(result: FirstDraftImageResult | null | undefined): FirstDraftImageSnapshot {
-  const images = exactKnownImages(result?.generatedImages);
+  const knownImages = exactKnownImages(result?.generatedImages);
+  const images = knownImages.filter((image) => {
+    const entry = result?.preflightAssetLineage?.[image.id];
+    return entry?.auditMode === "segmented-source-composite" && typeof entry.digest === "string" && lowercaseSha256Pattern.test(entry.digest);
+  });
   const lineage = result?.preflightAssetLineage;
   if (!lineage || typeof lineage !== "object" || Array.isArray(lineage)) {
     return {
-      phase: images.length > 0 && images.length < coreFirstDraftAssetIds.length ? "partial" : "unknown",
+      phase: result?.firstDraftGeneration?.exhausted
+        ? "failed"
+        : knownImages.length > 0 && knownImages.length < coreFirstDraftAssetIds.length ? "partial" : "unknown",
       images,
       confirmedGeneratedCount: 0,
     };
   }
 
   const modes = coreFirstDraftAssetIds.map((id) => lineage[id]?.auditMode);
-  const compositeDigests = coreFirstDraftAssetIds.flatMap((id) => {
+  const compositeDigests = images.flatMap(({ id }) => {
     const entry = lineage[id];
     return entry?.auditMode === "segmented-source-composite"
       && typeof entry.digest === "string"
@@ -94,10 +101,11 @@ export function classifyFirstDraftImageResult(result: FirstDraftImageResult | nu
     && confirmedGeneratedCount === coreFirstDraftAssetIds.length;
 
   if (complete) return { phase: "complete", images, confirmedGeneratedCount };
-  if (allCatalog && images.length === coreFirstDraftAssetIds.length) {
+  if (result?.firstDraftGeneration?.exhausted) return { phase: "failed", images, confirmedGeneratedCount };
+  if (allCatalog && knownImages.length === coreFirstDraftAssetIds.length) {
     return { phase: "source-photo-catalog", images, confirmedGeneratedCount: 0 };
   }
-  if (images.length < coreFirstDraftAssetIds.length || confirmedGeneratedCount > 0) {
+  if (knownImages.length < coreFirstDraftAssetIds.length || confirmedGeneratedCount > 0) {
     return { phase: "partial", images, confirmedGeneratedCount };
   }
   return { phase: "unknown", images, confirmedGeneratedCount: 0 };
@@ -160,11 +168,11 @@ function defaultFetcher(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 function firstDraftPhaseMessage(phase: FirstDraftImagePhase, confirmedGeneratedCount: number) {
-  if (phase === "source-photo-catalog") return "현재 6장은 원본사진을 규격에 맞춘 임시 초안입니다. 역할별 이미지 생성 완료로 확정하지 않습니다.";
-  if (phase === "queued") return "현재 보이는 이미지는 원본사진 기반 임시 초안입니다. 역할별 1차 이미지와 계보 6개가 모두 확인될 때만 생성 완료가 됩니다.";
+  if (phase === "source-photo-catalog") return "역할별 이미지 생성을 준비하고 있습니다. 원본사진은 생성 결과에 표시하지 않습니다.";
+  if (phase === "queued") return "역할별 1차 이미지를 생성하고 있습니다. 검증된 생성 결과부터 표시합니다.";
   if (phase === "partial") return `역할별 생성 이미지 ${confirmedGeneratedCount} / 6장을 확인했습니다. 나머지 이미지와 계보를 기다리고 있습니다.`;
   if (phase === "complete") return "원본 계보와 서로 다른 역할별 생성 근거가 확인된 1차 이미지 6장입니다.";
-  if (phase === "failed") return "1차 이미지 생성 요청을 완료하지 못했습니다. 같은 작업으로 다시 시도할 수 있습니다.";
+  if (phase === "failed") return "1차 이미지 생성을 완료하지 못해 중단됐습니다. 원본사진을 생성 결과로 표시하지 않습니다.";
   if (phase === "unknown") return "이미지 URL은 있으나 생성 계보를 확인할 수 없어 완료로 표시하지 않습니다.";
   return "";
 }
@@ -206,14 +214,7 @@ export function useFirstDraftImages(dependencies: FirstDraftImageHookDependencie
   }, []);
 
   const applySnapshot = useCallback((snapshot: FirstDraftImageSnapshot, keepQueued = false) => {
-    setFirstDraftImages((current) => {
-      const next = new Map(current.map((image) => [image.id, image]));
-      for (const image of snapshot.images) next.set(image.id, image);
-      return coreFirstDraftAssetIds.flatMap((id) => {
-        const image = next.get(id);
-        return image ? [image] : [];
-      });
-    });
+    setFirstDraftImages(snapshot.images);
     if (keepQueued && snapshot.phase === "source-photo-catalog") {
       setPhase("queued", 0);
     } else {
@@ -277,7 +278,8 @@ export function useFirstDraftImages(dependencies: FirstDraftImageHookDependencie
       if (pollController.signal.aborted || !fence.isCurrent(token)) return;
       attempts += 1;
       const phase = await refreshFirstDraftImages(jobId, token, pollController.signal);
-      if (phase === "complete" || phase === "stale") {
+      if (phase === "complete" || phase === "stale" || phase === "failed") {
+        fence.releaseRequest(token);
         pollControllerRef.current = null;
         return;
       }

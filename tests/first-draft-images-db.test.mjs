@@ -386,3 +386,38 @@ test("a failed generation attempt returns to the queue and stops retrying after 
 
   await db.close();
 });
+
+test("explicit bounded retry preserves attempts and recovery exposes exhaustion only to its owner", async () => {
+  const db = await bootDatabase();
+  try {
+    await db.exec("alter table sellerpilot_private.ai_cli_jobs add column completed_at timestamptz;");
+    await db.exec(await readFile(new URL("../supabase/migrations/20260830090000_recover_product_research_context.sql", import.meta.url), "utf8"));
+    await db.exec(await readFile(new URL("../supabase/migrations/20260913141310_first_draft_retry_status.sql", import.meta.url), "utf8"));
+    await setActor(db, ownerId);
+    await db.query("select public.sellerpilot_enqueue_first_draft_image_request($1)", [jobId]);
+    await db.query("update sellerpilot_private.first_draft_image_requests set attempts=3,last_error='previous-failure' where job_id=$1", [jobId]);
+    const recovery = () => callJson(db, "select public.sellerpilot_get_product_research_recovery($1) as result", [jobId]);
+    const claim = () => callJson(db, "select public.sellerpilot_service_claim_first_draft_image_request($1) as result", [workerTokenHash]);
+    assert.equal((await recovery()).result.firstDraftGeneration.exhausted, true);
+    assert.equal((await claim()).result, null);
+    const again = await callJson(db, "select public.sellerpilot_enqueue_first_draft_image_request($1) as result", [jobId]);
+    assert.equal(again.result.exhausted, true);
+    assert.equal(again.result.attempts, 3);
+
+    await db.query("update sellerpilot_private.first_draft_image_requests set max_attempts=4 where job_id=$1", [jobId]);
+    assert.equal((await claim()).result.jobId, jobId);
+    const active = await recovery();
+    assert.equal(active.result.firstDraftGeneration.attempts, 4);
+    assert.equal(active.result.firstDraftGeneration.exhausted, false);
+    const stored = await db.query("select last_error from sellerpilot_private.first_draft_image_requests where job_id=$1", [jobId]);
+    assert.equal(stored.rows[0].last_error, "previous-failure");
+
+    await db.query("update sellerpilot_private.first_draft_image_requests set status='queued' where job_id=$1", [jobId]);
+    assert.equal((await recovery()).result.firstDraftGeneration.exhausted, true);
+    await setActor(db, claimToken);
+    assert.equal((await recovery()).result, null);
+    await assert.rejects(db.query("update sellerpilot_private.first_draft_image_requests set max_attempts=7"));
+  } finally {
+    await db.close();
+  }
+});

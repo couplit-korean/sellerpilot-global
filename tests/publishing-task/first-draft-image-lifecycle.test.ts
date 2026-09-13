@@ -32,7 +32,7 @@ function resultWithLineage(
 test("six source-photo catalog URLs stay provisional rather than becoming generated-complete", () => {
   const snapshot = classifyFirstDraftImageResult(resultWithLineage(["source-photo-catalog"]));
   assert.equal(snapshot.phase, "source-photo-catalog");
-  assert.equal(snapshot.images.length, 6);
+  assert.equal(snapshot.images.length, 0);
   assert.equal(snapshot.confirmedGeneratedCount, 0);
 });
 
@@ -110,4 +110,25 @@ test("the browser hook binds fetches and timers to the active job and cleans the
   assert.match(source, /payload\.jobId !== jobId/);
   assert.match(source, /signal,\s*\n\s*\}\);/);
   assert.match(source, /useEffect\(\(\) => \{\s*fence\.mount\(\);[\s\S]*stopAsyncLifecycle[\s\S]*fence\.unmount\(\)/);
+});
+
+test("exhausted generation exposes no source crops and is terminal", () => {
+  const firstDraftGeneration = { exhausted: true, attempts: 3, maxAttempts: 3 };
+  const snapshot = classifyFirstDraftImageResult({
+    ...resultWithLineage(["source-photo-catalog"]), firstDraftGeneration,
+  });
+  assert.equal(snapshot.phase, "failed");
+  assert.equal(snapshot.images.length, 0);
+  assert.equal(classifyFirstDraftImageResult({ firstDraftGeneration }).phase, "failed");
+
+  const mixed = classifyFirstDraftImageResult(resultWithLineage(["segmented-source-composite", "source-photo-catalog"]));
+  assert.equal(mixed.images.length, 1);
+  assert.equal(mixed.images[0].id, "portrait");
+});
+
+test("stored lineage without a usable image does not inflate the generated count", () => {
+  const snapshot = classifyFirstDraftImageResult(resultWithLineage(["segmented-source-composite"], 2));
+  assert.equal(snapshot.phase, "partial");
+  assert.equal(snapshot.confirmedGeneratedCount, 2);
+  assert.equal(snapshot.images.length, 2);
 });

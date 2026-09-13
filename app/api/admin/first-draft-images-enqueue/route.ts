@@ -124,6 +124,12 @@ export async function POST(request: Request) {
   const status = typeof (enqueued.data as { status?: unknown } | null)?.status === "string"
     ? String((enqueued.data as { status: string }).status)
     : "unknown";
+  if ((enqueued.data as { exhausted?: boolean } | null)?.exhausted === true) {
+    return NextResponse.json({
+      message: "1차 이미지 생성이 반복 실패하여 중단됐습니다. 원인을 수정한 뒤 해당 작업을 재개해야 합니다.",
+      code: "generation_exhausted",
+    }, { status: 409, headers: noStore });
+  }
   if (status === "missing" || status === "not-completed" || status === "no-assets") {
     return NextResponse.json({
       message: rejectionMessage(status === "missing" ? "not_visible" : "preflight_invalid"),
