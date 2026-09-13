@@ -1,3 +1,5 @@
+> 2026-09-13 18:32 KST 정정: 아래는 17:20 당시 기록이다. 사용자는 기존 Shopee 로그인 탭을 사용하고 새 로그인 시도를 하지 말라고 명시했다. 아래 OTP·새 exact 세션 실행 순서를 재개하지 않는다. 기존 로그인 확인, DB 저장/재시도 결함의 적용 결과와 잔여 범위는 [최신 후속](20260913-shopee-existing-session-recovery.md)을 따른다.
+
 # 준비된 로그인 세션·등록 승인·국가별 DB 권한 후속 검토
 
 2026-09-13 17:20 KST. 사용자가 준비한 Aside 세션과 남은 승인에 대한 명시적 권한으로 진행했다. 정규 소스는 `/Users/kimchangheemac/dev/sellerpilot-app` 하나다. [이번 운영 증거](20260913-resumed-channel-approvals.json).

@@ -1,0 +1,107 @@
+{
+  "observedAt": "2026-09-13T09:32:00Z",
+  "runtimeRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+  "migration": {
+    "version": "20260913092500",
+    "name": "shopee_refresh_shop_merchant_bounds",
+    "sourceSha256": "b894fab7908c1edab0f00331a96dc8a5e832c456ffc969f5f146a04605c14544",
+    "applied": true,
+    "journalVerified": true
+  },
+  "validation": {
+    "dbTestsPassed": 5,
+    "dbTestsFailed": 0,
+    "liveReadOnlyMerge": [
+      {
+        "jsonb_build_object": {
+          "gate": true,
+          "targetCount": 9,
+          "guardEnabled": true,
+          "credentialFound": true,
+          "guardPublicExecute": false,
+          "allTargetsPreserved": true
+        }
+      }
+    ]
+  },
+  "database": {
+    "blocked": 0,
+    "runtime": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+    "activity": [
+      {
+        "count": 2,
+        "state": "active",
+        "wait_event_type": null
+      },
+      {
+        "count": 13,
+        "state": "idle",
+        "wait_event_type": "Client"
+      },
+      {
+        "count": 1,
+        "state": "idle",
+        "wait_event_type": "Extension"
+      },
+      {
+        "count": 1,
+        "state": null,
+        "wait_event_type": "Extension"
+      }
+    ],
+    "csCounts": [
+      {
+        "count": 13,
+        "channel_key": "lazada",
+        "sender_role": "system"
+      },
+      {
+        "count": 21,
+        "channel_key": "ebay",
+        "sender_role": "system"
+      }
+    ],
+    "database": {
+      "backends": 17,
+      "deadlocks": 0,
+      "statsReset": null,
+      "temporaryBytes": 3014656
+    },
+    "oldTransactions": 0
+  },
+  "gateway": {
+    "ready": true,
+    "activeJobs": 0,
+    "lastHttpStatus": 200,
+    "lastContactAt": "2026-09-13T09:31:19.657Z"
+  },
+  "browser": {
+    "existingDeveloperLoggedIn": true,
+    "existingSellerLoggedIn": true,
+    "newLoginAttempted": false,
+    "oauthStarted": false,
+    "apiLog": {
+      "rangeStartKst": "2026-09-13T16:22:11+09:00",
+      "rangeEndKst": "2026-09-13T18:22:11+09:00",
+      "refreshRequests": 8,
+      "httpStatus": 403,
+      "error": "error_param",
+      "targetShopId": "1758392135"
+    }
+  },
+  "shopeeTargets": {
+    "shops": 8,
+    "merchants": 1,
+    "shopsWithRecordedUnexpiredAccess": 1,
+    "shopsSharingExpiredAccessAndRefresh": 7,
+    "separateMainRefreshPresent": true,
+    "mainRefreshProviderValidityVerified": false,
+    "refreshPerformedThisReview": false,
+    "allTargetsRecovered": false
+  },
+  "remaining": [
+    "Shopee stored main-token lineage and durable one-time recovery; no new login/OAuth attempt",
+    "Lazada IM Cross-border contract and four non-MY grants",
+    "actual listing/reply/shipping execution and remote readback"
+  ]
+}

@@ -8,6 +8,10 @@ const recovery = await readFile(new URL(
   import.meta.url,
 ), "utf8");
 const sql = recovery.slice(0,recovery.indexOf('-- Reviewed source: 20260909204000')).replace(/do \$recovery_guard\$[\s\S]*?end \$recovery_guard\$;/u,'')+'commit;';
+const boundsFix = await readFile(new URL(
+  "../supabase/migrations/20260913092500_shopee_refresh_shop_merchant_bounds.sql",
+  import.meta.url,
+), "utf8");
 const owner = "00000000-0000-4000-8000-000000006001";
 const credential = "00000000-0000-4000-8000-000000006002";
 const vaultId = "00000000-0000-4000-8000-000000006003";
@@ -176,6 +180,75 @@ test("target refresh claims and merge helpers are service-only", async () => {
       assert.equal(acl.direct, false);
       assert.equal(acl.begin_refresh, role === "service_role");
       assert.equal(acl.merge_refresh, false);
+    }
+  } finally { await db.close(); }
+});
+
+test("eight shops plus merchant retain exact target isolation through recovery and preparation", async () => {
+  const db = await fixture();
+  try {
+    const merchant = { ...target("5511564", 0), type: "merchant" };
+    const withMerchant = { ...base, shopee_targets: [...targets, merchant] };
+    const candidate = { ...candidateFor(shops[0], 1), shopee_targets: [...candidateFor(shops[0], 1).shopee_targets, merchant] };
+    const merge = (source, next, recoveryOnly = false, type = "shop", targetId = shops[0]) => db.query(
+      "select sellerpilot_private.shopee_target_refresh_merge_v1($1::jsonb,$2::jsonb,$3,$4,$5) result",
+      [JSON.stringify(source), JSON.stringify(next), type, targetId, recoveryOnly],
+    );
+    await assert.rejects(merge(withMerchant, candidate), /SHOPEE_TARGET_REFRESH_PAYLOAD_INVALID/);
+    await db.exec(boundsFix);
+    for (const recoveryOnly of [true, false]) {
+      const merged = (await merge(withMerchant, candidate, recoveryOnly)).rows[0].result;
+      assert.equal(merged.shopee_targets.length, 9);
+      assert.deepEqual(merged.shopee_targets.slice(1), withMerchant.shopee_targets.slice(1));
+      assert.deepEqual(merged.shopee_targets[0], candidate.shopee_targets[0]);
+    }
+    const widened = structuredClone(candidate);
+    widened.shopee_targets[8] = { ...merchant, access_token: "changed-other-merchant" };
+    await assert.rejects(merge(withMerchant, widened), /SHOPEE_TARGET_REFRESH_NON_TARGET_CHANGED/);
+    const nineShops = { ...base, shopee_targets: [...targets, target("99999999", 0)] };
+    await assert.rejects(merge(nineShops, nineShops), /SHOPEE_TARGET_REFRESH_PAYLOAD_INVALID/);
+    const extraTarget = { ...candidate, shopee_targets: [...candidate.shopee_targets, target("99999999", 0)] };
+    await assert.rejects(merge(withMerchant, extraTarget), /SHOPEE_TARGET_REFRESH_PAYLOAD_INVALID/);
+    const nextMerchant = { ...target(merchant.id, 1), type: "merchant" };
+    const merchantCandidate = {
+      ...withMerchant, merchant_id: merchant.id,
+      shopee_targets: [...targets, nextMerchant],
+      access_token: nextMerchant.access_token, refresh_token: nextMerchant.refresh_token,
+      access_token_expires_at: nextMerchant.access_token_expires_at,
+      refresh_token_expires_at: nextMerchant.refresh_token_expires_at,
+    };
+    const merchantMerged = (await merge(withMerchant, merchantCandidate, false, "merchant", merchant.id)).rows[0].result;
+    assert.deepEqual(merchantMerged.shopee_targets.slice(0, 8), targets);
+    assert.deepEqual(merchantMerged.shopee_targets[8], nextMerchant);
+    await db.query("update vault.decrypted_secrets set decrypted_secret=$1 where id=$2", [JSON.stringify(withMerchant), vaultId]);
+    assert.equal((await begin(db, jobOne, claimOne, shops[0])).status, "acquired");
+    const prepared = (await db.query(`select public.sellerpilot_service_prepare_cs_shopee_target_refresh_v1(
+      $1,$2,$3,'shop',$4,$5::jsonb,null,false,false
+    ) result`, [tokenHash, jobOne, claimOne, shops[0], JSON.stringify(candidate)])).rows[0].result;
+    assert.equal(prepared.status, "prepared");
+    assert.deepEqual((await db.query("select payload from sellerpilot_private.test_refresh_stages")).rows[0].payload.shopee_targets, candidate.shopee_targets);
+    await assert.rejects(db.exec(boundsFix), /SHOPEE_REFRESH_BOUNDS_PREIMAGE_DRIFT/);
+    await db.exec("rollback");
+  } finally { await db.close(); }
+});
+
+test("expired refresh lease cannot discard an unresolved provider outcome and retry under another job", async () => {
+  const db = await fixture();
+  try {
+    await db.exec(boundsFix);
+    assert.equal((await begin(db, jobOne, claimOne, shops[0])).status, "acquired");
+    await db.query("update sellerpilot_private.cs_shopee_target_refresh_claims set lease_expires_at=now()-interval '1 minute' where credential_id=$1", [credential]);
+    await db.query("update sellerpilot_private.channel_gateway_jobs set status='reconciliation_required' where id=$1", [jobOne]);
+    await assert.rejects(begin(db, jobTwo, claimTwo, shops[0]), /SHOPEE_PRIOR_REFRESH_RECONCILIATION_REQUIRED/);
+    const existing = (await db.query("select job_id,claim_token,target_id from sellerpilot_private.cs_shopee_target_refresh_claims where credential_id=$1", [credential])).rows[0];
+    assert.deepEqual(existing, { job_id: jobOne, claim_token: claimOne, target_id: shops[0] });
+    assert.equal((await db.query("select credential_refresh_in_flight value from sellerpilot_private.channel_gateway_jobs where id=$1", [jobTwo])).rows[0].value, false);
+    assert.equal((await db.query("select count(*)::int n from sellerpilot_private.test_refresh_stages")).rows[0].n, 0);
+    // Only the normal completed/reconciled state releases the prior claim.
+    await db.query("update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=false where id=$1", [jobOne]);
+    assert.equal((await begin(db, jobTwo, claimTwo, shops[0])).status, "acquired");
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal((await db.query("select has_function_privilege($1,'sellerpilot_private.guard_shopee_unresolved_refresh_claim()','EXECUTE') ok", [role])).rows[0].ok, false);
     }
   } finally { await db.close(); }
 });
