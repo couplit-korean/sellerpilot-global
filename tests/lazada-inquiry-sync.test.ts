@@ -92,6 +92,7 @@ test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer message
       remoteMessageId: "message-1",
       senderRole: "customer",
       providerContext: {
+        country: "MY",
         nativeContentFingerprint: createHash("sha256").update(JSON.stringify({
           nativeText: "배송일을 알려주세요",
           nativeMedia: null,

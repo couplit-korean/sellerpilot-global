@@ -53,6 +53,23 @@ function historyString(value: unknown, name: string, maxLength = 500) {
   return value.trim();
 }
 
+function selectedHistoryCountry(payload: SecretPayload, arguments_: Record<string, unknown>) {
+  const supplied = [
+    arguments_.sellerpilotLazadaCountry,
+    arguments_.country,
+    payload.country,
+  ].filter((value) => value !== undefined);
+  if (!supplied.length || supplied.some((value) => typeof value !== "string")) {
+    throw new Error("LAZADA_HISTORY_REQUEST_COUNTRY_REQUIRED");
+  }
+  const countries = supplied.map((value) => String(value).trim().toUpperCase());
+  if (countries.some((country) => !/^(ID|MY|PH|SG|TH|VN)$/u.test(country))
+      || countries.some((country) => country !== countries[0])) {
+    throw new Error("LAZADA_HISTORY_REQUEST_COUNTRY_INVALID");
+  }
+  return countries[0];
+}
+
 function compactHistorySession(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("LAZADA_HISTORY_SESSION_STATE_INVALID");
@@ -123,6 +140,7 @@ function lazadaSessionLimitStop(limit: number): LazadaInquiryExecution {
 export async function executeLazadaInquiry(input: LazadaInquiryInput): Promise<LazadaInquiryExecution> {
   if (input.operation === "inquiries.list") {
     if (input.arguments.bootstrap !== true) throw new Error("CHANNEL_ARGUMENT_REQUIRED:bootstrap");
+    const requestCountry = selectedHistoryCountry(input.payload, input.arguments);
     // Durable bootstrap deliberately selects one session per transaction.
     // pageSize therefore bounds each message-list request, while sessionLimit
     // bounds the number of distinct sessions selected across continuations.
@@ -197,7 +215,11 @@ export async function executeLazadaInquiry(input: LazadaInquiryInput): Promise<L
     };
     if (messageCursor) messageParams.last_message_id = messageCursor.last;
     const messageRemote = await lazadaRequest({ payload: input.payload, path: "/im/message/list", params: messageParams });
-    messageRemote.data = { ...messageRemote.data, sellerpilotSession: session };
+    messageRemote.data = {
+      ...messageRemote.data,
+      sellerpilotSession: session,
+      sellerpilotRequestCountry: requestCountry,
+    };
     const messageStep = step(`inquiries-message:${sessionId}:1`, messageRemote);
     steps.push(messageStep);
     if (!messageStep.ok) return { steps };
@@ -212,6 +234,7 @@ export async function executeLazadaInquiry(input: LazadaInquiryInput): Promise<L
         continuationArguments: {
           ...input.arguments,
           sellerpilotLazadaSessionCount: currentSessionCount,
+          sellerpilotLazadaCountry: requestCountry,
           sellerpilotLazadaSession: session,
           sellerpilotLazadaMessageStartTime: nextMessageCursor.nextStart,
           sellerpilotLazadaLastMessageId: nextMessageCursor.last,
@@ -230,6 +253,7 @@ export async function executeLazadaInquiry(input: LazadaInquiryInput): Promise<L
         continuationArguments: {
           ...nextArguments,
           sellerpilotLazadaSessionCount: currentSessionCount,
+          sellerpilotLazadaCountry: requestCountry,
           sellerpilotLazadaSessionStartTime: nextSessionCursor.nextStart,
           sellerpilotLazadaLastSessionId: nextSessionCursor.last,
         },

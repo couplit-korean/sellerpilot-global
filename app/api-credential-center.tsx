@@ -330,6 +330,12 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
     }
   };
 
+  const startLazadaImOAuth = (credential: Credential) => {
+    setPendingOAuth(null);
+    setError("");
+    window.dispatchEvent(new CustomEvent("sellerpilot:lazada-im-exact-start", { detail: { credentialId: credential.id } }));
+  };
+
   const startOAuth = async (credential: Credential, includeMessages = false) => {
     if (credential.channel === "shopee") {
       setPendingOAuth(null);
@@ -440,7 +446,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
             {shopeeStatusUnavailable && <p className="last-check failed"><AlertTriangle size={13} />판매자 계정 확인 상태를 불러오지 못했습니다. 주문 자동 동기화 상태를 정상으로 간주하지 않습니다. 다시 확인해 주세요.</p>}
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}{channel.key === "ebay" && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential, true)} disabled={oauthStartingId === credential.id}><KeyRound size={14} />일반 대화 권한 연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}{channel.key === "lazada" && credential && <button className="credential-secondary" onClick={() => startLazadaImOAuth(credential)} disabled={oauthStartingId === credential.id}><KeyRound size={14} />5개국 CS 권한 연결</button>}{channel.key === "ebay" && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential, true)} disabled={oauthStartingId === credential.id}><KeyRound size={14} />일반 대화 권한 연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>

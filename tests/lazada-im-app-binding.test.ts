@@ -7,7 +7,11 @@ import { parseLazadaImPush } from "../lib/channels/lazada-im";
 import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
 
 // Synthetic credentials and identities, not operational secrets.
-const secret = withLazadaProviderAccountIdentity({ app_key: "commerce-app", app_secret: "commerce-test-secret", im_app_key: "im-app", im_app_secret: "im-test-secret", country: "my" }, { account_platform: "seller_center", country_user_info: [{ country: "my", seller_id: "2001", user_id: "3001" }] }).payload;
+const secret = withLazadaProviderAccountIdentity({
+  app_key: "commerce-app", app_secret: "commerce-test-secret", im_app_key: "im-app", im_app_secret: "im-test-secret", country: "my",
+  im_access_token: "im-fixture-access", im_refresh_token: "im-fixture-refresh", im_account_platform: "seller_center",
+  im_identity_source: "lazada.oauth_token", im_country_user_info: [{ country: "my", seller_id: "2001", user_id: "3001" }],
+}, { account_platform: "seller_center", country_user_info: [{ country: "my", seller_id: "2001", user_id: "3001" }] }).payload;
 const credential = { credential_id: "fixture-credential", secret_payload: secret };
 const payload = { seller_id: "2001", message_type: 2, data: { site_id: "MY", session_id: "session", message_id: "message", content: JSON.stringify({ txt: "문의 원문" }), from_account_type: 2, status: 0, type: 1, template_id: 1 } };
 const raw = JSON.stringify(payload);
@@ -70,7 +74,9 @@ test("route orders signature and binding before persistence and keeps V3 retry r
 });
 
 const candidateContract = (candidates: unknown[], overflow = false) => ({ contract: "lazada_im_webhook_candidates_v1", limit: 32, overflow, candidates });
-const otherOwner = { credential_id: "other-owner-credential", secret_payload: withLazadaProviderAccountIdentity({ ...secret }, { account_platform: "seller_center", country_user_info: [{ country: "my", seller_id: "2002", user_id: "3002" }] }).payload };
+const otherOwner = { credential_id: "other-owner-credential", secret_payload: withLazadaProviderAccountIdentity({
+  ...secret, im_country_user_info: [{ country: "my", seller_id: "2002", user_id: "3002" }],
+}, { account_platform: "seller_center", country_user_info: [{ country: "my", seller_id: "2002", user_id: "3002" }] }).payload };
 
 test("shared IM app across owners routes only the exact authenticated seller", () => {
   const selected = selectLazadaImWebhookRoute(raw, sign(raw), candidateContract([otherOwner, credential]));

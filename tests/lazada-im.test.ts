@@ -30,7 +30,7 @@ test("normalizes Lazada buyer IM push payloads", () => {
     priority: 3,
     receivedAt: new Date(1_787_340_000_000).toISOString(),
     remoteMessageId: "message-1",
-    providerContext: { nativeContentFingerprint: nativeContentFingerprint("배송일을 알려주세요") },
+    providerContext: { nativeContentFingerprint: nativeContentFingerprint("배송일을 알려주세요"), country: "MY" },
   });
 });
 

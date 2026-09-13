@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { parseLazadaImPush, type LazadaImInquiry } from "./lazada-im";
-import { activeLazadaSellerIdForMarket, activeProductionLazadaCredentialEnvelope } from "./lazada-target-lineage";
+import { lazadaImSignedCountry, parseLazadaImPush, type LazadaImInquiry } from "./lazada-im";
+import { lazadaImCredentialBinding } from "./lazada-im-capability";
+import { activeProductionLazadaCredentialEnvelope } from "./lazada-target-lineage";
 
 type LazadaInquiryIngestArguments = {
   p_credential_id: string;
@@ -168,15 +169,15 @@ export function boundLazadaImCredentialId(credential: unknown, payload: Record<s
   if (!envelope) return ""; // Never synthesize provider_account_subject/owner.
   const sellerId = webhookText(payload.seller_id);
   if (!/^[1-9][0-9]{0,31}$/.test(sellerId)) return "";
-  const data = record(payload.data) ? payload.data : {};
   // Official IM message docId=121553: seller_id at root, site_id in data.
-  const countries = [payload.site, data.site_id].filter((value) => value !== undefined)
-    .map((value) => webhookText(value).toLowerCase().replace(/^lazada[_-]/, ""));
-  if (!countries.length || countries.some((country) => !/^(id|my|ph|sg|th|vn)$/.test(country))) return "";
-  const country = countries[0];
-  if (countries.some((value) => value !== country)
-      || webhookText(envelope.secretPayload.country).toLowerCase() !== country
-      || activeLazadaSellerIdForMarket(envelope.secretPayload, country) !== sellerId) return "";
+  const country = lazadaImSignedCountry(payload);
+  if (!country) return "";
+  try {
+    const binding = lazadaImCredentialBinding(envelope.secretPayload, country);
+    if (binding.country !== country || binding.sellerId !== sellerId) return "";
+  } catch {
+    return "";
+  }
   return envelope.credentialId;
 }
 

@@ -27,6 +27,7 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
+const lazadaImCountryPattern = /^(id|my|ph|sg|th|vn)$/u;
 
 
 function parsedRecord(value: unknown) {
@@ -36,6 +37,32 @@ function parsedRecord(value: unknown) {
   } catch {
     return { txt: value };
   }
+}
+
+function normalizedLazadaImCountry(value: unknown) {
+  const country = text(value).toLowerCase().replace(/^lazada[_-]/u, "");
+  return lazadaImCountryPattern.test(country) ? country.toUpperCase() : "";
+}
+
+function lazadaImSignedCountryState(payload: Record<string, unknown>) {
+  const data = parsedRecord(payload.data);
+  const supplied = [payload.site, data.site_id].filter((value) => value !== undefined);
+  if (!supplied.length) return { status: "absent" as const, country: "" };
+  const countries = supplied.map(normalizedLazadaImCountry);
+  return countries.every((country) => country && country === countries[0])
+    ? { status: "valid" as const, country: countries[0] }
+    : { status: "invalid" as const, country: "" };
+}
+
+export function lazadaImSignedCountry(payload: Record<string, unknown>) {
+  return lazadaImSignedCountryState(payload).country;
+}
+
+function lazadaImHistoryPageCountry(data: Record<string, unknown>) {
+  if (!("sellerpilotRequestCountry" in data)) return "";
+  const country = normalizedLazadaImCountry(data.sellerpilotRequestCountry);
+  if (!country) throw new Error("LAZADA_HISTORY_PAGE_COUNTRY_INVALID");
+  return country;
 }
 
 function safeHttpsUrl(value: unknown) {
@@ -192,6 +219,9 @@ export function lazadaImHistoryRawPages(
 
 export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInquiry | null {
   const data = parsedRecord(payload.data);
+  const countryState = lazadaImSignedCountryState(payload);
+  if (countryState.status === "invalid") return null;
+  const country = countryState.country;
   const nestedMessage = record(data.message);
   const message = Object.keys(nestedMessage).length ? nestedMessage : data;
   const content = parsedRecord(message.content ?? data.content);
@@ -210,7 +240,7 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
     externalTicketId: `lazada-im:${sessionId}`,
     customerName: systemEvent ? "Lazada 시스템" : senderType === 2 ? "Lazada 판매자"
       : timestamp ? text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객") : "Lazada 고객",
-    subject: timestamp ? text(data.product_name, data.title, data.site_id ? `Lazada ${data.site_id} IM 문의` : "Lazada IM 문의") : "Lazada 시각 미확정 메시지",
+    subject: timestamp ? text(data.product_name, data.title, country ? `Lazada ${country} IM 문의` : "Lazada IM 문의") : "Lazada 시각 미확정 메시지",
     message: event.displayMessage,
     status: messageStatusNormal && (systemEvent || senderType === 2) && timestamp ? "resolved" : "waiting",
     priority: 3,
@@ -220,11 +250,14 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
     ...(event.plainText
       ? {
         ...(senderType === 2 ? { senderRole: "seller" as const } : {}),
-        providerContext: { nativeContentFingerprint: event.providerContext.nativeContentFingerprint },
+        providerContext: {
+          nativeContentFingerprint: event.providerContext.nativeContentFingerprint,
+          ...(country ? { country } : {}),
+        },
       }
       : {
         senderRole: systemEvent ? "system" as const : senderType === 2 ? "seller" as const : "customer" as const,
-        providerContext: event.providerContext,
+        providerContext: { ...event.providerContext, ...(country ? { country } : {}) },
       }),
   };
 }
@@ -236,10 +269,15 @@ export function normalizeLazadaImHistory(
 ) {
   // Retain the existing caller ABI; collection time is never message evidence.
   void _collectionTimestamp;
-  const sessions = new Map<string, { session: Record<string, unknown>; messages: Record<string, unknown>[] }>();
+  const sessions = new Map<string, {
+    sessionId: string;
+    session: Record<string, unknown>;
+    messages: Array<{ row: Record<string, unknown>; country: string }>;
+  }>();
   for (const step of steps.filter((item) => item.ok !== false && item.name.startsWith("inquiries-message:"))) {
       const root = record(step.data.data);
       const session = record(step.data.sellerpilotSession);
+      const country = lazadaImHistoryPageCountry(step.data);
       const nameSessionId = step.name.slice("inquiries-message:".length).split(":")[0];
       const sessionId = text(session.session_id, nameSessionId);
       if (!sessionId) continue;
@@ -248,18 +286,20 @@ export function normalizeLazadaImHistory(
         throw new Error("LAZADA_HISTORY_MESSAGE_PAGE_INVALID");
       }
       const messages = list(rawMessages);
-      const current = sessions.get(sessionId);
-      sessions.set(sessionId, {
+      const sessionKey = `${country || "legacy"}\u001f${sessionId}`;
+      const current = sessions.get(sessionKey);
+      sessions.set(sessionKey, {
+        sessionId,
         session: Object.keys(session).length ? session : current?.session ?? {},
-        messages: [...(current?.messages ?? []), ...messages],
+        messages: [...(current?.messages ?? []), ...messages.map((row) => ({ row, country }))],
       });
   }
 
-  return [...sessions.entries()].flatMap(([sessionId, { session, messages }]) => {
+  return [...sessions.values()].flatMap(({ sessionId, session, messages }) => {
     const byMessageId = new Map<string, LazadaImInquiry>();
     const revisionContentKeys = new Map<string, string>();
     const conflicts = new Map<string, LazadaImInquiry[]>();
-    for (const row of messages) {
+    for (const { row, country } of messages) {
       const remoteMessageId = text(row.message_id);
       const content = parsedRecord(row.content);
       const event = lazadaEventDetails(row, content, { officialSession: officialSession(session.tags) });
@@ -294,8 +334,8 @@ export function normalizeLazadaImHistory(
         remoteMessageId,
         senderRole: systemEvent ? "system" : senderType === 2 ? "seller" : "customer",
         providerContext: event.plainText
-          ? { nativeContentFingerprint: event.providerContext.nativeContentFingerprint }
-          : event.providerContext,
+          ? { nativeContentFingerprint: event.providerContext.nativeContentFingerprint, ...(country ? { country } : {}) }
+          : { ...event.providerContext, ...(country ? { country } : {}) },
       };
       const variants = conflicts.get(remoteMessageId);
       const previousRecalled = previous?.providerContext?.eventKind === "recalled";

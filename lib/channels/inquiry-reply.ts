@@ -86,7 +86,11 @@ export function buildInquiryReplyArguments(
       ? ticketId.slice("lazada-im:".length).trim()
       : "";
     if (!sessionId) throw new Error("INQUIRY_REPLY_INVALID:lazadaSessionId");
-    return { sessionId, reply: replyText };
+    const country = typeof replyContext.country === "string" ? replyContext.country.trim().toLowerCase() : "";
+    if (replyContext.country !== undefined && !/^(my|ph|sg|th|vn|id)$/.test(country)) {
+      throw new Error("INQUIRY_REPLY_INVALID:lazadaCountry");
+    }
+    return { sessionId, reply: replyText, ...(country ? { country } : {}) };
   }
 
   if (channel === "shopee") {

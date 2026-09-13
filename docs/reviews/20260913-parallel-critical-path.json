@@ -1,0 +1,75 @@
+{
+  "observedAt": "2026-09-13T11:17:17.222322+00:00",
+  "projectRef": "sqaoqucxakebqkiygdxb",
+  "migrations": [
+    {
+      "version": "20260913104000",
+      "name": "lazada_im_cross_border_exact_oauth",
+      "sourceSha256": "356e582a27603c5657e2e7062b619f4e3db43b203f6627bc2bf95ec6c9b6712f"
+    },
+    {
+      "version": "20260913111500",
+      "name": "lazada_im_ingest_country_binding",
+      "sourceSha256": "2fcea652d8e9f4318d081dcdd859461699b7d3872e200600af82c87fa0b08c59"
+    }
+  ],
+  "postimage": {
+    "tables": [
+      {
+        "rls": true,
+        "name": "lazada_im_exact_oauth_events",
+        "anonSelect": false,
+        "authenticatedSelect": false
+      },
+      {
+        "rls": true,
+        "name": "lazada_im_exact_oauth_readbacks",
+        "anonSelect": false,
+        "authenticatedSelect": false
+      },
+      {
+        "rls": true,
+        "name": "lazada_im_exact_oauth_sessions",
+        "anonSelect": false,
+        "authenticatedSelect": false
+      }
+    ],
+    "functions": [
+      {
+        "name": "sellerpilot_lazada_im_exact_oauth_admin",
+        "anonExecute": false,
+        "definitionMd5": "1119c9f0d757608aa45f5dafff32ad20",
+        "serviceExecute": true,
+        "authenticatedExecute": false
+      },
+      {
+        "name": "sellerpilot_lazada_im_exact_oauth_worker",
+        "anonExecute": false,
+        "definitionMd5": "d85154864cc06b4849a3386c24fd8a46",
+        "serviceExecute": true,
+        "authenticatedExecute": false
+      },
+      {
+        "name": "sellerpilot_service_ingest_lazada_inquiries_v3",
+        "anonExecute": false,
+        "definitionMd5": "a34b7c8278eb78f46d316692063744e0",
+        "serviceExecute": true,
+        "authenticatedExecute": false
+      },
+      {
+        "name": "sellerpilot_service_lazada_im_ingest_ready_v3",
+        "anonExecute": false,
+        "definitionMd5": "55d2a76d0329dbd1492b407adf6a4741",
+        "serviceExecute": true,
+        "authenticatedExecute": false
+      }
+    ],
+    "legacyMyReady": true,
+    "newSessionCount": 0,
+    "credentialVersion": 7
+  },
+  "providerAuthorizationPerformed": false,
+  "allFiveCountriesConnected": false,
+  "deployedSource": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+  "newSourceDeploymentPending": true
+}
