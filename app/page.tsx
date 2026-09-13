@@ -228,6 +228,7 @@ import {
   type RegistrationActivityEventState,
   type RegistrationActivityFilter,
 } from "./_registration/registration-status";
+import { completedStudioDraftJobId, recoverCompletedStudioDraft } from "./_registration/completed-studio-draft";
 
 
 
@@ -2623,6 +2624,17 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
   const [stoppingActivityId, setStoppingActivityId] = useState("");
   const [deletingActivityId, setDeletingActivityId] = useState("");
   const [expandedActivityId, setExpandedActivityId] = useState("");
+  const completedDraftLock = useRef(false);
+  const [connectingDraftId, setConnectingDraftId] = useState("");
+  const [completedDraftError, setCompletedDraftError] = useState("");
+  const [completedProductId, setCompletedProductId] = useState("");
+  useEffect(() => {
+    if (!completedProductId) return;
+    const product = displayProducts.find((candidate) => candidate.sourceId === completedProductId);
+    if (!product) return;
+    setCompletedProductId("");
+    onOpenProduct(product);
+  }, [completedProductId, displayProducts, onOpenProduct]);
   const studioWorkerReadiness = useStudioWorkerReadiness(authenticatedFetch);
   const studioExecutionReady = isStudioExecutionReady(studioWorkerReadiness);
   const recoveryUnavailableLabel = !studioWorkerReadiness
@@ -2667,7 +2679,23 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
     try { await onDeleteActivity(activity); } finally { setDeletingActivityId(""); }
   };
 
+  const openCompletedDraft = async (activity: RegistrationActivity) => {
+    if (completedDraftLock.current || !completedStudioDraftJobId(activity)) return;
+    setConnectingDraftId(activity.id);
+    setCompletedDraftError("");
+    try {
+      const productId = await recoverCompletedStudioDraft(activity, {
+        authenticatedFetch, refresh: onRefresh, lock: completedDraftLock,
+      });
+      if (productId) setCompletedProductId(productId);
+    } catch (error) {
+      setCompletedDraftError(error instanceof Error ? error.message : "완료된 AI 초안을 연결하지 못했습니다.");
+    } finally { setConnectingDraftId(""); }
+  };
+
   return <div className="page-stack registration-activity-page">
+    {completedDraftError && <section className="panel" role="alert">{completedDraftError}</section>}
+    {completedProductId && <section className="panel" role="status">완료된 초안의 상품 연결은 확인했습니다. 최신 상품 원장에 표시되면 상세 화면으로 이동합니다. 표시가 늦으면 새로고침해 주세요.</section>}
     <section className="registration-activity-hero">
       <div><span className="eyebrow dark"><Activity size={14} /> LIVE REGISTRATION LEDGER</span><h2>여러 상품의 등록을 동시에 확인하세요.</h2><p>AI 분석 시작부터 채널별 완료·거절까지 운영 원장 기준의 상태와 실제 경과 시간을 표시합니다.</p></div>
       <span><button type="button" className="credential-secondary" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}새로고침</button><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />다른 상품 등록</button></span>
@@ -2722,7 +2750,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.id.startsWith("research:") && activity.status === "ready" && !activity.controlState && <button type="button" className="primary-button" onClick={() => onOpenResearch(activity.id.slice("research:".length))}>1차 결과 이어서 확인</button>}{!activity.controlState && ["analyzing", "publishing", "ready", "blocked"].includes(activity.status) && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId || deletingActivityId)} title="대기 작업과 후속 전송을 중지합니다. 이미 전달된 요청의 응답은 보존합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.controlState === "stopping" && <span className="registration-stop-unavailable">중지 요청됨 · 응답 확인 중</span>}<button type="button" className="registration-stop-button" onClick={() => void deleteActivity(activity)} disabled={Boolean(deletingActivityId || stoppingActivityId)} title="후속 작업을 중지하고 등록 기록에서 삭제합니다. 판매채널의 상품은 삭제하지 않습니다.">{deletingActivityId === activity.id ? "삭제 중" : "삭제"}</button>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && !activity.controlState && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
+          <footer>{completedStudioDraftJobId(activity) && <button type="button" className="primary-button" onClick={() => void openCompletedDraft(activity)} disabled={Boolean(connectingDraftId || stoppingActivityId || deletingActivityId)}>{connectingDraftId === activity.id ? <><LoaderCircle className="spin" size={14} />완료된 초안 연결 중</> : "완료된 AI 초안 이어서 확인"}</button>}{activity.id.startsWith("research:") && activity.status === "ready" && !activity.controlState && <button type="button" className="primary-button" onClick={() => onOpenResearch(activity.id.slice("research:".length))}>1차 결과 이어서 확인</button>}{!activity.controlState && ["analyzing", "publishing", "ready", "blocked"].includes(activity.status) && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId || deletingActivityId)} title="대기 작업과 후속 전송을 중지합니다. 이미 전달된 요청의 응답은 보존합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.controlState === "stopping" && <span className="registration-stop-unavailable">중지 요청됨 · 응답 확인 중</span>}<button type="button" className="registration-stop-button" onClick={() => void deleteActivity(activity)} disabled={Boolean(deletingActivityId || stoppingActivityId)} title="후속 작업을 중지하고 등록 기록에서 삭제합니다. 판매채널의 상품은 삭제하지 않습니다.">{deletingActivityId === activity.id ? "삭제 중" : "삭제"}</button>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && !activity.controlState && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;

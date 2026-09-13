@@ -67,3 +67,11 @@
 - 신규 최종 제작(reuse_first_draft_assets=true)의 Gateway 연결 오류 5종만 exact job/claim/owner로 Mac에 인계한다. 불확정 RPC는503보존하며 failed로 덮지 않는다. 원본·digest·품질 실패, legacy/revision/개별 재생성은 제외한다. 서버 전체55개 및 보강3개 검사 통과.
 - 신규 DB migration은 기존 claimer prosrc MD5 drift guard, 기존 공유 AI worker 권한과 서비스 ACL을 유지한다. Vercel은 studio_runtime=local을 받지 않고 Mac이 같은 job을 새 claim으로 수령한다. 7개 PGlite 검사 통과. 이 기록 시점은 작성·검증이며 운영 적용은 별도 확인한다.
 - Mac은 상세 본문 전에8장을 받아 실제SHA를 확인하고 작업별 캐시에 저장한다. 본문후 캐시SHA와 기존facts/scene/manifest/PNG 검사를 다시 통과해야 재사용한다.1시간 signed URL 만료후 재다운로드하지 않는다. 신규4개+기존12개 검사 통과.
+
+## 711cdb5 live Studio continuation
+
+- Handoff migration applied: source MD5 b2d518369c96d8b2cb9818feb6503534, claim function d1a758c983a47f537655f9c82b12221e, handoff function 2fe66ef311d441f4b0daa7c86fd4efbb. Service-only ACL verified.
+- Vercel dpl_EuXkpNXQVAZ4nwcy4z2DTnYg5RfW passed candidate and production six-route canaries. Runtime activated, eight listing gates aligned, Gateway ready on 711cdb5. Mac AI PID92900 uses the reviewed worker and cache helper.
+- An exact guarded transaction resumed only a51eb670-9ae8-46f0-ba92-1c860f284ec6 locally. It preserved the old failed completion receipt in audit before retiring that receipt, retained attempt count and verified source lineage, and created no new job.
+- Mac cached all eight prepared PNGs (16,848,573 bytes). Master text completed in 102567ms; localized segments then started in three concurrent lanes. This is not yet final completion or publication evidence.
+- The enabled production reconcile_product_after_ai_success trigger attempts internal product binding on success. A narrow history action now also connects a completed job with no product ID through the existing idempotent product_create API. It serializes clicks and refreshes the ledger after uncertain replies. Five focused tests, four existing concurrency tests and TypeScript checks passed.
