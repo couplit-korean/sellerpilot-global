@@ -10,7 +10,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { gatewayClaimSchema, gatewayJobCompletionStatus, gatewayWorkerCompletionSchema, type GatewayClaim, type GatewayWorkerCompletion } from "./gateway-contract";
 import { executeChannelOperation, writeChannelOperations, type ChannelOperationName, type ChannelOperationResult } from "./operations";
 import { listingPublicationVerificationSourceSchema } from "./listing-publication-verification";
-import { LazadaOAuthProviderFailureError } from "./provider-oauth-runtime";
+import { EbayOAuthProviderFailureError, LazadaOAuthProviderFailureError } from "./provider-oauth-runtime";
 import { type CredentialRefreshSnapshot, type CredentialRefreshTarget } from "./protocols";
 import { executeServerlessGatewayProviderJob, serverlessGatewayOperationAllowed, type ServerlessGatewayExecutionHooks, type ServerlessGatewayProviderExecutionInput, type ServerlessGatewayProviderResult } from "./serverless-gateway-provider";
 import { channelPriceUpdateRelease } from "./price-update-release";
@@ -244,6 +244,10 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
   if (signal.aborted
     || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
     return "serverless_cs_runtime_timeout";
+  }
+  if (error instanceof EbayOAuthProviderFailureError
+    && /^EBAY_OAUTH_PROVIDER_FAILURE:(?:HTTP_4XX|HTTP_5XX|INVALID_RESPONSE):(?:INVALID_GRANT|INVALID_CLIENT|INVALID_SCOPE|UNAUTHORIZED_CLIENT|UNSUPPORTED_GRANT_TYPE|INVALID_REQUEST|SERVER_ERROR|TEMPORARILY_UNAVAILABLE|MISSING_TOKEN_FIELDS|UNRECOGNIZED)$/u.test(error.message)) {
+    return error.message;
   }
   if (error instanceof LazadaOAuthProviderFailureError) {
     const safeMessage =
@@ -965,7 +969,17 @@ export async function runOneServerlessCsGatewayJob(
     return jsonResponse({ message: "채널 작업 계약을 확인하지 못했습니다." }, 503);
   }
 
-  const job = parsed.data;
+  return runClaimedServerlessGatewayJob(dependencies, gatewayTokenHash, parsed.data);
+}
+
+// Shared executor for an already-owned claim. Exact OAuth callbacks avoid the
+// general queue without duplicating lease, rate-budget or completion handling.
+export async function runClaimedServerlessGatewayJob(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: GatewayClaim,
+) {
+  const logError = dependencies.logError ?? defaultLogError;
   if (job.operation === "price.update") {
     const priceRelease = channelPriceUpdateRelease(job.channel);
     if (!priceRelease.available) {

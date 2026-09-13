@@ -34,6 +34,11 @@ async function call(body: unknown, { cookie = "", denied = false, previousScopes
     if (name === "@supabase/supabase-js") return { createClient: () => ({ rpc, auth: { getUser: async () => ({ data: { user: { id: "owner" } }, error: null }) } }) };
     if (name.endsWith("/protocols")) return { buildEbayConsentUrl, textValue };
     if (name.endsWith("/ebay-oauth-scopes")) return scopes;
+    if (name.endsWith("/serverless-gateway-runtime")) return { configuredServerlessCsGatewayDependencies: () => ({}) };
+    if (name.endsWith("/ebay-fresh-oauth")) return { exchangeFreshEbayOAuth: async (args: Record<string, unknown>) => {
+      calls.push({ name: "exchange", args: { request: { code: args.code, includeMessages: args.includeMessages } } });
+      return { status: "completed", code: "same_seller_authorization_stored" };
+    } };
     if (name.endsWith("/supabase/config")) return { supabaseUrl: "https://fixture.supabase.co", supabasePublishableKey: "fixture-publishable" };
     if (name.endsWith("/gateway")) return {
       exchangeOAuthViaChannelGateway: async (args: Record<string, unknown>) => { calls.push({ name: "exchange", args }); },
@@ -77,7 +82,7 @@ test("callback capability comes from the consent cookie, never the callback body
     assert.equal(result.response.status, 200);
     const request = result.calls.find(c => c.name === "exchange")?.args?.request;
     assert.deepEqual(JSON.parse(JSON.stringify(request)), { code: "fixture-code", includeMessages });
-    if (includeMessages) assert.match((await result.response.json()).message, /별도 조회 검증/);
+    if (includeMessages) assert.match((await result.response.json()).message, /실제 조회/);
   }
 });
 

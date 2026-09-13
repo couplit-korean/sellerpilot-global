@@ -40,6 +40,25 @@ export type ProviderOAuthResult = {
   safeMessage: string;
 };
 
+const ebayOAuthFailureCodes = new Set([
+  "INVALID_GRANT", "INVALID_CLIENT", "INVALID_SCOPE", "UNAUTHORIZED_CLIENT",
+  "UNSUPPORTED_GRANT_TYPE", "INVALID_REQUEST", "SERVER_ERROR",
+  "TEMPORARILY_UNAVAILABLE", "MISSING_TOKEN_FIELDS",
+]);
+
+// Never retain arbitrary provider descriptions: these may contain tokens or
+// submitted codes. A typed, allowlisted label is enough to diagnose consent.
+export class EbayOAuthProviderFailureError extends Error {
+  constructor(httpStatus: number, providerCode: unknown) {
+    const candidate = typeof providerCode === "string" ? providerCode.toUpperCase() : "";
+    const code = ebayOAuthFailureCodes.has(candidate) ? candidate : "UNRECOGNIZED";
+    const category = httpStatus >= 500 && httpStatus < 600 ? "HTTP_5XX"
+      : httpStatus >= 400 && httpStatus < 500 ? "HTTP_4XX" : "INVALID_RESPONSE";
+    super(`EBAY_OAUTH_PROVIDER_FAILURE:${category}:${code}`);
+    this.name = "EbayOAuthProviderFailureError";
+  }
+}
+
 export type LazadaOAuthProviderFailureCategory =
   | "SYSTEM"
   | "ISV"
@@ -539,7 +558,8 @@ async function exchangeEbayOAuth(
   const accessToken = textValue(remote.data, "access_token");
   const refreshToken = textValue(remote.data, "refresh_token");
   if (!remote.response.ok || !accessToken || !refreshToken) {
-    throw new Error("EBAY_OAUTH_EXCHANGE_FAILED");
+    throw new EbayOAuthProviderFailureError(remote.response.status,
+      remote.data.error ?? (remote.response.ok ? "MISSING_TOKEN_FIELDS" : "UNRECOGNIZED"));
   }
 
   const accessExpiresAt = futureExpiry(remote.data.expires_in, 7_200);

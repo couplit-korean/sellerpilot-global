@@ -13,8 +13,11 @@ import {
   exchangeOAuthViaChannelGateway,
 } from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
+import { exchangeFreshEbayOAuth } from "../../../../../../lib/channels/ebay-fresh-oauth";
+import { configuredServerlessCsGatewayDependencies } from "../../../../../../lib/channels/serverless-gateway-runtime";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
@@ -111,6 +114,25 @@ export async function POST(request: NextRequest) {
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   if (oauthCode) {
     try {
+      if (metadata && "environment" in metadata && metadata.environment === "production") {
+        const result = await exchangeFreshEbayOAuth({
+          actorId: userData.user.id,
+          credentialId: credentialId ?? "",
+          code: oauthCode,
+          includeMessages: consentIncludesMessages,
+        }, { ...configuredServerlessCsGatewayDependencies(), executionTimeoutMs: 80_000 });
+        const status = result.status === "completed" ? 200 : result.status === "in_progress" ? 202 : 409;
+        const response = NextResponse.json({
+          message: result.status === "completed"
+            ? "eBay 새 승인과 동일 판매자 확인, Vault·완료 결과 저장을 마쳤습니다. 일반 대화 접근은 실제 조회로 확인합니다."
+            : result.status === "in_progress"
+              ? "이미 접수한 eBay 승인 결과를 확인 중입니다. 같은 코드는 다시 실행하지 않습니다."
+              : "eBay 승인 결과 확인이 필요합니다. 같은 승인 코드를 다시 제출하지 마세요.",
+          code: result.code,
+        }, { status, headers: { "cache-control": "no-store, max-age=0" } });
+        if (result.status !== "in_progress") response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+        return response;
+      }
       await exchangeOAuthViaChannelGateway({
         serviceClient,
         credentialId: credentialId ?? "",

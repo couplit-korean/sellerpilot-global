@@ -1,0 +1,30 @@
+{
+  "migration": {
+    "name": "ebay_fresh_oauth_reauthorization",
+    "sha256": "d478644c82f572fd2ca209275a42f0f4a9fea4769c2eb0225acf68b6a368da2d",
+    "version": "20260913052000"
+  },
+  "databaseRollbackVerification": {
+    "ddl": "valid",
+    "replay": "blocked",
+    "freshClaim": "claimed",
+    "transaction": "rollback",
+    "wrongSeller": "blocked",
+    "oldUncertainty": "preserved",
+    "sameSellerCompletion": "finalized_with_receipt",
+    "unprovedFinalization": "blocked"
+  },
+  "productionSessionsBeforeConsent": 0,
+  "oldUncertaintyBeforeConsent": {
+    "status": "reconciliation_required",
+    "refreshInFlight": true
+  },
+  "targetedTests": {
+    "passed": 86,
+    "failed": 0
+  },
+  "productionCheckpoint": "3e9373f4aa1d22cc25c8fdc6a008d8f7cb17ef71",
+  "freshOAuthCodeDeployment": "pending",
+  "providerConsent": "pending",
+  "commerceMessageReadback": "pending"
+}

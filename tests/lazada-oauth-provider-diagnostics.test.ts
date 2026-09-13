@@ -237,8 +237,12 @@ test("serverless completion preserves only allowlisted Lazada provider failure e
 
   try {
     const response = await runOneServerlessCsGatewayJob({
+      staticEgressChannels: ["lazada"],
       rpc: async (name, arguments_ = {}) => {
         rpcCalls.push({ name, arguments: arguments_ });
+        if (name === "sellerpilot_service_claim_elevenst_create_recovery") {
+          return { data: null, error: null };
+        }
         if (name === "sellerpilot_claim_serverless_gateway_job") {
           if (claimed) return { data: null, error: null };
           claimed = true;
@@ -278,7 +282,7 @@ test("serverless completion preserves only allowlisted Lazada provider failure e
       heartbeatIntervalMs: 60_000,
     }, gatewayTokenHash);
 
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, JSON.stringify({ logs, rpcs: rpcCalls.map(call => call.name) }));
     assert.deepEqual(events, ["credential-fence", "provider-call-boundary", "fetch"]);
     const completion = rpcCalls.find(({ name }) =>
       name === "sellerpilot_service_complete_serverless_cs_transaction");
