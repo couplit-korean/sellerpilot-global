@@ -25,7 +25,7 @@ export type EbayConversationSummary = {
   createdAt: string;
   referenceId: string | null;
   referenceType: "LISTING" | null;
-  latestMessage: EbayConversationMessage;
+  latestMessage: EbayConversationMessage | null;
 };
 export type EbayMessagePage<T> = {
   entries: T[];
@@ -73,10 +73,10 @@ function media(value: unknown): EbayMessageMedia[] {
     return { name: row.mediaName === undefined ? null : string(row.mediaName, "mediaName", 500, true), type: mediaType, url };
   });
 }
-function message(value: unknown): EbayConversationMessage {
+function message(value: unknown, conversationType: EbayConversationType = "FROM_MEMBERS"): EbayConversationMessage {
   const row = record(value, "message");
   const attachments = media(row.messageMedia);
-  const body = string(row.messageBody, "messageBody", 20000, true);
+  const body = string(row.messageBody, "messageBody", conversationType === "FROM_EBAY" ? 200000 : 20000, true);
   if (!body.trim() && attachments.length === 0) return invalid("emptyMessage");
   if (typeof row.readStatus !== "boolean") return invalid("readStatus");
   return {
@@ -188,12 +188,16 @@ export async function readEbayConversationsPage(input: {
     const row = record(value, "conversation");
     if (type(row.conversationType) !== conversationType) return invalid("conversationTypeMismatch");
     const reference = row.referenceId !== undefined || row.referenceType !== undefined;
-    if (reference && (row.referenceType !== "LISTING" || typeof row.referenceId !== "string" || !/^[1-9]\d*$/.test(row.referenceId))) return invalid("reference");
+    const systemReferenceHint = conversationType === "FROM_EBAY"
+      && row.referenceType === "LISTING" && row.referenceId === undefined;
+    if (reference && !systemReferenceHint && (row.referenceType !== "LISTING" || typeof row.referenceId !== "string" || !/^[1-9]\d*$/.test(row.referenceId))) return invalid("reference");
     return {
       conversationId: id(row.conversationId, "conversationId"), type: conversationType,
       status: string(row.conversationStatus, "conversationStatus", 30), title: string(row.conversationTitle, "conversationTitle", 2000, true),
-      createdAt: timestamp(row.createdDate, "createdDate"), referenceId: reference ? row.referenceId as string : null,
-      referenceType: reference ? "LISTING" : null, latestMessage: message(row.latestMessage),
+      createdAt: timestamp(row.createdDate, "createdDate"), referenceId: reference && !systemReferenceHint ? row.referenceId as string : null,
+      referenceType: reference ? "LISTING" : null,
+      latestMessage: conversationType === "FROM_EBAY" && row.latestMessage === undefined
+        ? null : message(row.latestMessage, conversationType),
     };
     });
 }
@@ -210,7 +214,7 @@ export async function readEbayConversationMessagesPage(input: {
   const data = await read(input, path, query);
   if (type(data.conversationType) !== conversationType) return invalid("conversationTypeMismatch");
   return { ...page(data, "messages", input.environment, path, query,
-    offset, ebayConversationMessagePageSize, message), status: string(data.conversationStatus, "conversationStatus", 30), title: string(data.conversationTitle, "conversationTitle", 2000, true) };
+    offset, ebayConversationMessagePageSize, value => message(value, conversationType)), status: string(data.conversationStatus, "conversationStatus", 30), title: string(data.conversationTitle, "conversationTitle", 2000, true) };
 }
 
 export async function sendEbayConversationMessage(input: {

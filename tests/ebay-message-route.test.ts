@@ -19,7 +19,7 @@ const credential = { access_token: "fixture-token", client_secret: "fixture-secr
 const message = { messageId: "message-native", body: "original text", subject: "", senderUsername: "buyer", recipientUsername: "seller", createdAt: "2026-09-01T00:00:00.123456Z", read: false, media: [] };
 const conversation = { conversationId: "conversation-native", type: "FROM_MEMBERS", title: "title", status: "ACTIVE", createdAt: message.createdAt, referenceId: null, referenceType: null, latestMessage: message };
 
-async function call(query: string, options: { denied?: boolean; accounts?: unknown[]; payload?: Record<string, unknown>; failure?: string; rpcError?: boolean; sender?: string; recipient?: string } = {}) {
+async function call(query: string, options: { denied?: boolean; accounts?: unknown[]; payload?: Record<string, unknown>; failure?: string; rpcError?: boolean; sender?: string; recipient?: string; missingSystemHeader?: boolean } = {}) {
   const calls: string[] = [];
   const pageInput: Array<Record<string, unknown>> = [];
   const rpc = async (name: string, args?: Record<string, unknown>) => {
@@ -51,7 +51,7 @@ async function call(query: string, options: { denied?: boolean; accounts?: unkno
       ebayConversationPageSize: pages.ebayConversationPageSize,
       ebayVerifiedMessageAccountIdentifiers: pages.ebayVerifiedMessageAccountIdentifiers,
       readEbayConversationMessagesPage: readPage,
-      readEbayConversationsPage: async (input: Record<string, unknown>) => ({ ...await readPage(input), entries: [conversation] }),
+      readEbayConversationsPage: async (input: Record<string, unknown>) => ({ ...await readPage(input), entries: [options.missingSystemHeader ? { ...conversation, type: "FROM_EBAY", latestMessage: null } : conversation] }),
     };
     if (name.endsWith("/cs/ebay-messages")) return contract;
     throw new Error(`unexpected import ${name}`);
@@ -110,7 +110,7 @@ test("native message pages retain original content and exact seller roles withou
   assert.doesNotMatch(JSON.stringify(result.body), /fixture-token|fixture-secret|eias/);
   assert.equal(result.pageInput[0].environment, "production");
   const list = await call(listQuery);
-  assert.equal(contract.ebayConversationPageSchema.parse(list.body).entries[0].latestMessage.role, "customer");
+  assert.equal(contract.ebayConversationPageSchema.parse(list.body).entries[0].latestMessage?.role, "customer");
   const unknown = await call(messagesQuery, { sender: "unknown-one", recipient: "immutable-not-certified" });
   assert.equal(unknown.body.entries[0].role, "unverified");
   const system = await call(`${messagesQuery}&type=FROM_EBAY`);
@@ -130,4 +130,12 @@ test("provider denial, throttling and contract errors are distinct from empty su
     assert.equal("entries" in result.body, false); assert.equal("total" in result.body, false);
     assert.doesNotMatch(JSON.stringify(result.body), /private-customer-text/);
   }
+});
+
+test("system discovery without latest message survives the admin API and client contract", async () => {
+  const result = await call(`${listQuery}&type=FROM_EBAY`, { missingSystemHeader: true });
+  assert.equal(result.response.status, 200);
+  const parsed = contract.ebayConversationPageSchema.parse(result.body);
+  assert.equal(parsed.entries[0].latestMessage, null);
+  assert.equal(contract.ebayConversationPageSchema.safeParse({ ...result.body, entries: [{ ...result.body.entries[0], type: "FROM_MEMBERS" }] }).success, false);
 });

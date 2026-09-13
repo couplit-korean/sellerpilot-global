@@ -16,11 +16,11 @@ const mediaSchema = z.object({
   }),
 });
 const messageSchema = z.object({
-  messageId: z.string().min(1).max(240), body: z.string().max(20000), subject: z.string().max(2000),
+  messageId: z.string().min(1).max(240), body: z.string().max(200000), subject: z.string().max(2000),
   senderUsername: z.string().min(1).max(240), recipientUsername: z.string().min(1).max(240),
   createdAt: z.string().datetime({ offset: true }), read: z.boolean(), media: z.array(mediaSchema).max(100),
   role: ebayMessageRoleSchema,
-});
+}).refine(value => value.role === "system" || value.body.length <= 20000, "buyer message too long");
 const pagination = {
   total: z.number().int().nonnegative().nullable(), offset: z.number().int().nonnegative(),
   nextOffset: z.number().int().nonnegative().nullable(),
@@ -33,8 +33,8 @@ export const ebayConversationPageSchema = z.object({
   entries: z.array(z.object({
     conversationId: z.string().min(1).max(240), type: ebayConversationTypeSchema,
     status: z.string(), title: z.string().max(2000), createdAt: z.string().datetime({ offset: true }),
-    referenceId: z.string().nullable(), referenceType: z.literal("LISTING").nullable(), latestMessage: messageSchema,
-  })).max(ebayConversationPageSize),
+    referenceId: z.string().nullable(), referenceType: z.literal("LISTING").nullable(), latestMessage: messageSchema.nullable(),
+  }).refine(row => row.type === "FROM_EBAY" || row.latestMessage !== null, "buyer message required")).max(ebayConversationPageSize),
 }).superRefine((value, context) => {
   if (value.offset % ebayConversationPageSize !== 0
       || value.nextOffset !== null && value.nextOffset % ebayConversationPageSize !== 0) {

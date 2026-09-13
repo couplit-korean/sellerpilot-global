@@ -134,6 +134,7 @@ export type ServerlessCsGatewayDependencies = {
   vercelGitCommitSha?: string;
   requireActiveRuntime?: boolean;
   enableHistoryRepair?: boolean;
+  includeApprovedLocalRoutes?: boolean;
   staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   executeProvider?: (

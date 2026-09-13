@@ -1,0 +1,43 @@
+{
+  "ebayRollback": [
+    {
+      "result": {
+        "rollbackOnly": true,
+        "buyerSizeGuard": true,
+        "systemDeduplicated": true,
+        "systemReplyBlocked": true,
+        "buyerReplyReplaySameJob": true,
+        "systemOriginalPreserved": true
+      }
+    }
+  ],
+  "ebayApplied": [
+    {
+      "version": "20260913064000",
+      "name": "restore_ebay_commerce_message_storage",
+      "source_sha256": "6cb20b9e4e628f297bfb4f0aab8fe0617bf55e05935f375ee259e9c9e15a6895"
+    }
+  ],
+  "localScheduleApplied": [
+    {
+      "version": "20260913063000",
+      "name": "schedule_approved_local_cs_routes",
+      "source_sha256": "ff8ca5af841814bf53b31ed186eb3e1670d551c81fb5228dd218832e85f29e00"
+    }
+  ],
+  "missingRuntimeRpcNames": [],
+  "localScheduleRollback": [
+    {
+      "result": {
+        "before": [
+          "elevenst",
+          "lazada",
+          "temu"
+        ],
+        "serviceOnly": true,
+        "rollbackOnly": true,
+        "disabledTemuExcluded": true
+      }
+    }
+  ]
+}

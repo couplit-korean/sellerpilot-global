@@ -74,7 +74,7 @@ export async function GET(request: Request) {
     }
     const page = await readEbayConversationsPage(input);
     return NextResponse.json({ ...page, kind: "conversations", credentialId: query.credentialId,
-      entries: page.entries.map(row => ({ ...row, latestMessage: withRole(row.latestMessage) })) }, { headers });
+      entries: page.entries.map(row => ({ ...row, latestMessage: row.latestMessage ? withRole(row.latestMessage) : null })) }, { headers });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (code === "EBAY_MESSAGE_CONSENT_REQUIRED" || /^EBAY_MESSAGE_READ_HTTP_(401|403)$/.test(code)) {

@@ -31,6 +31,7 @@ export function configuredServerlessCsGatewayDependencies(): ServerlessCsGateway
     vercelGitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA,
     requireActiveRuntime: true,
     enableHistoryRepair: true,
+    includeApprovedLocalRoutes: true,
     staticEgressChannels,
     rpc: serviceClient
       ? async (name, arguments_ = {}) => {

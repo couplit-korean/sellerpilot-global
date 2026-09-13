@@ -7,6 +7,7 @@ type CsScheduleDependencies = {
   now?: () => Date;
   staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   enableHistoryRepair?: boolean;
+  includeApprovedLocalRoutes?: boolean;
 };
 export const SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES = 1;
 export const SERVERLESS_CS_REPAIR_MIN_INTERVAL_MINUTES = 24 * 60;
@@ -208,11 +209,25 @@ export async function enqueueCurrentInquirySyncs(
   dependencies: CsScheduleDependencies,
 ): Promise<ServerlessCsEnqueueSummary> {
   const now = dependencies.now?.() ?? new Date();
+  // Enqueue admission and provider execution have different egress needs.
+  // Only scheduling uses this union; the executor keeps its actual Vercel IP policy.
+  let scheduledEgressChannels = dependencies.staticEgressChannels;
+  let localRouteLookupFailed = false;
+  if (dependencies.includeApprovedLocalRoutes) {
+    const local = await callRpc(dependencies, "sellerpilot_service_local_cs_schedule_channels", {});
+    const allowed = SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[];
+    if (local.error || !Array.isArray(local.data) || local.data.some((channel) => !allowed.includes(channel))) {
+      localRouteLookupFailed = true;
+    } else {
+      scheduledEgressChannels = [...new Set([...(dependencies.staticEgressChannels ?? []),
+        ...local.data as ServerlessStaticEgressChannel[]])];
+    }
+  }
   const requests = serverlessCsCurrentInquiryEnqueues(
     now,
-    dependencies.staticEgressChannels,
+    scheduledEgressChannels,
   ).concat(dependencies.enableHistoryRepair
-    ? serverlessCsRepairInquiryEnqueues(now, dependencies.staticEgressChannels)
+    ? serverlessCsRepairInquiryEnqueues(now, scheduledEgressChannels)
     : []);
   const statusGroups = await mapWithConcurrency(
     requests,
@@ -242,6 +257,7 @@ export async function enqueueCurrentInquirySyncs(
     },
   );
   const statuses = [...statusGroups.flat(), await enqueueEbayCaseDisputeCollectionStatus(dependencies, now)];
+  if (localRouteLookupFailed) statuses.push("failed");
   return {
     attempted: statuses.length,
     queued: statuses.filter((status) => status === "queued").length,

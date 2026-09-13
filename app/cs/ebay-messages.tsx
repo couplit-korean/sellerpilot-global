@@ -87,8 +87,8 @@ export function EbayMessages({ authenticatedFetch }: { authenticatedFetch: Fetch
       <p role="status">eBay 조회 결과 {page.total === null ? "전체 건수 미제공" : `전체 ${page.total}개`} · 이 페이지 {page.entries.length}개{page.total === 0 ? " · 선택한 계정과 대화 종류의 조회 결과입니다." : ""}</p>
       <div className={styles.conversations}>{page.entries.map(row => <button key={row.conversationId} type="button" disabled={loading}
         aria-pressed={selected === row.conversationId} onClick={() => void read("messages", 0, row.conversationId)}>
-        <strong>{row.title || "제목 없는 대화"}</strong><span>{roles[row.latestMessage.role]} · {date(row.latestMessage.createdAt)}</span>
-        <p>{row.latestMessage.body || `첨부 ${row.latestMessage.media.length}개`}</p>
+        <strong>{row.title || "제목 없는 대화"}</strong><span>{row.latestMessage ? roles[row.latestMessage.role] : "eBay 알림"} · {date(row.latestMessage?.createdAt ?? row.createdAt)}</span>
+        <p>{row.latestMessage ? row.latestMessage.body || `첨부 ${row.latestMessage.media.length}개` : "대화를 선택하면 알림 원문을 확인할 수 있습니다."}</p>
         <small>대화 {row.conversationId}{row.referenceId ? ` · 상품 ${row.referenceId}` : ""}</small>
       </button>)}</div>
       <nav className={styles.pages} aria-label="eBay 대화 목록 페이지">

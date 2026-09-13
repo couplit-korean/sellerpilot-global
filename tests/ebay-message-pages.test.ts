@@ -45,8 +45,32 @@ test("general conversation pages preserve native IDs and separate listing refere
     assert.equal(calls[0].searchParams.get("start_time"), "2026-08-01T00:00:00+09:00");
     assert.equal(page.entries[0].conversationId, "native-conversation-1");
     assert.equal(page.entries[0].referenceId, "123456789");
-    assert.equal(page.entries[0].latestMessage.body, rawMessage.messageBody);
+    assert.equal(page.entries[0].latestMessage?.body, rawMessage.messageBody);
     assert.equal(page.nextOffset, null);
+  });
+});
+
+test("eBay system discovery may omit listing id and latest message without inventing either", async () => {
+  const row = { ...conversation, conversationType: "FROM_EBAY", referenceType: "LISTING", latestMessage: undefined };
+  await mocked(response([row], "conversations"), async () => {
+    const page = await readEbayConversationsPage({ ...base, type: "FROM_EBAY" });
+    assert.equal(page.entries[0].referenceId, null);
+    assert.equal(page.entries[0].latestMessage, null);
+  });
+  await mocked(response([{ ...row, conversationType: "FROM_MEMBERS" }], "conversations"), async () => {
+    await assert.rejects(readEbayConversationsPage(base), /INVALID:reference/);
+  });
+});
+
+test("bounded long system HTML remains original and cannot increase buyer message limits", async () => {
+  const body = "<html>" + "x".repeat(26000) + "</html>";
+  await mocked({ ...response([{ ...rawMessage, messageBody: body }], "messages"), conversationType: "FROM_EBAY" }, async () => {
+    const page = await readEbayConversationMessagesPage({ ...base, type: "FROM_EBAY", conversationId: "system-thread" });
+    assert.equal(page.entries[0].body, body);
+    assert.equal(ebayConversationMessageRole(page.entries[0], "FROM_EBAY", ["seller"]), "system");
+  });
+  await mocked(response([{ ...rawMessage, messageBody: body }], "messages"), async () => {
+    await assert.rejects(readEbayConversationMessagesPage({ ...base, conversationId: "buyer-thread" }), /INVALID:messageBody/);
   });
 });
 
