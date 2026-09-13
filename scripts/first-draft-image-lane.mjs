@@ -109,6 +109,7 @@ export async function runFirstDraftImageLaneOnce({
   uploadVerifiedAsset,
   log = console.log,
   logError = console.error,
+  cancellationPollMs = 5_000,
 } = {}) {
   const claimed = await api("/api/ai/worker/first-draft-images", { method: "GET" });
   if (claimed.status === 204) return { status: "idle" };
@@ -125,7 +126,27 @@ export async function runFirstDraftImageLaneOnce({
 
   const jobDir = await mkdtemp(join(tmpdir(), "sellerpilot-first-draft-"));
   let completionUncertain = false;
+  const cancellation = new AbortController();
+  let checking = false;
+  const checkCancellation = async () => {
+    if (checking || cancellation.signal.aborted) return;
+    checking = true;
+    try {
+      const response = await api(`/api/ai/worker/first-draft-images?jobId=${payload.jobId}`, {
+        method: "GET", signal: AbortSignal.timeout(10_000),
+      });
+      const state = response.ok ? await response.json().catch(() => null) : null;
+      if (state?.jobId === payload.jobId && state.active === false) {
+        cancellation.abort(new DOMException("관리자가 작업을 중지했습니다.", "AbortError"));
+      }
+    } catch { /* A failed read is not evidence of cancellation. */ }
+    finally { checking = false; }
+  };
+  const cancellationTimer = setInterval(() => void checkCancellation(), cancellationPollMs);
+  cancellationTimer.unref?.();
   try {
+    await checkCancellation();
+    cancellation.signal.throwIfAborted();
     if (payload.uploadTransport !== "signed-storage-v1" || typeof uploadVerifiedAsset !== "function") {
       throw new Error("1차 이미지 signed Storage 전송 계약이 배포되지 않았습니다.");
     }
@@ -148,7 +169,9 @@ export async function runFirstDraftImageLaneOnce({
       studioResult,
       sourceFile,
       jobDir,
+      signal: cancellation.signal,
     });
+    cancellation.signal.throwIfAborted();
     if (!Array.isArray(generated)
         || generated.length !== pendingIds.length
         || new Set(generated.map((asset) => asset?.id)).size !== pendingIds.length
@@ -187,6 +210,7 @@ export async function runFirstDraftImageLaneOnce({
     // released request or a deleted temporary directory.
     let lastOutcome = completed.size === firstDraftImageAssetIds.length ? { status: "done" } : null;
     for (const asset of assets) {
+      cancellation.signal.throwIfAborted();
       const { imageBytes, ...metadata } = asset;
       const uploaded = await uploadVerifiedAsset({ jobId: payload.jobId, asset: metadata, imageBytes });
       try {
@@ -207,6 +231,10 @@ export async function runFirstDraftImageLaneOnce({
     return { status: "done", jobId: payload.jobId };
   }
   catch (error) {
+    if (cancellation.signal.aborted && !completionUncertain) {
+      log(`[1차 생성 이미지 중지] ${payload.jobId}`);
+      return { status: "cancelled", jobId: payload.jobId };
+    }
     const rawReason = error instanceof Error ? error.message : "first-draft-image-failed";
     const usageWaitMs = firstDraftUsageLimitWaitMs(rawReason);
     const resume = String(rawReason).match(/try again at \d{1,2}:\d{2}\s*(AM|PM)/i)?.[0];
@@ -225,6 +253,7 @@ export async function runFirstDraftImageLaneOnce({
     return { status: "failed", jobId: payload.jobId, reason };
   }
   finally {
+    clearInterval(cancellationTimer);
     await rm(jobDir, { recursive: true, force: true });
   }
 }

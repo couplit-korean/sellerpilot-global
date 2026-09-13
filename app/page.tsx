@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import { RegistrationWaitingActions } from "./_publishing/registration-waiting-actions";
+import { applyRegistrationHistoryReset } from "./_publishing/registration-draft-storage";
 import { useFirstDraftImages, type FirstDraftGeneratedImage } from "./_publishing/use-first-draft-images";
 import { FirstDraftImageReview } from "./_publishing/first-draft-image-review";
 import { channelIntegrationStatus, summarizeChannelIntegrations, type ChannelIntegrationTone } from "../lib/channels/integration-status";
@@ -210,7 +212,6 @@ import {
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
-  controllableRegistrationActivityJobId,
   isCancelledRegistrationActivity,
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
@@ -2595,7 +2596,7 @@ function longRunningAnalysisState(
   return isFresh(activityUpdatedAt) && isFresh(workerLastSeenAt) ? "connected" : "attention";
 }
 
-function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onStopActivity, onNewProduct, onExternalActions, authenticatedFetch }: {
+function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onStopActivity, onDeleteActivity, onOpenResearch, onNewProduct, onExternalActions, authenticatedFetch }: {
   activities: OperationsSnapshot["registrationActivities"];
   activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   aiRuntime: OperationsSnapshot["aiRuntime"];
@@ -2609,6 +2610,8 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
   onRetryProduct: (product: DisplayProduct) => void;
   onRecoverAnalysis: (activity: RegistrationActivity) => Promise<void>;
   onStopActivity: (activity: RegistrationActivity) => Promise<void>;
+  onDeleteActivity: (activity: RegistrationActivity) => Promise<void>;
+  onOpenResearch: (jobId: string) => void;
   onNewProduct: () => void;
   onExternalActions: () => void;
   authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
@@ -2616,6 +2619,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
   const [refreshing, setRefreshing] = useState(false);
   const [recoveringActivityId, setRecoveringActivityId] = useState("");
   const [stoppingActivityId, setStoppingActivityId] = useState("");
+  const [deletingActivityId, setDeletingActivityId] = useState("");
   const [expandedActivityId, setExpandedActivityId] = useState("");
   const studioWorkerReadiness = useStudioWorkerReadiness(authenticatedFetch);
   const studioExecutionReady = isStudioExecutionReady(studioWorkerReadiness);
@@ -2653,6 +2657,12 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
     if (stoppingActivityId) return;
     setStoppingActivityId(activity.id);
     try { await onStopActivity(activity); } finally { setStoppingActivityId(""); }
+  };
+
+  const deleteActivity = async (activity: RegistrationActivity) => {
+    if (deletingActivityId || stoppingActivityId) return;
+    setDeletingActivityId(activity.id);
+    try { await onDeleteActivity(activity); } finally { setDeletingActivityId(""); }
   };
 
   return <div className="page-stack registration-activity-page">
@@ -2695,7 +2705,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           : longAnalysis === "attention"
             ? "30분 넘게 새 서버 작업 신호가 확인되지 않습니다. 새로고침 후 큐와 실제 AI Gateway 상태를 각각 점검해 주세요."
           : isCancelled
-          ? "관리자가 중지한 AI 작업입니다. 외부 채널 전송은 시작하지 않았고 기존 입력으로 다시 실행할 수 있습니다."
+          ? "관리자가 후속 작업을 중지했습니다. 이미 전달된 채널 요청의 결과는 보존됩니다."
           : isImageOperation
           ? activity.status === "completed" ? "중앙 상품 이미지 작업이 완료되었습니다."
             : activity.status === "failed" ? "기존 상품과 판매채널 연결을 유지했습니다."
@@ -2710,13 +2720,13 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
+          <footer>{activity.id.startsWith("research:") && activity.status === "ready" && !activity.controlState && <button type="button" className="primary-button" onClick={() => onOpenResearch(activity.id.slice("research:".length))}>1차 결과 이어서 확인</button>}{!activity.controlState && ["analyzing", "publishing", "ready", "blocked"].includes(activity.status) && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId || deletingActivityId)} title="대기 작업과 후속 전송을 중지합니다. 이미 전달된 요청의 응답은 보존합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.controlState === "stopping" && <span className="registration-stop-unavailable">중지 요청됨 · 응답 확인 중</span>}<button type="button" className="registration-stop-button" onClick={() => void deleteActivity(activity)} disabled={Boolean(deletingActivityId || stoppingActivityId)} title="후속 작업을 중지하고 등록 기록에서 삭제합니다. 판매채널의 상품은 삭제하지 않습니다.">{deletingActivityId === activity.id ? "삭제 중" : "삭제"}</button>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && !activity.controlState && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
 }
 
-function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
+function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onBack, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onBack: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
   const existingProductEdit = Boolean(initialProduct?.id);
   const draftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
   const [running, setRunning] = useState(false);
@@ -2755,6 +2765,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [uploadError, setUploadError] = useState("");
   const [productResearchError, setProductResearchError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
+  const [activeResearchJobId, setActiveResearchJobId] = useState("");
+  const [controllingActivity, setControllingActivity] = useState(false);
   const [recoveringProductResearch, setRecoveringProductResearch] = useState(false);
   const [researchRecoveryJobId, setResearchRecoveryJobId] = useState("");
   const [researchResult, setResearchResult] = useState<ProductResearchUiResult | null>(null);
@@ -2810,8 +2822,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   }, [intake]);
 
   useEffect(() => {
-    const restoreTimer = window.setTimeout(() => {
+    let disposed = false;
+    const restoreTimer = window.setTimeout(async () => {
       try {
+        const response = await authenticatedFetch("/api/admin/registration-activities", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+        if (disposed) return;
+        if (!response.ok) throw new Error("등록 기록 정리 상태 확인 실패");
+        const reset = await response.json();
+        if (disposed) return;
+        if (applyRegistrationHistoryReset(window.sessionStorage, reset.clearedAt)) {
+          window.localStorage.removeItem("sellerpilot:publishing-busy");
+        }
         const stored = window.sessionStorage.getItem(draftStorageKey);
         if (stored) {
           const parsed = JSON.parse(stored) as unknown;
@@ -2833,14 +2854,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           }
         }
       } catch {
-        window.sessionStorage.removeItem(draftStorageKey);
+        // Do not erase a newer draft when an old screen request finishes late.
       } finally {
-        setActiveStage(initialProduct?.id ? 3 : 1);
-        setHydratedDraftStorageKey(draftStorageKey);
+        if (!disposed) {
+          setActiveStage(initialProduct?.id ? 3 : 1);
+          setHydratedDraftStorageKey(draftStorageKey);
+        }
       }
     }, 0);
-    return () => window.clearTimeout(restoreTimer);
-  }, [draftStorageKey, initialProduct?.id]);
+    return () => { disposed = true; window.clearTimeout(restoreTimer); };
+  }, [draftStorageKey, initialProduct?.id, authenticatedFetch]);
 
   useEffect(() => {
     if (hydratedDraftStorageKey !== draftStorageKey) return;
@@ -2919,6 +2942,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setSourceResearchJobId("");
     setSourceResearchPhotoSha256("");
     setSourceResearchLineageReceipt("");
+    setActiveResearchJobId("");
     closeGeneratedProductRegistration();
     setProductResearchError("대표사진이 변경되어 이전 1차 초안을 사용할 수 없습니다. 현재 사진으로 다시 생성해 주세요.");
     notify("대표사진이 변경되어 이전 1차 초안과 최종작성 연결을 제거했습니다. 현재 사진으로 1차 자동생성을 다시 실행해 주세요.");
@@ -3146,6 +3170,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         setSourceResearchJobId("");
         setSourceResearchPhotoSha256("");
         setSourceResearchLineageReceipt("");
+    setActiveResearchJobId("");
       }
       if (invalidatedExistingContext && competitorResearchState !== "stale") {
         notify(key === "researchInput"
@@ -3648,14 +3673,39 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     notify("아직 확인되지 않은 동일상품 가격은 공란으로 유지하고 현재 확인된 근거만으로 분석을 계속합니다.");
   };
 
-  const cancelProductResearch = () => {
-    if (!productResearchControllerRef.current) return;
-    productResearchGenerationRef.current += 1;
-    productResearchControllerRef.current.abort(new DOMException("사용자가 상품정보 확인을 중단했습니다.", "AbortError"));
-    productResearchControllerRef.current = null;
-    setResearchingProduct(false);
-    notify("화면의 상품정보 확인을 중단했습니다. 서버 작업은 유지되며 같은 입력으로 다시 확인할 수 있습니다.");
+  const clearCurrentRegistrationDraft = () => {
+    window.sessionStorage.removeItem(draftStorageKey);
+    window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    window.localStorage.removeItem("sellerpilot:publishing-busy");
   };
+  const startAnotherProduct = () => {
+    clearCurrentRegistrationDraft();
+    onStartAnother();
+  };
+  const controlCurrentRegistration = async (action: "stop" | "delete") => {
+    if (controllingActivity) return;
+    const ids = [resolvedProductId ? `product:${resolvedProductId}` : queuedJobId ? `job:${queuedJobId}` : "",
+      activeResearchJobId || sourceResearchJobId ? `research:${activeResearchJobId || sourceResearchJobId}` : ""].filter(Boolean);
+    if (!ids.length) { notify("서버에 작업을 접수하는 중입니다. 접수 후 중지·삭제할 수 있습니다."); return; }
+    setControllingActivity(true);
+    try {
+      for (const activityId of [...new Set(ids)]) {
+        const response = await authenticatedFetch("/api/admin/registration-activities", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ activityId, action }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.message ?? "작업 상태를 변경하지 못했습니다.");
+      }
+      productResearchGenerationRef.current += 1;
+      productResearchControllerRef.current?.abort(new DOMException("관리자가 작업을 중지했습니다.", "AbortError"));
+      resetFirstDraftImages();
+      clearCurrentRegistrationDraft();
+      notify(action === "delete" ? "작업을 중지하고 등록 기록에서 삭제했습니다." : "대기 작업과 후속 전송을 중지했습니다. 이미 전달된 채널 요청의 응답은 보존됩니다.");
+      onShowHistory();
+    } catch (error) { notify(error instanceof Error ? error.message : "작업 변경에 실패했습니다."); }
+    finally { setControllingActivity(false); }
+  };
+  const cancelProductResearch = () => { void controlCurrentRegistration("stop"); };
 
   const researchProductInformation = async () => {
     const researchInput = intake.researchInput.trim();
@@ -3821,6 +3871,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         }
         notify("AI가 1차 상품정보와 핵심 이미지 6장을 동시에 만들고 있습니다.");
       }
+      setActiveResearchJobId(jobId);
       const result = await waitForProductResearch(jobId, accessToken, productResearchController.signal);
       window.sessionStorage.removeItem(productResearchPendingStorageKey);
       if (!lineageReceipt) {
@@ -4214,9 +4265,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   // started, so the screen now blurs and states what is running until the server
   // side job finishes. The state is mirrored to local storage so leaving this
   // screen still shows 작업 중 in the shell.
+  const firstImagesPending = Boolean(sourceResearchJobId) && ["queued", "partial"].includes(firstDraftImagePhase);
   const publishBusy = running
     ? { title: "상세페이지와 이미지 자산을 제작하고 있습니다.", detail: "모델 호출과 이미지 생성이 끝날 때까지 이 화면에 결과가 표시되지 않습니다." }
-    : researchingProduct
+    : researchingProduct || firstImagesPending
       ? { title: "1차 정보와 이미지 6개를 생성하고 있습니다.", detail: "상품 링크·설명과 대표사진을 분석해 1차 정보와 이미지 6장을 만듭니다." }
       : recoveringProductResearch
         ? { title: "접수한 1차 작업 상태를 확인하고 있습니다.", detail: "서버에 접수된 작업의 진행 상황을 다시 읽고 있습니다." }
@@ -4240,6 +4292,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     }
   }, [publishBusy?.title, resolvedProductId]);
 
+  const acceptedActivity = Boolean(resolvedProductId || queuedJobId || activeResearchJobId || sourceResearchJobId);
+  const canLeaveWaiting = acceptedActivity || !publishBusy;
+  const waitingActions = <RegistrationWaitingActions canLeaveWaiting={canLeaveWaiting} acceptedActivity={acceptedActivity} controllingActivity={controllingActivity}
+    onAdditional={startAnotherProduct} onBack={onBack} onHistory={onShowHistory}
+    onStop={() => void controlCurrentRegistration("stop")} onDelete={() => void controlCurrentRegistration("delete")} />;
+
+  if (hydratedDraftStorageKey !== draftStorageKey) return <section className="panel" role="status">상품 등록 상태를 확인하고 있습니다.</section>;
+
   return (
     <div className={`page-stack publishing-page${publishBusy ? " publishing-busy" : ""}`} aria-busy={publishBusy ? true : undefined}>
       {publishBusy && (
@@ -4248,7 +4308,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <LoaderCircle className="spin" size={34} />
             <b>{publishBusy.title}</b>
             <small>{publishBusy.detail}</small>
-            <em>이 화면을 벗어나거나 창을 닫아도 서버에서 계속 진행됩니다. 완료되면 등록 진행 · 히스토리와 알림에서 확인할 수 있습니다.</em>
+            <em>{canLeaveWaiting ? "이동해도 접수한 작업은 계속됩니다. 진행상황에서 작업별로 중지·삭제할 수 있습니다." : "서버에 자료를 접수하고 있습니다."}</em>
+            {waitingActions}
           </div>
         </div>
       )}
@@ -4266,7 +4327,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </>}
         </ol>
       </section>
-      {queuedJobId && <section className="panel publishing-parallel-banner"><span><CheckCircle2 size={20} /><span><b>이 상품을 등록 큐에 넣었습니다.</b><small>작업 ID {queuedJobId.slice(0, 8)} · AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다.</small></span></span><div><button type="button" className="credential-secondary" onClick={onShowHistory}>진행상황 보기</button><button type="button" className="primary-button" onClick={onStartAnother}><Plus size={15} />다른 상품 등록</button></div></section>}
+      {!publishBusy && acceptedActivity && <section className="panel publishing-parallel-banner"><span><CheckCircle2 size={20} /><span><b>접수한 상품 작업</b><small>다른 상품을 추가하거나 진행상황에서 이 작업을 관리할 수 있습니다.</small></span></span>{waitingActions}</section>}
       {existingProductEdit && initialProduct ? <section className="panel publishing-parallel-banner" aria-label="기존 상품 채널 수정 안내"><span><ShieldCheck size={20} /><span><b>{initialProduct.name}</b><small>상품 ID {initialProduct.id} · 저장된 원장과 승인 이미지가 일치하는지 읽은 뒤에만 채널별 실행 버튼이 열립니다.</small></span></span></section> : null}
       {!existingProductEdit && <>
       <section className="publishing-stage-panel" aria-label="1단계 자료 입력과 1차 검토" hidden={activeStage !== 1}>
@@ -4423,12 +4484,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           setRunning(nextRunning);
         }}
         notify={notify}
+        onJobSettled={(jobId) => setQueuedJobId((current) => current === jobId ? "" : current)}
         onJobQueued={(jobId) => {
           setQueuedJobId(jobId);
           setActiveStage(2);
           window.sessionStorage.removeItem(draftStorageKey);
         }}
         onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
+          setQueuedJobId("");
           setAnalyzedProductName(studioResult.product.name);
           setAnalyzedProductId(productId);
           const koreanListing = studioResult.localizedListings.find((listing) => listing.channel === "coupang" && listing.market === "KR")
@@ -4458,6 +4521,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           setActiveStage(3);
         }}
         onManualResultReady={(productId, _jobId, submittedIntake) => {
+          setQueuedJobId("");
           setAnalyzedProductName(submittedIntake.productName);
           setAnalyzedProductId(productId);
           setPublishRefreshVersion((current) => current + 1);
@@ -5924,6 +5988,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     void reloadOperations();
   }, [inquiryHistoryBackfill, notify, reloadOperations]);
 
+  const publishingBackView = useRef<View>("products");
   const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
     const nextRegistrationStatus = next === "registration-activity"
       ? registrationActivityFilterFromValue(requestedRegistrationStatus)
@@ -5931,6 +5996,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     setTargetedSearch(null);
     if (next !== "cs") setCsRoute({ channel: "all", status: "open", ticketId: null });
     if (next === "publishing") {
+      if (view !== "publishing") publishingBackView.current = view;
       setPublishingProduct(null);
       setPublishingSession((current) => current + 1);
     }
@@ -5946,7 +6012,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     rememberWorkspaceView(next);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [rememberWorkspaceView, workspaceRouteScope]);
+  }, [rememberWorkspaceView, workspaceRouteScope, view]);
 
   const openCs = useCallback((channel: CsChannelFilter = "all", status: CsStatusFilter = "open", ticketId: string | null = null) => {
     const nextChannel = csChannelFilterFromValue(channel);
@@ -6041,57 +6107,16 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     await refreshOperations();
   }, [authenticatedOperationsFetch, notify, refreshOperations]);
 
-  const stopRegistrationActivity = useCallback(async (activity: RegistrationActivity) => {
-    if (!isRegistrationActivityRunning(activity.status)) {
-      notify("이미 종료된 등록 작업입니다.");
-      return;
-    }
-    if (activity.status === "publishing") {
-      notify("판매채널 전송이 이미 시작된 작업은 원격 중복·불일치를 막기 위해 강제로 회수하지 않습니다. 카드의 채널별 현재 상태를 확인해 주세요.");
-      return;
-    }
-    let jobId = controllableRegistrationActivityJobId(activity);
-    if (!jobId && activity.productId) {
-      const controller = new AbortController();
-      const scope = createPageAbortScope([controller.signal], 15_000, "중지할 AI 작업 확인 시간이 초과되었습니다.");
-      try {
-        const { response, payload } = await authenticatedJsonWithDeadline<{
-          commerceOperations?: { aiJobId?: string | null };
-          message?: string;
-        }>(
-          authenticatedOperationsFetch,
-          `/api/admin/products/${activity.productId}/publish-context`,
-          { cache: "no-store" },
-          scope.signal,
-          15_000,
-          {},
-        );
-        if (!response.ok) throw new Error(payload.message ?? "상품의 AI 작업을 확인하지 못했습니다.");
-        const candidate = payload.commerceOperations?.aiJobId;
-        if (isProductResearchJobId(candidate)) jobId = candidate;
-      } catch (error) {
-        notify(error instanceof Error ? error.message : "중지할 AI 작업을 확인하지 못했습니다.");
-        return;
-      } finally {
-        scope.dispose();
-      }
-    }
-    if (!jobId) {
-      notify("이 카드에서 안전하게 중지할 수 있는 AI 작업 ID를 확인하지 못했습니다. 외부 채널 요청은 변경하지 않았습니다.");
-      return;
-    }
+  const controlRegistrationActivity = useCallback(async (activity: RegistrationActivity, action: "stop" | "delete") => {
     try {
-      const response = await authenticatedOperationsFetch("/api/admin/ai-jobs", {
-        method: "POST",
-        body: JSON.stringify({ jobId, action: "cancel" }),
+      const response = await authenticatedOperationsFetch("/api/admin/registration-activities", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ activityId: activity.id, action }),
       });
-      const payload = await response.json().catch(() => ({ message: "작업 중지 응답을 읽지 못했습니다." })) as { message?: string };
-      if (!response.ok && response.status !== 409) throw new Error(payload.message ?? "AI 등록 작업을 중지하지 못했습니다.");
-      notify(response.ok ? "AI 작업 중지 요청을 접수했습니다. 작업자는 다음 lease 확인에서 안전하게 종료하며 외부 판매채널에는 새 전송을 시작하지 않습니다." : payload.message ?? "작업이 이미 종료되어 현재 상태를 다시 불러옵니다.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? "상품 작업을 변경하지 못했습니다.");
+      notify(payload?.message ?? "상품 작업 상태를 변경했습니다.");
       await refreshOperations();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "AI 등록 작업을 중지하지 못했습니다.");
-    }
+    } catch (error) { notify(error instanceof Error ? error.message : "상품 작업을 변경하지 못했습니다."); }
   }, [authenticatedOperationsFetch, notify, refreshOperations]);
 
   const editExternalActionProduct = useCallback((action: OperationsSnapshot["externalActions"][number]) => {
@@ -6385,12 +6410,17 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} authenticatedFetch={operations.authenticatedFetch} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={(activity) => controlRegistrationActivity(activity, "stop")} onDeleteActivity={(activity) => controlRegistrationActivity(activity, "delete")} onOpenResearch={(jobId) => {
+      navigate("publishing");
+      const route = new URL(window.location.href);
+      route.searchParams.set("researchJobId", jobId);
+      window.history.replaceState(window.history.state, "", `${route.pathname}${route.search}`);
+    }} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} authenticatedFetch={operations.authenticatedFetch} />;
     if (view === "product-detail") return activeSelectedProduct
       ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} marginScenarios={operations.data?.marginScenarios ?? []} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
-    if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} onManualProductCreated={() => void operations.reloadAfterMutation()} />;
+    if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onBack={() => navigate(publishingBackView.current)} onShowHistory={() => navigate("registration-activity")} onManualProductCreated={() => void operations.reloadAfterMutation()} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;

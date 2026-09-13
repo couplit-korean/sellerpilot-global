@@ -35,7 +35,9 @@ export function isCancelledRegistrationActivity(activity: Pick<RegistrationActiv
 }
 
 export function registrationActivityDisplayStatusLabel(activity: RegistrationActivity) {
-  if (isCancelledRegistrationActivity(activity)) return "작업 중지됨";
+  if (activity.controlState === "stopping") return "중지 요청됨 · 응답 확인 중";
+  if (activity.controlState === "stopped" || isCancelledRegistrationActivity(activity)) return "작업 중지됨";
+  if (activity.queueState === "queued") return "작업 대기 중";
   if (activity.status === "completed" && activity.channelCount > 0 && activity.publishedCount < activity.channelCount) return "일부 등록 · 확인 필요";
   if (activity.status === "failed") {
     if (activity.id.startsWith("asset:")) return "이미지 재제작 실패";
@@ -50,7 +52,7 @@ export function recoverableRegistrationActivityJobId(activity: RegistrationActiv
 }
 
 export function retryableRegistrationActivityJobId(activity: RegistrationActivity) {
-  if (activity.status !== "failed") return null;
+  if (activity.status !== "failed" || activity.controlState) return null;
   return activity.id.match(controllableAiActivityIdPattern)?.[1] ?? null;
 }
 
@@ -111,7 +113,7 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
       if (isCancelledRegistrationActivity(activity)) {
         return {
           percent: 0,
-          label: "관리자가 AI 작업을 중지했습니다. 외부 채널 전송은 시작하지 않았으며 기존 입력으로 다시 실행할 수 있습니다.",
+          label: "관리자가 후속 작업을 중지했습니다. 이미 전달된 채널 요청의 결과는 별도로 보존됩니다.",
         } as const;
       }
       return {

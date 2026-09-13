@@ -273,6 +273,8 @@ export type OperationsSnapshot = {
     productCode: string;
     sku: string;
     status: "analyzing" | "ready" | "publishing" | "completed" | "failed" | "blocked";
+    controlState?: "stopping" | "stopped" | null;
+    queueState?: "queued" | "running" | null;
     startedAt: string;
     updatedAt: string;
     completedAt: string | null;

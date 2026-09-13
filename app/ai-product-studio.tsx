@@ -571,7 +571,7 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, firstDraftReviewed, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady, onGeneratedAssets }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, firstDraftReviewed, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onJobSettled, onResultReady, onManualResultReady, onGeneratedAssets }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
@@ -586,6 +586,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
   onJobQueued?: (jobId: string) => void;
+  onJobSettled?: (jobId: string) => void;
   onResultReady?: (
     result: ProductStudioResult,
     productId: string | null,
@@ -781,7 +782,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     queuedOwnJobIdRef.current = "";
     setQueuedOwnJobId((current) => current === jobId ? "" : current);
     setSubmissionPhase("idle");
-  }, []);
+    onJobSettled?.(jobId);
+  }, [onJobSettled]);
 
   const announceOwnJob = useCallback((jobId: string, reconciled: boolean) => {
     if (announcedJobIdsRef.current.has(jobId)) return;

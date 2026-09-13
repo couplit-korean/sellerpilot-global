@@ -730,3 +730,47 @@ test("a 413 metadata rejection is a definite non-commit and releases the claim o
   assert.equal(metadataPosts, 1);
   assert.equal(releasePosts, 1);
 });
+
+test("an explicit server cancellation aborts active image generation without requeue or upload", async () => {
+  const laneSource = Buffer.from("cancellable-source");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) throw new Error("fixture rejected");
+  const payload = {
+    ...resolved.payload,
+    sourcePhotoSha256: createHash("sha256").update(laneSource).digest("hex"),
+    sourceUrl: "https://signed.example.com/source",
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1",
+  };
+  let generationStarted = false;
+  let generationAborted = false;
+  let claimed = 0;
+  let uploads = 0;
+  let posts = 0;
+  const outcome = await runFirstDraftImageLaneOnce({
+    cancellationPollMs: 5,
+    api: async (path, init = {}) => {
+      if (init.method === "POST") { posts += 1; throw new Error("cancelled job must not be released/requeued"); }
+      if (path.includes("?jobId=")) return Response.json({ jobId, active: !generationStarted });
+      claimed += 1;
+      return Response.json(payload);
+    },
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ signal }) => {
+      generationStarted = true;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 300);
+        signal.addEventListener("abort", () => { clearTimeout(timer); generationAborted = true; reject(signal.reason); }, { once: true });
+      });
+      throw new Error("generation should have aborted");
+    },
+    uploadVerifiedAsset: async () => { uploads += 1; },
+    log: () => {}, logError: () => {},
+  });
+  assert.equal(outcome.status, "cancelled");
+  assert.equal(generationAborted, true);
+  assert.equal(claimed, 1);
+  assert.equal(uploads, 0);
+  assert.equal(posts, 0);
+});

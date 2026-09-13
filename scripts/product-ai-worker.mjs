@@ -2648,7 +2648,8 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
     throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
 }
 const generateVerifiedFirstDraftCandidate = generateDistinctAsset;
-async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir }) {
+async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir, signal }) {
+    signal?.throwIfAborted();
     const source = await readFile(sourceFile);
     const metadata = await sharp(source, {
         failOn: "warning",
@@ -2742,7 +2743,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
         studioResult,
         imageFiles,
         jobDir,
-        null,
+        signal,
         {
             productName: payload.productFacts.name,
             brandName: payload.productFacts.brandName,
@@ -2764,6 +2765,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
         ]));
     const verifiedAssets = [];
     await runDeterministicProductImageBatches({
+        signal,
         specs,
         batchSize: 3,
         maximumAttempts: MAXIMUM_SHOT_GENERATION_ATTEMPTS,

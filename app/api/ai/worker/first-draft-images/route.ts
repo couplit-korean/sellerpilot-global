@@ -97,6 +97,18 @@ export async function GET(request: Request) {
   if (!authentication.ok) return authentication.response;
   const { tokenHash, serviceClient } = authentication.auth;
 
+  const requestedJobId = new URL(request.url).searchParams.get("jobId");
+  if (requestedJobId !== null) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedJobId)) {
+      return NextResponse.json({ message: "작업 ID가 올바르지 않습니다." }, { status: 400, headers: noStore });
+    }
+    const { data, error } = await serviceClient.rpc("sellerpilot_service_get_first_draft_image_request", {
+      p_token_hash: tokenHash, p_job_id: requestedJobId,
+    });
+    if (error) return NextResponse.json({ message: "작업 상태 확인 실패" }, { status: workerRpcErrorStatus(error), headers: noStore });
+    return NextResponse.json({ jobId: requestedJobId, active: Boolean(recordValue(data)) }, { headers: noStore });
+  }
+
   const { data, error } = await serviceClient.rpc("sellerpilot_service_claim_first_draft_image_request", {
     p_token_hash: tokenHash,
   });
