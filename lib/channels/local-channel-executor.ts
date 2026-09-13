@@ -36,8 +36,14 @@ const readOnlyTuples = new Set([
 const writeTuples = new Set([
   "coupang:listing.create",
   "coupang:price.update",
+  "qoo10:listing.create",
+  "shopee:listing.create",
+  "lazada:listing.create",
+  "elevenst:listing.create",
+  "temu:listing.create",
   "smartstore:listing.create",
   "smartstore:listing.update",
+  "ebay:listing.create",
 ]);
 
 function record(value: unknown): Record<string, unknown> | null {

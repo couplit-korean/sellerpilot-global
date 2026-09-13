@@ -16,14 +16,34 @@ const releaseSha = "8".repeat(40);
 const egressSha256 = "a".repeat(64);
 
 test("the local executor has an exact read/write operation whitelist", () => {
+  const createChannels = [
+    "qoo10",
+    "shopee",
+    "lazada",
+    "coupang",
+    "elevenst",
+    "temu",
+    "smartstore",
+    "ebay",
+  ];
+
   assert.equal(localChannelExecutorAccess("coupang", "categories.attributes"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "categories.validate"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "inquiries.list"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "listing.publication.verify"), "read");
-  assert.equal(localChannelExecutorAccess("coupang", "listing.create"), "write");
-  assert.equal(localChannelExecutorAccess("coupang", "price.update"), "write");
-  assert.equal(localChannelExecutorAccess("smartstore", "listing.create"), "write");
-  assert.equal(localChannelExecutorAccess("smartstore", "listing.update"), "write");
+  for (const channel of createChannels) {
+    assert.equal(localChannelExecutorAccess(channel, "listing.create"), "write");
+    assert.equal(
+      localChannelExecutorAccess(channel, "listing.update"),
+      channel === "smartstore" ? "write" : null,
+    );
+    assert.equal(
+      localChannelExecutorAccess(channel, "price.update"),
+      channel === "coupang" ? "write" : null,
+    );
+    assert.equal(isLocalChannelExecutorTuple(channel, "inquiries.reply"), false);
+    assert.equal(isLocalChannelExecutorTuple(channel, "shipment.confirm"), false);
+  }
   assert.equal(localChannelExecutorAccess("qoo10", "listing.publication.verify"), null);
   assert.equal(localChannelExecutorAccess("smartstore", "listing.publication.verify"), null);
   assert.equal(localChannelExecutorAccess("ebay", "listing.publication.verify"), null);
@@ -32,8 +52,6 @@ test("the local executor has an exact read/write operation whitelist", () => {
   assert.equal(isLocalChannelExecutorTuple("coupang", "inquiries.reply"), false);
   assert.equal(isLocalChannelExecutorTuple("coupang", "shipment.confirm"), false);
   assert.equal(localChannelExecutorAccess("smartstore", "orders.list"), "read");
-  assert.equal(isLocalChannelExecutorTuple("coupang", "listing.update"), false);
-  assert.equal(isLocalChannelExecutorTuple("elevenst", "listing.create"), false);
 });
 
 test("release and egress are jointly encoded in the bounded worker version", () => {
