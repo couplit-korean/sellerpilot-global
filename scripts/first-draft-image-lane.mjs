@@ -7,6 +7,7 @@ import {
   firstDraftImageAssetIds,
   firstDraftImageAssetSpec,
   firstDraftImageEnqueuePayloadSchema,
+  firstDraftImageReceiptReviewProfile,
   validateFirstDraftImageQualityReceipt,
 } from "../lib/first-draft-images.ts";
 import { maximumStudioSourceImageBytes } from "../lib/studio-source-photo-policy.ts";
@@ -126,17 +127,20 @@ export async function runFirstDraftImageLaneOnce({
 
   const jobDir = await mkdtemp(join(tmpdir(), "sellerpilot-first-draft-"));
   let completionUncertain = false;
+  let submissionTail = Promise.resolve();
+  let acceptingVerifiedAssets = true;
+  let authoritativeDone = false;
   const cancellation = new AbortController();
   let checking = false;
   const checkCancellation = async () => {
-    if (checking || cancellation.signal.aborted) return;
+    if (checking || cancellation.signal.aborted || authoritativeDone) return;
     checking = true;
     try {
       const response = await api(`/api/ai/worker/first-draft-images?jobId=${payload.jobId}`, {
         method: "GET", signal: AbortSignal.timeout(10_000),
       });
       const state = response.ok ? await response.json().catch(() => null) : null;
-      if (state?.jobId === payload.jobId && state.active === false) {
+      if (!authoritativeDone && state?.jobId === payload.jobId && state.active === false) {
         cancellation.abort(new DOMException("관리자가 작업을 중지했습니다.", "AbortError"));
       }
     } catch { /* A failed read is not evidence of cancellation. */ }
@@ -164,73 +168,96 @@ export async function runFirstDraftImageLaneOnce({
     const completed = new Set(payload.completedAssets);
     const pendingIds = firstDraftImageAssetIds.filter((assetId) => !completed.has(assetId));
     log(`[1차 생성 이미지 시작] ${payload.jobId} · 생성 ${pendingIds.length}장 · 검증 완료 ${completed.size}장`);
+    const persisted = new Map();
+    let receiptProfile = payload.completedAssetEvidence[0]
+      ? firstDraftImageReceiptReviewProfile(payload.completedAssetEvidence[0].verification) : null;
+    let lastOutcome = completed.size === firstDraftImageAssetIds.length ? { status: "done" } : null;
+    const validateAsset = (asset) => {
+      const assetId = asset?.id;
+      const bytes = asset?.bytes instanceof Uint8Array ? Buffer.from(asset.bytes) : null;
+      const spec = firstDraftImageAssetSpec(assetId);
+      const path = payload.assets.find((candidate) => candidate.id === assetId)?.path;
+      const outputSha256 = bytes ? createHash("sha256").update(bytes).digest("hex") : "";
+      if (!pendingIds.includes(assetId) || !bytes?.length || !spec || !path || !validateFirstDraftImageQualityReceipt({
+        assetId, productFacts: payload.productFacts, sourcePhotoSha256: payload.sourcePhotoSha256,
+        outputSha256, receipt: asset?.verification,
+      })) throw new Error(`${assetId} 1차 생성 이미지의 공통 품질 검수 증거가 올바르지 않습니다.`);
+      const profile = firstDraftImageReceiptReviewProfile(asset.verification);
+      if (receiptProfile && receiptProfile !== profile) throw new Error("1차 이미지 부분 저장 검수 프로필이 혼합되어 있습니다.");
+      receiptProfile ??= profile;
+      return {
+        id: assetId, path, digest: outputSha256, bytes: bytes.byteLength,
+        width: spec.width, height: spec.height, verification: asset.verification, imageBytes: bytes,
+      };
+    };
+    const persistVerifiedAsset = (asset) => {
+      const verified = validateAsset(asset);
+      const operation = submissionTail.then(async () => {
+        const prior = persisted.get(verified.id);
+        if (prior) {
+          if (prior !== verified.digest) throw new Error(`${verified.id} 검수 완료 이미지가 저장 중 변경됐습니다.`);
+          return;
+        }
+        cancellation.signal.throwIfAborted();
+        const { imageBytes, ...metadata } = verified;
+        const uploaded = await uploadVerifiedAsset({ jobId: payload.jobId, asset: metadata, imageBytes });
+        try {
+          lastOutcome = await submitFirstDraftMetadata(api, payload.jobId, metadata);
+        } catch (error) {
+          completionUncertain ||= Boolean(error?.completionUncertain);
+          throw error;
+        }
+        if (lastOutcome?.status !== "done" && lastOutcome?.status !== "recorded" && uploaded?.status !== "already-recorded") {
+          throw new Error(`1차 이미지 완료 readback 실패 · ${lastOutcome?.status ?? "unknown"}`);
+        }
+        persisted.set(verified.id, verified.digest);
+        completed.add(verified.id);
+        if (lastOutcome?.status === "done" && completed.size !== firstDraftImageAssetIds.length) {
+          throw new Error("1차 이미지 전체 완료 응답이 저장된 역할 수와 일치하지 않습니다.");
+        }
+        if (lastOutcome?.status === "done" && completed.size === firstDraftImageAssetIds.length) {
+          authoritativeDone = true;
+          clearInterval(cancellationTimer);
+        }
+        log(`[1차 이미지 부분 저장] ${payload.jobId} · ${verified.id} · ${completed.size}/${firstDraftImageAssetIds.length}`);
+      });
+      submissionTail = operation;
+      void operation.catch(() => undefined);
+      return operation;
+    };
     const generated = await generateVerifiedAssets({
-      payload,
-      studioResult,
-      sourceFile,
-      jobDir,
-      signal: cancellation.signal,
+      payload, studioResult, sourceFile, jobDir, signal: cancellation.signal,
+      // Only the deterministic coordinator's awaited commitCandidate may call
+      // this after its batch barrier. Generation candidates never upload here.
+      onVerifiedAsset: (asset) => {
+        if (!acceptingVerifiedAssets) throw new Error("종료된 이미지 제작 작업에는 결과를 추가할 수 없습니다.");
+        return persistVerifiedAsset(asset);
+      },
     });
-    cancellation.signal.throwIfAborted();
+    acceptingVerifiedAssets = false;
+    await submissionTail;
+    if (!authoritativeDone) cancellation.signal.throwIfAborted();
     if (!Array.isArray(generated)
         || generated.length !== pendingIds.length
         || new Set(generated.map((asset) => asset?.id)).size !== pendingIds.length
         || generated.some((asset) => !pendingIds.includes(asset?.id))) {
       throw new Error("미완료 1차 이미지 역할의 검수 결과가 완전하지 않습니다.");
     }
+    // Compatible injected generators may return a fully verified batch without
+    // callbacks. Validate every returned asset before that fallback uploads.
+    generated.forEach(validateAsset);
     const byId = new Map(generated.map((asset) => [asset.id, asset]));
-    const assets = pendingIds.map((assetId) => {
-      const asset = byId.get(assetId);
-      const bytes = asset?.bytes instanceof Uint8Array ? Buffer.from(asset.bytes) : null;
-      const spec = firstDraftImageAssetSpec(assetId);
-      const path = payload.assets.find((candidate) => candidate.id === assetId)?.path;
-      const outputSha256 = bytes ? createHash("sha256").update(bytes).digest("hex") : "";
-      if (!bytes?.length || !spec || !path || !validateFirstDraftImageQualityReceipt({
-        assetId,
-        productFacts: payload.productFacts,
-        sourcePhotoSha256: payload.sourcePhotoSha256,
-        outputSha256,
-        receipt: asset?.verification,
-      })) {
-        throw new Error(`${assetId} 1차 생성 이미지의 공통 품질 검수 증거가 올바르지 않습니다.`);
-      }
-      return {
-        id: assetId,
-        path,
-        digest: outputSha256,
-        bytes: bytes.byteLength,
-        width: spec.width,
-        height: spec.height,
-        verification: asset.verification,
-        imageBytes: bytes,
-      };
-    });
-    // Nothing is uploaded until every role has passed the same batch barrier.
-    // A sibling failure therefore cannot leave a late per-asset upload racing a
-    // released request or a deleted temporary directory.
-    let lastOutcome = completed.size === firstDraftImageAssetIds.length ? { status: "done" } : null;
-    for (const asset of assets) {
-      cancellation.signal.throwIfAborted();
-      const { imageBytes, ...metadata } = asset;
-      const uploaded = await uploadVerifiedAsset({ jobId: payload.jobId, asset: metadata, imageBytes });
-      try {
-        lastOutcome = await submitFirstDraftMetadata(api, payload.jobId, metadata);
-      } catch (error) {
-        completionUncertain = Boolean(error?.completionUncertain);
-        throw error;
-      }
-      if (lastOutcome?.status === "done") break;
-      if (lastOutcome?.status !== "recorded" && uploaded?.status !== "already-recorded") {
-        throw new Error(`1차 이미지 완료 readback 실패 · ${lastOutcome?.status ?? "unknown"}`);
-      }
-    }
+    for (const assetId of pendingIds) await persistVerifiedAsset(byId.get(assetId));
     if (lastOutcome?.status !== "done") {
-      throw new Error(`1차 생성 이미지 6장 완료 readback 실패 · ${lastOutcome?.status ?? "unknown"}`);
+      throw new Error(`1차 생성 이미지 8장 완료 readback 실패 · ${lastOutcome?.status ?? "unknown"}`);
     }
-    log(`[1차 생성 이미지 완료] ${payload.jobId} · 6장 생성·검수·계보 반영`);
+    log(`[1차 생성 이미지 완료] ${payload.jobId} · 8장 생성·검수·계보 반영`);
     return { status: "done", jobId: payload.jobId };
   }
   catch (error) {
+    acceptingVerifiedAssets = false;
+    // Drain a started write before releasing the claim or deleting its files.
+    await submissionTail.catch(() => undefined);
     if (cancellation.signal.aborted && !completionUncertain) {
       log(`[1차 생성 이미지 중지] ${payload.jobId}`);
       return { status: "cancelled", jobId: payload.jobId };
@@ -253,6 +280,8 @@ export async function runFirstDraftImageLaneOnce({
     return { status: "failed", jobId: payload.jobId, reason };
   }
   finally {
+    acceptingVerifiedAssets = false;
+    await submissionTail.catch(() => undefined);
     clearInterval(cancellationTimer);
     await rm(jobDir, { recursive: true, force: true });
   }

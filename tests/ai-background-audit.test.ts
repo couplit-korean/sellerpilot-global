@@ -441,3 +441,41 @@ test("first-draft photo review keeps truthful optional mismatches without discar
   }, undefined, undefined, "catalog-scenes"));
   assert.throws(() => assertSafeBackgroundSemanticAudit({ ...photo, conflictingAssetIds: ["portrait"] }, undefined, undefined, "catalog-scenes"));
 });
+
+test("prepared scene review distinguishes rear architecture from a physical foreground obstruction", () => {
+  const input = {
+    assetId: "detail-context",
+    expectedEnvironment: "balcony dining alcove with a navy tiled support surface",
+    reservedZone: { left: 0.7, top: 0.15, width: 0.2, height: 0.7 },
+    contactMode: "surface-supported" as const,
+    expectedPropKey: "balcony-railing",
+    expectedPropDescription: "visible fixed balcony railing",
+    expectedEnvironmentKeys: {
+      location: "balcony-alcove", moment: "evening", surface: "navy-tile",
+      camera: "low-wide", palette: "navy-amber", spatialDepth: "layered-alcove",
+    },
+  };
+  const prepared = buildBackgroundSemanticAuditPrompt({ ...input, reviewProfile: "catalog-scenes" });
+  assert.match(prepared, /Judge occlusion by physical scene depth, not by 2D overlap/);
+  assert.match(prepared, /clearly BEHIND the intended product placement/);
+  assert.match(prepared, /unused margins and silhouette gaps remain visible/);
+  assert.match(prepared, /physically IN FRONT OF the intended product/);
+  assert.match(prepared, /interruption of the required support or backing plane, or uncertain foreground\/background depth must fail/);
+  assert.match(prepared, /never permits merchandise, containers, labels, barcodes or people/);
+  const fullStudio = buildBackgroundSemanticAuditPrompt(input);
+  assert.doesNotMatch(fullStudio, /Those rear architectural lines alone do not fail/);
+  assert.match(fullStudio, /OUTER-BAND EVIDENCE GATE/);
+  const suspended = buildBackgroundSemanticAuditPrompt({ ...input, contactMode: "suspended-or-planar", reviewProfile: "catalog-scenes" });
+  assert.match(suspended, /Do not require or invent a horizontal tabletop, shelf or bottom contact line/);
+  assert.doesNotMatch(suspended, /requires physically unobstructed product placement and a visible horizontal shelf/);
+
+  const rearRailAudit = { ...safeAudit, observedNonMerchandiseProps: ["balcony-railing"],
+    findings: ["The railing is behind the product placement; a continuous tiled tabletop supports the base."] };
+  assert.doesNotThrow(() => assertSafeBackgroundSemanticAudit(rearRailAudit, undefined, undefined, "catalog-scenes"));
+  assert.throws(() => assertSafeBackgroundSemanticAudit({ ...rearRailAudit,
+    reservedZoneClear: false, findings: ["A foreground rail occupies the product footprint and interrupts its support."],
+  }, undefined, undefined, "catalog-scenes"));
+  for (const field of ["merchandisePresent", "packageOrContainerPresent", "labelBarcodeOrCertificationPresent", "humanPresent"] as const) {
+    assert.throws(() => assertSafeBackgroundSemanticAudit({ ...rearRailAudit, [field]: true }, undefined, undefined, "catalog-scenes"));
+  }
+});

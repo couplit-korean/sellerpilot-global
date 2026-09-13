@@ -2716,7 +2716,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
 }
 // Prepared images use the shared renderer with an explicit practical scene
 // profile; final details reuse the verified bytes without changing that profile.
-async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir, signal }) {
+async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir, signal, onVerifiedAsset }) {
     signal?.throwIfAborted();
     const source = await readFile(sourceFile);
     const metadata = await sharp(source, {
@@ -2932,7 +2932,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                 || !/^[a-f0-9]{64}$/.test(evidence.sourceForegroundSha256 ?? "")) {
                 throw new Error(`${preset.id} 1차 이미지가 2차 공통 품질 검수 조건을 충족하지 못했습니다.`);
             }
-            verifiedAssets.push({
+            const verifiedAsset = {
                 id: preset.id,
                 bytes: generated.normalized,
                 verification: buildFirstDraftImageQualityReceipt({
@@ -2952,7 +2952,9 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                     sceneSemanticVerified: evidence.sceneSemanticVerified,
                     duplicateVerified: evidence.duplicateVerified,
                 }),
-            });
+            };
+            if (onVerifiedAsset) await onVerifiedAsset(verifiedAsset);
+            verifiedAssets.push(verifiedAsset);
             existingShots.push(candidate.fingerprint);
             if (candidate.backgroundShot)
                 existingBackgroundShots.push(candidate.backgroundShot);

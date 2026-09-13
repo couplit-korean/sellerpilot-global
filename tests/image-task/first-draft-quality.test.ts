@@ -234,7 +234,8 @@ test("the installed worker connects first draft to the final source-composite ba
   assert.match(worker, /firstDraftImageFactsMatchStudioResult\(/);
   assert.match(worker, /const remainingImagePresets = imagePresets\.filter\(\(preset\) => !reusableFirstDraftAssets\.has\(preset\.id\)\)/);
   assert.match(worker, /existingShots\.push\(reused\.fingerprint\)/);
-  assert.match(lane, /Nothing is uploaded until every role has passed the same batch barrier/);
+  assert.match(lane, /Only the deterministic coordinator/);
+  assert.match(worker, /if \(onVerifiedAsset\) await onVerifiedAsset\(verifiedAsset\)/);
   assert.doesNotMatch(lane, /assets: \[\{ id: spec\.id/);
 });
 

@@ -631,6 +631,104 @@ test("a lost response after a one-asset metadata submission preserves remote sta
   assert.equal(metadataPosts, 2);
 });
 
+test("approved roles survive a later generation failure and resume without repeat uploads", async () => {
+  const source = Buffer.from("partial-checkpoint-source");
+  const sourceSha = createHash("sha256").update(source).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  const stored = new Map<string, any>();
+  const uploads: string[] = [];
+  let failures = 0;
+  let resuming = false;
+  const run = () => runFirstDraftImageLaneOnce({
+    cancellationPollMs: 1,
+    api: async (_path, init = {}) => {
+      if (_path.includes("?jobId=") && stored.size === 8) return Response.json({ jobId, active: false });
+      if (init.method !== "POST") return Response.json({
+        ...resolved.payload, sourcePhotoSha256: sourceSha, sourceUrl: "https://signed.example.com/source",
+        completedAssets: [...stored.keys()], completedAssetEvidence: [...stored.values()].map((asset) => ({
+          id: asset.id, path: asset.path, digest: asset.digest, verification: asset.verification,
+          url: `https://signed.example.com/${asset.id}`,
+        })), uploadTransport: "signed-storage-v1",
+      });
+      const body = JSON.parse(String(init.body));
+      if (body.failed) { failures += 1; return Response.json({ ok: true, status: "released" }); }
+      const asset = body.assets[0];
+      stored.set(asset.id, asset);
+      // The status endpoint may expose normal completion before the final
+      // metadata response arrives; that must not turn successful work cancelled.
+      if (stored.size === 8) await new Promise((resolve) => setTimeout(resolve, 15));
+      return Response.json({ ok: true, status: stored.size === 8 ? "done" : "recorded" });
+    },
+    fetchSource: async () => source,
+    generateVerifiedAssets: async ({ payload, onVerifiedAsset }) => {
+      const pending = coreFirstDraftAssetIds.filter((id) => !payload.completedAssets.includes(id));
+      if (resuming) assert.equal(pending.length, 5);
+      const generated = [];
+      for (const id of pending) {
+        if (!resuming && generated.length === 3) throw new Error("later batch failed");
+        const bytes = Buffer.from(`checkpoint-${id}`);
+        const asset = { id, bytes, verification: qualityReceiptFor(id, payload.productFacts, sourceSha, bytes, coreFirstDraftAssetIds.indexOf(id) + 1) };
+        await onVerifiedAsset(asset);
+        assert.ok(stored.has(id), "commit waits for authoritative metadata readback");
+        generated.push(asset);
+      }
+      return generated;
+    },
+    uploadVerifiedAsset: async ({ asset }) => { uploads.push(asset.id); return { status: "uploaded" }; },
+    log: () => undefined, logError: () => undefined,
+  });
+  assert.equal((await run()).status, "failed");
+  assert.equal(stored.size, 3);
+  assert.equal(failures, 1);
+  resuming = true;
+  assert.equal((await run()).status, "done");
+  assert.equal(stored.size, 8);
+  assert.deepEqual(uploads, [...coreFirstDraftAssetIds]);
+});
+
+test("a started checkpoint write settles before failed release and temporary cleanup", async () => {
+  const source = Buffer.from("checkpoint-lifetime-source");
+  const sourceSha = createHash("sha256").update(source).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.ok(resolved.ok);
+  if (!resolved.ok) return;
+  let jobDirectory = "";
+  let uploadSettled = false;
+  let metadataSettled = false;
+  const outcome = await runFirstDraftImageLaneOnce({
+    api: async (_path, init = {}) => {
+      if (init.method !== "POST") return Response.json({ ...resolved.payload,
+        sourcePhotoSha256: sourceSha, sourceUrl: "https://signed.example.com/source", uploadTransport: "signed-storage-v1" });
+      const body = JSON.parse(String(init.body));
+      await access(jobDirectory);
+      assert.equal(uploadSettled, true);
+      if (body.failed) { assert.equal(metadataSettled, true); return Response.json({ status: "released" }); }
+      metadataSettled = true;
+      return Response.json({ status: "recorded" });
+    },
+    fetchSource: async () => source,
+    generateVerifiedAssets: async ({ payload, jobDir, onVerifiedAsset }) => {
+      jobDirectory = jobDir;
+      const id = coreFirstDraftAssetIds[0];
+      const bytes = Buffer.from("approved-before-sibling-failure");
+      void onVerifiedAsset({ id, bytes, verification: qualityReceiptFor(id, payload.productFacts, sourceSha, bytes, 1) });
+      throw new Error("sibling fails while checkpoint is pending");
+    },
+    uploadVerifiedAsset: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      await access(jobDirectory);
+      uploadSettled = true;
+      return { status: "uploaded" };
+    },
+    log: () => undefined, logError: () => undefined,
+  });
+  assert.equal(outcome.status, "failed");
+  assert.equal(metadataSettled, true);
+  await assert.rejects(access(jobDirectory));
+});
+
 test("an authoritative-read gap after metadata submission preserves the claim without regeneration", async () => {
   const laneSource = Buffer.from("completion-uncertain-conflict-source");
   const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
