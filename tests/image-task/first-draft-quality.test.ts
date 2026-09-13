@@ -222,8 +222,8 @@ test("the installed worker connects first draft to the final source-composite ba
   const lane = await readFile(new URL("../../scripts/first-draft-image-lane.mjs", import.meta.url), "utf8");
   assert.match(worker, /generateVerifiedAssets: generateVerifiedFirstDraftAssets/);
   assert.match(worker, /const generated = await generateDistinctAsset\(\{/);
-  const preparedLane = worker.slice(worker.indexOf("async function generateVerifiedFirstDraftAssets"), worker.indexOf("async function loadReusableFirstDraftAssets"));
-  assert.doesNotMatch(preparedLane, /firstDraftScenes: true/);
+  // Review policy is now bound in the receipt/manifest; dedicated behavioral
+  // tests reject missing policy, mixed batches and legacy-profile downgrades.
   assert.match(worker, /await runDeterministicProductImageBatches\(\{/);
   assert.match(worker, /prepareIdentityCutoutsForJob\(/);
   assert.match(worker, /findProductImageBatchSemanticConflict\(/);

@@ -32,6 +32,8 @@ export type FirstDraftImageAssetId = (typeof coreFirstDraftAssetIds)[number];
 
 export const firstDraftImagePayloadVersion = 1;
 export const firstDraftImageQualityReceiptVersion = 1;
+export const preparedDetailImageReviewProfile = "prepared-detail-v1" as const;
+export type FirstDraftImageReviewProfile = "full-studio-v1" | typeof preparedDetailImageReviewProfile;
 
 const lowercaseSha256Pattern = /^[a-f0-9]{64}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -108,8 +110,7 @@ export const firstDraftImageProductFactsSchema = z.object({
 
 export type FirstDraftImageProductFacts = z.infer<typeof firstDraftImageProductFactsSchema>;
 
-export const firstDraftImageQualityReceiptSchema = z.object({
-  version: z.literal(firstDraftImageQualityReceiptVersion),
+const firstDraftImageQualityReceiptFields = {
   auditMode: z.literal("segmented-source-composite"),
   sourcePhotoSha256: z.string().regex(lowercaseSha256Pattern),
   sourceForegroundSha256: z.string().regex(lowercaseSha256Pattern),
@@ -123,9 +124,33 @@ export const firstDraftImageQualityReceiptSchema = z.object({
     sceneSemantic: z.literal(true),
     duplicate: z.literal(true),
   }).strict(),
+};
+
+export const preparedDetailBackgroundEvidenceSchema = z.object({
+  sha256: z.string().regex(lowercaseSha256Pattern),
+  bytes: z.number().int().positive().max(20 * 1024 * 1024),
+  observedNonMerchandiseProps: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(8)
+    .refine((values) => new Set(values).size === values.length, "관측된 배경 단서가 중복됐습니다."),
 }).strict();
 
+export type PreparedDetailBackgroundEvidence = z.infer<typeof preparedDetailBackgroundEvidenceSchema>;
+
+export const firstDraftImageQualityReceiptSchema = z.discriminatedUnion("version", [
+  z.object({ version: z.literal(firstDraftImageQualityReceiptVersion), ...firstDraftImageQualityReceiptFields }).strict(),
+  z.object({
+    version: z.literal(2),
+    ...firstDraftImageQualityReceiptFields,
+    reviewProfile: z.literal(preparedDetailImageReviewProfile),
+    batchReviewProfile: z.literal(preparedDetailImageReviewProfile),
+    backgroundEvidence: preparedDetailBackgroundEvidenceSchema,
+  }).strict(),
+]);
+
 export type FirstDraftImageQualityReceipt = z.infer<typeof firstDraftImageQualityReceiptSchema>;
+
+export function firstDraftImageReceiptReviewProfile(receipt: FirstDraftImageQualityReceipt): FirstDraftImageReviewProfile {
+  return receipt.version === 2 ? receipt.reviewProfile : "full-studio-v1";
+}
 
 export const firstDraftImageEnqueuePayloadSchema = z.object({
   jobId: z.string().uuid(),
@@ -161,6 +186,9 @@ export const firstDraftImageEnqueuePayloadSchema = z.object({
       || completedIds.some((assetId) => !value.completedAssets.includes(assetId))) {
     context.addIssue({ code: "custom", path: ["completedAssetEvidence"], message: "완료된 1차 이미지 증거가 역할 목록과 일치하지 않습니다." });
   }
+  if (new Set(value.completedAssetEvidence.map((entry) => firstDraftImageReceiptReviewProfile(entry.verification))).size > 1) {
+    context.addIssue({ code: "custom", path: ["completedAssetEvidence"], message: "서로 다른 이미지 검수 프로필의 작업을 함께 재개할 수 없습니다." });
+  }
 });
 
 export type FirstDraftImageEnqueuePayload = z.infer<typeof firstDraftImageEnqueuePayloadSchema>;
@@ -181,6 +209,9 @@ export const firstDraftImageQualityManifestSchema = z.object({
   if (keys.length !== firstDraftImageAssetIds.length
       || firstDraftImageAssetIds.some((assetId) => !Object.hasOwn(value.assets, assetId))) {
     context.addIssue({ code: "custom", path: ["assets"], message: "1차 이미지 품질 manifest에는 정확히 8개 역할이 필요합니다." });
+  }
+  if (new Set(Object.values(value.assets).map((asset) => firstDraftImageReceiptReviewProfile(asset.verification))).size > 1) {
+    context.addIssue({ code: "custom", path: ["assets"], message: "8장의 생성·배치 검수 프로필은 같아야 합니다." });
   }
 });
 
@@ -484,12 +515,13 @@ export function firstDraftImageProductFactsSha256(productFacts: FirstDraftImageP
 export function firstDraftImageScenePlanSha256(
   productFacts: FirstDraftImageProductFacts,
   assetId: FirstDraftImageAssetId,
+  reviewProfile: FirstDraftImageReviewProfile = "full-studio-v1",
 ) {
   const studioResult = buildFirstDraftStudioResult(productFacts);
   const spec = firstDraftImageAssetSpec(assetId);
   const settingShot = resolveProductSettingShot(studioResult, assetId);
   if (!spec || !settingShot) throw new Error(`${assetId} 1차 이미지 장면 계획을 확인하지 못했습니다.`);
-  return canonicalSha256({
+  const plan = {
     assetId,
     categoryStyleId: resolveProductImageStyleCategory(studioResult).id,
     product: studioResult.product,
@@ -500,7 +532,11 @@ export function firstDraftImageScenePlanSha256(
     width: spec.width,
     height: spec.height,
     settingShot,
-  });
+  };
+  // The old digest remains readable. A prepared-detail receipt attests to a
+  // different explicit acceptance policy, even when the art-direction plan is
+  // identical; deleting its profile cannot turn it into a legacy full audit.
+  return canonicalSha256(reviewProfile === "full-studio-v1" ? plan : { reviewProfile, plan });
 }
 
 export function buildFirstDraftImageQualityReceipt(input: {
@@ -514,17 +550,25 @@ export function buildFirstDraftImageQualityReceipt(input: {
   sourcePixelIdentityVerified: boolean;
   sceneSemanticVerified: boolean;
   duplicateVerified: boolean;
+  reviewProfile?: FirstDraftImageReviewProfile;
+  batchReviewProfile?: FirstDraftImageReviewProfile;
+  backgroundEvidence?: PreparedDetailBackgroundEvidence;
 }): FirstDraftImageQualityReceipt {
   if (input.visualHash.byteLength !== 32) {
     throw new Error(`${input.assetId} 1차 이미지 dHash 검수 증거가 올바르지 않습니다.`);
   }
+  const reviewProfile = z.enum(["full-studio-v1", preparedDetailImageReviewProfile])
+    .parse(input.reviewProfile ?? "full-studio-v1");
+  if (reviewProfile === "full-studio-v1" && (input.batchReviewProfile || input.backgroundEvidence)) {
+    throw new Error("상세 이미지 검수 증거에 명시적인 prepared-detail 프로필이 필요합니다.");
+  }
   return firstDraftImageQualityReceiptSchema.parse({
-    version: firstDraftImageQualityReceiptVersion,
+    version: reviewProfile === preparedDetailImageReviewProfile ? 2 : firstDraftImageQualityReceiptVersion,
     auditMode: "segmented-source-composite",
     sourcePhotoSha256: input.sourcePhotoSha256,
     sourceForegroundSha256: input.sourceForegroundSha256,
     productFactsSha256: firstDraftImageProductFactsSha256(input.productFacts),
-    scenePlanSha256: firstDraftImageScenePlanSha256(input.productFacts, input.assetId),
+    scenePlanSha256: firstDraftImageScenePlanSha256(input.productFacts, input.assetId, reviewProfile),
     outputSha256: input.outputSha256,
     visualHash: Buffer.from(input.visualHash).toString("hex"),
     checks: {
@@ -533,6 +577,11 @@ export function buildFirstDraftImageQualityReceipt(input: {
       sceneSemantic: input.sceneSemanticVerified,
       duplicate: input.duplicateVerified,
     },
+    ...(reviewProfile === preparedDetailImageReviewProfile ? {
+      reviewProfile,
+      batchReviewProfile: input.batchReviewProfile,
+      backgroundEvidence: input.backgroundEvidence,
+    } : {}),
   });
 }
 
@@ -547,7 +596,7 @@ export function validateFirstDraftImageQualityReceipt(input: {
   if (!parsed.success) return false;
   return parsed.data.sourcePhotoSha256 === input.sourcePhotoSha256
     && parsed.data.productFactsSha256 === firstDraftImageProductFactsSha256(input.productFacts)
-    && parsed.data.scenePlanSha256 === firstDraftImageScenePlanSha256(input.productFacts, input.assetId)
+    && parsed.data.scenePlanSha256 === firstDraftImageScenePlanSha256(input.productFacts, input.assetId, firstDraftImageReceiptReviewProfile(parsed.data))
     && (!input.outputSha256 || parsed.data.outputSha256 === input.outputSha256);
 }
 
@@ -562,6 +611,7 @@ export function validateFirstDraftImageQualityReceiptSet(input: {
   if (!stored) return { valid: false, reason: "missing" };
   const receipts = {} as Record<FirstDraftImageAssetId, FirstDraftImageQualityReceipt>;
   const fingerprints: ShotFingerprint[] = [];
+  let reviewProfile: FirstDraftImageReviewProfile | undefined;
   for (const assetId of firstDraftImageAssetIds) {
     const asset = recordValue(stored[assetId]);
     const digest = text(asset?.digest);
@@ -573,6 +623,9 @@ export function validateFirstDraftImageQualityReceiptSet(input: {
       outputSha256: digest,
       receipt: parsed.data,
     })) return { valid: false, reason: "invalid" };
+    const assetProfile = firstDraftImageReceiptReviewProfile(parsed.data);
+    if (reviewProfile && assetProfile !== reviewProfile) return { valid: false, reason: "invalid" };
+    reviewProfile = assetProfile;
     const fingerprint = {
       assetId,
       digest,

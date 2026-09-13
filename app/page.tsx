@@ -4290,7 +4290,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const publishBusy = running
     ? { title: "준비한 이미지로 상세페이지를 제작하고 있습니다.", detail: "확인한 연출 이미지를 재사용해 상세페이지 내용과 배치를 만듭니다." }
     : researchingProduct || firstImagesPending
-      ? { title: "상품정보와 상세페이지용 이미지 8개를 준비하고 있습니다.", detail: researchingProduct ? researchProgress : firstDraftConceptStatus || "Mac에서 역할별 연출 이미지 8장을 제작하고 있습니다." }
+      ? { title: "상품정보와 상세페이지용 이미지 8개를 준비하고 있습니다.", detail: researchingProduct ? researchProgress : firstDraftConceptStatus || "8장 전체의 생성·검수를 마친 뒤 한 번에 표시합니다. 장별 검수 중 재시도될 수 있습니다." }
       : recoveringProductResearch
         ? { title: "접수한 1차 작업 상태를 확인하고 있습니다.", detail: "서버에 접수된 작업의 진행 상황을 다시 읽고 있습니다." }
         : photoSelectionsProcessing

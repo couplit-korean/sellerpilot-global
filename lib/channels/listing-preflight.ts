@@ -1,3 +1,4 @@
+import { smartstoreFoodFields, smartstoreFoodBooleanFields, smartstoreFoodNoticeFromDraft, smartstoreFoodDateValid, smartstoreFoodTextValid, smartstoreFoodNutritionRequired } from "./smartstore-food-notice";
 import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
 import { shopeeCreateConditionValid, shopeeCreateStockValid } from "./shopee-create-preflight";
 import { temuCreateSkuChecks } from "./temu-create-preflight";
@@ -353,6 +354,31 @@ const smartstoreCertificationRequirements: RequirementSpec[] = [
   },
 ];
 
+const smartstoreFoodPath = ["body", "originProduct", "detailAttribute", "productInfoProvidedNotice", "generalFood"];
+const smartstoreFoodRequirements: RequirementSpec[] = [
+  { key: "food-notice-type", label: "가공식품 고시 유형", source: "카테고리", applies: (draft) => smartstoreFoodNoticeFromDraft(draft).required, test: (draft) => smartstoreFoodNoticeFromDraft(draft).notice.productInfoProvidedNoticeType === "GENERAL_FOOD", help: "확정한 가공식품·음료 카테고리는 GENERAL_FOOD 고시가 필요합니다. 채널 초안을 다시 불러와 주세요." },
+  ...smartstoreFoodFields.map(([key, label, max]): RequirementSpec => ({
+    key: `food-${key}`, label, source: "상품 정보", applies: (draft) => smartstoreFoodNoticeFromDraft(draft).required,
+    manualPath: [...smartstoreFoodPath, key], test: (draft) => smartstoreFoodTextValid(smartstoreFoodNoticeFromDraft(draft).food[key], max),
+    help: `라벨 또는 확인한 생산자 자료의 사실만 입력해 주세요. 최대 ${max}자이며 미확인·상품상세 참조는 완료로 처리하지 않습니다.`,
+  })),
+  ...(["packDate", "consumptionDate"] as const).map((key): RequirementSpec => ({
+    key: `food-${key}`, label: key === "packDate" ? "제조연월일 또는 확인한 표시 문구" : "소비기한 또는 확인한 표시 문구", source: "상품 정보",
+    applies: (draft) => smartstoreFoodNoticeFromDraft(draft).required, manualPath: [...smartstoreFoodPath, `${key}Text`],
+    test: (draft) => smartstoreFoodDateValid(smartstoreFoodNoticeFromDraft(draft).food, key),
+    help: "날짜를 추정하지 마세요. 실제 날짜 또는 라벨에서 확인한 직접 입력 문구가 필요합니다. 날짜 필드를 직접 넣었다면 YYYY-MM-DD 형식이어야 합니다.",
+  })),
+  ...smartstoreFoodBooleanFields.map(([key, label]): RequirementSpec => ({
+    key: `food-${key}`, label, source: "상품 정보", applies: (draft) => smartstoreFoodNoticeFromDraft(draft).required,
+    manualPath: [...smartstoreFoodPath, key], inputType: "boolean",
+    test: (draft) => typeof smartstoreFoodNoticeFromDraft(draft).food[key] === "boolean",
+    help: "라벨·공식 자료로 확인한 뒤 예/아니요를 선택해 주세요. 미선택 상태를 아니요로 추정하지 않습니다.",
+  })),
+  { key: "food-nutrition", label: "영양성분 (표시 대상 식품)", source: "상품 정보", manualPath: [...smartstoreFoodPath, "nutritionFacts"],
+    applies: (draft) => { const { required, food } = smartstoreFoodNoticeFromDraft(draft); return required && (smartstoreFoodNutritionRequired(food) || Boolean(food.nutritionFacts) || valueAt(draft, ["sellerpilotAssets", "smartstoreNutritionRequired"]) === true); },
+    test: (draft) => smartstoreFoodTextValid(smartstoreFoodNoticeFromDraft(draft).food.nutritionFacts, 1000), help: "음료 라벨의 기준 용량·열량·각 영양성분을 확인해 입력해 주세요. 영양성분을 추정하지 않습니다." },
+];
+
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
@@ -491,6 +517,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },
   ],
   smartstore: [
+    ...smartstoreFoodRequirements,
     ...smartstoreCapacityRequirements,
     ...smartstoreCertificationRequirements,
     { key: "category", label: "스마트스토어 말단 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },

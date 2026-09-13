@@ -39,6 +39,7 @@ import {
     firstDraftImageFactsMatchStudioRequest,
     firstDraftImageProductFactsSchema,
     firstDraftImageQualityManifestSchema,
+    firstDraftImageReceiptReviewProfile,
     firstDraftImageScenePlansMatchStudioResult,
     validateFirstDraftImageQualityReceipt,
     validateFirstDraftImageQualityManifest,
@@ -2225,6 +2226,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
         let backgroundPlateSnapshot = null;
         let backgroundProps = null;
         let acceptedBackgroundAuditFeedback = null;
+        let observedBackgroundProps = null;
         let labelReferenceFiles = [];
         let missingIdentityEvidence = false;
         let usedVerifiedSourceComposite = false;
@@ -2310,7 +2312,9 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                 "--ephemeral",
                 "--cd", dirname(outputFile),
                 ...(!backgroundOnly ? referenceIndexes.map((index) => `--image=${imageFiles[index].file}`) : []),
-                assetPrompt,
+                [assetPrompt,
+                    "This invocation is exactly ONE image_gen call. After that one call, copy its selected PNG to the requested output path and return. Do not regenerate, edit with image_gen, or run an internal quality retry, even if you notice an imperfection. The external SellerPilot worker owns independent quality checks and bounded retries. This one-call limit overrides any earlier instruction to inspect and regenerate before saving. Never substitute code-drawn images.",
+                ].join("\n"),
             ];
             const imageStartedAt = Date.now();
             let imageInvocation = null;
@@ -2422,6 +2426,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                         leaseSignal,
                     });
                     sceneSemanticVerified = true;
+                    observedBackgroundProps = [...semanticAudit.observedNonMerchandiseProps];
                     acceptedBackgroundAuditFeedback = {
                         hardNegativeLocationKeys: [semanticAudit.observedLocationKey],
                         hardNegativeMomentKeys: [semanticAudit.observedMomentKey],
@@ -2445,15 +2450,18 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                     }
                     // Optional first-draft cues must never be recorded as observed
                     // when the auditor explicitly reported them absent.
-                    backgroundProps = firstDraftScenes ? [] : [backgroundContract.prop.key];
+                    backgroundProps = firstDraftScenes ? observedBackgroundProps : [backgroundContract.prop.key];
                 }
                 catch (error) {
-                    if (firstDraftScenes) {
-                        const dimensions = Array.isArray(error?.failedDimensions)
-                            ? error.failedDimensions.filter((value) => typeof value === "string" && /^[a-z-]{1,40}$/.test(value)).join(",")
-                            : "background-geometry-or-scene";
-                        console.warn(`[1차 이미지 배경 검수] ${preset.id} · attempt=${attempt} · ${dimensions || "background-scene"}`);
-                    }
+                    const dimensions = Array.isArray(error?.failedDimensions)
+                        ? error.failedDimensions.filter((value) => typeof value === "string" && /^[a-z-]{1,40}$/.test(value)).slice(0, 24).join(",")
+                        : "background-geometry-or-scene";
+                    const safeErrorName = typeof error?.name === "string" && /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(error.name)
+                        ? error.name : "Error";
+                    // The unified first-stage lane uses full studio checks. Log
+                    // its retries too; otherwise file cleanup looks like a lost
+                    // generation while a replacement is already running.
+                    console.warn(`[${firstDraftScenes ? "1차 이미지" : "통합 이미지"} 배경 검수] ${jobId || "image-lane"} · ${preset.id} · attempt=${attempt}/${maximumAttempt} · next=${attempt === maximumAttempt ? "failed" : "retry"} · ${safeErrorName} · ${dimensions || "background-scene"}`);
                     if (attempt === maximumAttempt) {
                         const terminalFeedback = mergeSettingShotRetryAuditFeedback(retryAuditFeedback, mergeSettingShotRetryAuditFeedback(acceptedBackgroundAuditFeedback, error?.retryAuditFeedback ?? {
                             failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
@@ -2645,6 +2653,11 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                     sourcePixelIdentityVerified,
                     sceneSemanticVerified,
                     duplicateVerified: true,
+                    backgroundEvidence: backgroundPlateSnapshot && observedBackgroundProps ? {
+                        sha256: backgroundPlateSnapshot.plateDigest,
+                        bytes: backgroundPlateSnapshot.plateBytes,
+                        observedNonMerchandiseProps: observedBackgroundProps,
+                    } : null,
                 },
             };
         }
@@ -2701,7 +2714,8 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
     }
     throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
 }
-// Prepared images use exactly the final studio renderer and quality checks.
+// Prepared images use the shared renderer with an explicit practical scene
+// profile; final details reuse the verified bytes without changing that profile.
 async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir, signal }) {
     signal?.throwIfAborted();
     const source = await readFile(sourceFile);
@@ -2737,6 +2751,10 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
         || completedEvidence.some((entry) => !completedIds.has(entry.id))) {
         throw new Error("1차 이미지 재개 증거가 완료 역할 목록과 일치하지 않습니다.");
     }
+    const resumedProfiles = new Set(completedEvidence.map((entry) => firstDraftImageReceiptReviewProfile(entry.verification)));
+    if (resumedProfiles.size > 1) throw new Error("1차 이미지 재개 검수 프로필이 혼합되어 있습니다.");
+    const reviewProfile = resumedProfiles.values().next().value ?? "prepared-detail-v1";
+    const preparedDetailProfile = reviewProfile === "prepared-detail-v1";
     const existingShots = [];
     const existingBackgroundShots = [];
     const existingBackgroundProps = [];
@@ -2790,7 +2808,9 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
         });
         existingBackgroundProps.push({
             assetId: entry.id,
-            propKeys: [resolveIdentityBackgroundContract(settingShot, entry.id).prop.key],
+            propKeys: preparedDetailProfile
+                ? [...entry.verification.backgroundEvidence.observedNonMerchandiseProps]
+                : [resolveIdentityBackgroundContract(settingShot, entry.id).prop.key],
         });
     }
     const identityCutouts = await prepareIdentityCutoutsForJob(
@@ -2834,6 +2854,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                 throw new Error(`${preset.id} 1차 이미지 재시도 상태가 없습니다.`);
             const outputFile = join(jobDir, preset.file);
             const generated = await generateDistinctAsset({
+                firstDraftScenes: preparedDetailProfile,
                 result: studioResult,
                 outputFile,
                 preset,
@@ -2857,11 +2878,12 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                 attemptsUsed: generated.attempts - attempt + 1,
                 fingerprint: generated.fingerprint,
                 backgroundShot: generated.backgroundShot,
-                backgroundProps: generated.backgroundProps,
+                backgroundProps: preparedDetailProfile ? null : generated.backgroundProps,
                 value: { generated, outputFile },
             };
         },
         findPostGenerationConflict: ({ spec: preset, attempt, candidate, acceptedCandidates, signal }) => findProductImageBatchSemanticConflict({
+            firstDraftScenes: preparedDetailProfile,
             result: studioResult,
             preset,
             attempt,
@@ -2914,6 +2936,11 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
                 id: preset.id,
                 bytes: generated.normalized,
                 verification: buildFirstDraftImageQualityReceipt({
+                    ...(preparedDetailProfile ? {
+                        reviewProfile: "prepared-detail-v1",
+                        batchReviewProfile: "prepared-detail-v1",
+                        backgroundEvidence: evidence.backgroundEvidence,
+                    } : {}),
                     assetId: preset.id,
                     productFacts: payload.productFacts,
                     sourcePhotoSha256: payload.sourcePhotoSha256,
@@ -3024,7 +3051,9 @@ async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
             },
             backgroundProps: {
                 assetId,
-                propKeys: [resolveIdentityBackgroundContract(settingShot, assetId).prop.key],
+                propKeys: firstDraftImageReceiptReviewProfile(receipt) === "prepared-detail-v1"
+                    ? [...receipt.backgroundEvidence.observedNonMerchandiseProps]
+                    : [resolveIdentityBackgroundContract(settingShot, assetId).prop.key],
             },
         });
     }

@@ -1,3 +1,4 @@
+import { smartstoreGeneralFoodIssues } from "./smartstore-food-notice";
 import { smartstoreReadbackImageProjection } from "./smartstore-image-contract";
 import { validatedSmartstoreShippingInfo } from "./listing-shipping";
 import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
@@ -68,6 +69,11 @@ function assertProvidedNotice(
   const body = record(notice[snakeToCamel(type)]);
   if (!Object.keys(body).length) {
     throw new Error("NAVER_CREATE_PRODUCT_NOTICE_REQUIRED");
+  }
+  if (type === "GENERAL_FOOD") {
+    const issues = smartstoreGeneralFoodIssues(body, allowServerManagedContact);
+    if (issues.length) throw new Error(`NAVER_CREATE_GENERAL_FOOD_NOTICE_REQUIRED:${issues.join(",")}`);
+    return;
   }
   if (type !== "ETC") return;
   for (const field of [

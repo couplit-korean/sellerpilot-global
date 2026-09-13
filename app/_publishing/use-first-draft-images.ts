@@ -169,7 +169,7 @@ function defaultFetcher(input: RequestInfo | URL, init?: RequestInit) {
 
 function firstDraftPhaseMessage(phase: FirstDraftImagePhase, confirmedGeneratedCount: number) {
   if (phase === "source-photo-catalog") return "역할별 이미지 생성을 준비하고 있습니다. 원본사진은 생성 결과에 표시하지 않습니다.";
-  if (phase === "queued") return "역할별 1차 이미지를 생성하고 있습니다. 검증된 생성 결과부터 표시합니다.";
+  if (phase === "queued") return "8장 전체의 생성·검수를 마친 뒤 한 번에 표시합니다. 장별 검수 중 재시도될 수 있습니다.";
   if (phase === "partial") return `역할별 생성 이미지 ${confirmedGeneratedCount} / 8장을 확인했습니다. 나머지 이미지와 계보를 기다리고 있습니다.`;
   if (phase === "complete") return "원본 계보와 서로 다른 역할별 생성 근거가 확인된 1차 이미지 8장입니다.";
   if (phase === "failed") return "1차 이미지 생성을 완료하지 못해 중단됐습니다. 원본사진을 생성 결과로 표시하지 않습니다.";

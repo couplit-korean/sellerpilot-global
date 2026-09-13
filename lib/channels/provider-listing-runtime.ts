@@ -1,3 +1,4 @@
+import { assertSmartstoreFoodCategoryNotice } from "./smartstore-food-notice";
 import { assertNoRetiredProductRecovery } from "./retired-product-recovery";
 import { assertSmartstoreCreateAbsence } from "./smartstore-create-preflight";
 import { shopeeGlobalCreateBody } from "./shopee-create-preflight";
@@ -1163,6 +1164,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       throw new Error("NAVER_LEAF_CATEGORY_PREFLIGHT_FAILED");
     }
     assertSmartstoreUnitCapacity({ originProduct, category });
+    assertSmartstoreFoodCategoryNotice(originProduct, category);
     const detailAttribute = recordValue(originProduct.detailAttribute) ?? {};
     const sellerCodeInfo = recordValue(detailAttribute.sellerCodeInfo) ?? {};
     const sellerManagementCode = String(sellerCodeInfo.sellerManagementCode ?? "").trim();

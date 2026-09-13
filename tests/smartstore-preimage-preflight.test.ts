@@ -144,6 +144,31 @@ test("Smartstore create rejects a non-leaf category before image mutation", asyn
   }
 });
 
+test("Smartstore official beverage category rejects an ETC notice before duplicate search or image mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  const mutations: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/v1/categories/50001578")) {
+      return Response.json({ id: "50001578", name: "탄산음료", last: true, exceptionalCategories: [] });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+  try {
+    await assert.rejects(
+      prepareMarketplaceListingArguments(runtimeInput("listing.create", mutations)),
+      /NAVER_CREATE_GENERAL_FOOD_CATEGORY_NOTICE_REQUIRED/,
+    );
+    assert.deepEqual(mutations, []);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].endsWith("/v1/categories/50001578"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Smartstore create rejects an unavailable duplicate search before image mutation", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

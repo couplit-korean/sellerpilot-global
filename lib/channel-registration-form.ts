@@ -23,6 +23,10 @@ const labels: Record<string,string> = {
 };
 export function registrationFieldLabel(path: string[]): string {
   const key = path.at(-1) ?? "";
+  if (path.includes("generalFood")) {
+    const foodLabels: Record<string, string> = { weight: "내용물 용량·중량", amount: "판매 구성 수량", packDate: "제조연월일", packDateText: "제조연월일 표시 문구", consumptionDate: "소비기한", consumptionDateText: "소비기한 표시 문구", nutritionFacts: "영양성분", producer: "생산자", location: "생산자 소재지", foodType: "식품의 유형", ingredients: "원재료명 및 함량", consumerSafetyCaution: "소비자 안전 주의사항", geneticallyModified: "유전자변형식품 해당 여부", importDeclarationCheck: "수입 신고 완료 여부" };
+    if (foodLabels[key]) return foodLabels[key];
+  }
   if (/^\d+$/.test(key)) return `${registrationFieldLabel(path.slice(0,-1))} ${Number(key)+1}`;
   return labels[key] ?? key.replace(/([a-z])([A-Z])/g,"$1 $2").replaceAll("_"," ");
 }

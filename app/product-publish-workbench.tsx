@@ -1,4 +1,5 @@
 "use client";
+import { buildSmartstoreGeneralFoodNotice, preserveSmartstoreFoodNotice, smartstoreGeneralFoodCategory } from "../lib/channels/smartstore-food-notice";
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
@@ -752,8 +753,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     };
   }
   if (channel === "smartstore") {
+    const generalFood = smartstoreGeneralFoodCategory(assignment);
     return {
-      sellerpilotAssets,
+      sellerpilotAssets: { ...sellerpilotAssets, ...(generalFood ? { smartstoreNoticeType: "GENERAL_FOOD", smartstoreNoticeProductId: product.id, smartstoreNutritionRequired: (assignment?.categoryPath ?? []).some((part) => /(?:^|[\/·&])\s*(?:음료|탄산음료|사이다)\s*(?:$|[\/·&])/u.test(part)) } : {}) },
       imageUrls: galleryImageUrls,
       body: {
         originProduct: {
@@ -767,7 +769,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
             ? { salePrice: channelPrice, stockQuantity: quantity }
             : {}),
           ...(operation === "listing.create" ? { deliveryInfo: smartstoreShippingDraft(manual) } : {}),
-          detailAttribute: { minorPurchasable: true, naverShoppingSearchInfo: { brandName: manual.brandName.trim() }, certificationTargetExcludeContent: { childCertifiedProductExclusionYn: null, kcCertifiedProductExclusionYn: "", greenCertifiedProductExclusionYn: null, chemicalCertifiedProductExclusionYn: null }, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: title.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
+          detailAttribute: { minorPurchasable: true, naverShoppingSearchInfo: { brandName: manual.brandName.trim() }, certificationTargetExcludeContent: { childCertifiedProductExclusionYn: null, kcCertifiedProductExclusionYn: "", greenCertifiedProductExclusionYn: null, chemicalCertifiedProductExclusionYn: null }, productInfoProvidedNotice: generalFood ? buildSmartstoreGeneralFoodNotice({ title, packageContents: manual.packageContents, attributes: assignment?.providedAttributes }) : { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: title.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
         },
         smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: title, channelProductDisplayStatusType: "ON" },
@@ -1016,14 +1018,17 @@ export function buildSynchronizedDraftMap(context: PublishContext, currentDrafts
         const shippingSourceChanged = listingShippingSourceChanged(currentDraft, nextDraft);
         for (const requirement of inspectWorkbenchListingDraft(channel, nextDraft, operation)) {
           if (!requirement.manualPath) continue;
-          if (channel === "smartstore" && isSmartstoreCapacityPath(requirement.manualPath)) continue;
+          if (channel === "smartstore" && (isSmartstoreCapacityPath(requirement.manualPath) || requirement.key.startsWith("food-"))) continue;
           if (channel === "coupang" && isCoupangWeightPath(requirement.manualPath)) continue;
           if (shippingSourceChanged && shippingRequirementDependsOnSource(requirement)) continue;
           nextDraft = setListingDraftValue(nextDraft, requirement.manualPath, listingDraftValue(currentDraft, requirement.manualPath));
         }
       }
 
-      if (channel === "smartstore" && currentDraft) nextDraft = preserveSmartstoreCapacityDraft(currentDraft, nextDraft);
+      if (channel === "smartstore" && currentDraft) {
+        nextDraft = preserveSmartstoreCapacityDraft(currentDraft, nextDraft);
+        nextDraft = preserveSmartstoreFoodNotice(currentDraft, nextDraft);
+      }
       if (channel === "coupang" && currentDraft) nextDraft = preserveCoupangWeightDraft(currentDraft, nextDraft);
       return [channel, JSON.stringify(nextDraft, null, 2)];
     }

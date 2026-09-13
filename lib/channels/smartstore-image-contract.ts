@@ -194,6 +194,12 @@ export function finalizeSmartstoreListingBody(input: {
       delete etc.afterServiceDirector;
       providedNotice.etc = etc;
     }
+    if (providedNotice.productInfoProvidedNoticeType === "GENERAL_FOOD") {
+      providedNotice.generalFood = {
+        ...recordValue(providedNotice.generalFood),
+        customerServicePhoneNumber: input.afterServicePhone,
+      };
+    }
     originProduct.detailAttribute = {
       ...detailAttribute,
       minorPurchasable: typeof detailAttribute.minorPurchasable === "boolean"
