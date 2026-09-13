@@ -847,3 +847,71 @@ test("actual CS schedule and gateway entrypoints persist and resume an exact Pay
     await db.close();
   }
 });
+
+const rotationSql = await readFile(new URL(
+  '../supabase/migrations/20260913014625_cs_ebay_collection_credential_rotation.sql', import.meta.url,
+), 'utf8');
+
+async function rotatedCollectionFixture(durablePage = false) {
+  const db = await database();
+  const now = new Date('2026-09-13T01:00:00.000Z');
+  await enqueue(db, now);
+  const payment = await queuedJob(db, 'periodic_summary');
+  await claim(db, payment.id);
+  if (durablePage) await recordPage(db,payment,{steps:[{data:{
+    contract:'sellerpilot-ebay-case-dispute-gateway-page/1',resourceKind:'payment_dispute',
+    collectionKind:'periodic_summary',page:{availability:'readable',httpStatus:200,
+      entries:[],total:0,offset:0,nextOffset:null}
+  }}]});
+  const nextCredential = '51000000-0000-4000-8000-000000000002';
+  await db.query(`update sellerpilot_private.channel_credentials set status='revoked' where id=$1;
+  `, [credential]);
+  await db.query(`insert into sellerpilot_private.channel_credentials(
+    id,created_by,channel,environment,version,status,seller_account_key,seller_account_key_source,seller_account_verified_at
+  ) values($1,$2,'ebay','production',2,'active',$3,'provider_certified_v1',now())`, [nextCredential,owner,sellerKey]);
+  // The canonical refresh path rebinds the running gateway job, while the
+  // collection run deliberately retains the credential used to plan it.
+  await db.query('update sellerpilot_private.channel_gateway_jobs set credential_id=$1 where id=$2', [nextCredential,payment.id]);
+  return {db,now,payment,nextCredential};
+}
+
+test('credential rotation retires unfinished GETs and starts distinct current runs without rewriting history', async () => {
+  const {db,now,payment,nextCredential} = await rotatedCollectionFixture();
+  try {
+    await assert.rejects(enqueue(db,now), /EBAY_CASE_DISPUTE_COLLECTION_RUN_BIND_FAILED/);
+    const oldRuns = (await db.query('select * from sellerpilot_private.ebay_case_dispute_collection_runs order by root_job_id')).rows;
+    const oldKeys = new Set((await db.query("select request_payload->>'periodicKey' key from sellerpilot_private.channel_gateway_jobs")).rows.map(row=>row.key));
+    await db.exec(rotationSql);
+    const {receipt} = await enqueue(db,now);
+    assert.equal(receipt.queued,2);
+    const retired = (await db.query("select id,status,error_message from sellerpilot_private.channel_gateway_jobs where status='cancelled'")).rows;
+    assert.equal(retired.length,2);
+    assert.ok(retired.some(row=>row.id===payment.id));
+    assert.ok(retired.every(row=>row.error_message==='EBAY_CASE_DISPUTE_CREDENTIAL_ROTATED_RECOLLECT'));
+    assert.deepEqual((await db.query('select * from sellerpilot_private.ebay_case_dispute_collection_runs where credential_id=$1 order by root_job_id',[credential])).rows,oldRuns);
+    const current = (await db.query("select j.id,j.request_payload->>'periodicKey' key,r.credential_version from sellerpilot_private.channel_gateway_jobs j join sellerpilot_private.ebay_case_dispute_collection_runs r on r.root_job_id=j.id where j.credential_id=$1 and j.status='queued'",[nextCredential])).rows;
+    assert.equal(current.length,2);
+    assert.ok(current.every(row=>row.credential_version===2 && !oldKeys.has(row.key)));
+    const again = await enqueue(db,now);
+    assert.equal(again.receipt.queued,0);
+    assert.equal((await db.query("select count(*)::int n from sellerpilot_private.operation_audit where action='ebay_case_dispute_credential_rotation'")).rows[0].n,2);
+    assert.equal((await db.query('select count(*)::int n from sellerpilot_private.ebay_case_dispute_collection_pages')).rows[0].n,0);
+    await assert.rejects(db.exec(rotationSql),/EBAY_COLLECTION_ROTATION_PREIMAGE_MISMATCH/);
+  } finally { await db.close(); }
+});
+
+for (const protectedState of ['provider_write','refresh_in_flight','completed','different_seller','durable_page']) {
+  test(`rotation never retires a ${protectedState} job`, async () => {
+    const {db,now,payment,nextCredential} = await rotatedCollectionFixture(protectedState==='durable_page');
+    try {
+      if (protectedState==='provider_write') await db.query('update sellerpilot_private.channel_gateway_jobs set provider_mutation_started_at=now() where id=$1',[payment.id]);
+      if (protectedState==='refresh_in_flight') await db.query('update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=true where id=$1',[payment.id]);
+      if (protectedState==='completed') await db.query("update sellerpilot_private.channel_gateway_jobs set status='succeeded',completed_at=now() where id=$1",[payment.id]);
+      if (protectedState==='different_seller') await db.query('update sellerpilot_private.channel_credentials set seller_account_key=$1 where id=$2',['b'.repeat(64),nextCredential]);
+      const before=(await db.query('select * from sellerpilot_private.channel_gateway_jobs where id=$1',[payment.id])).rows[0];
+      await db.exec(rotationSql);
+      await enqueue(db,now);
+      assert.deepEqual((await db.query('select * from sellerpilot_private.channel_gateway_jobs where id=$1',[payment.id])).rows[0],before);
+    } finally { await db.close(); }
+  });
+}

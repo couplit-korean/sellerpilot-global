@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-09-13T01:34:43.872138+00:00",
+  "checkedAt": "2026-09-13T02:10:07.518865+00:00",
   "sourceParent": "9f673072fb281912d49a05bfb8f51cacb1e2eeff",
   "productionReleaseAtReview": "a6efa006fddc95f13a4dcc66fad9f16198a4c3f0",
   "supabaseProject": "sqaoqucxakebqkiygdxb",
@@ -38,6 +38,21 @@
       "version": "20260910051500",
       "name": "cs_lazada_supplemental_ui_scopes",
       "source_sha256": "14c6dc53b912ecf842b26f6dba2f902e140916f4ca8876b688f03e59c49d5823"
+    },
+    {
+      "version": "20260913014625",
+      "name": "cs_ebay_collection_credential_rotation",
+      "source_sha256": "e603396ee4bd47f6264df7a7ee833a1326e25329ea4a3446577497f62022fb08"
+    },
+    {
+      "version": "20260913015651",
+      "name": "cs_elevenst_verified_empty_observation",
+      "source_sha256": "eaa698f0349d6bdf24581a06edb188dc05c8f8b75b583e00d837d3f81a7659f1"
+    },
+    {
+      "version": "20260913020457",
+      "name": "archive_reused_internal_schedule_request_ids",
+      "source_sha256": "d4a48b1861b973e0ba0dff993d26fd67b23dc1df3e16a7bedf09ba07c50ca59e"
     }
   ],
   "restoredStaticFunctions": [
@@ -218,7 +233,336 @@
       "fail": 0
     },
     "note": "Test runs overlap; counts are per run, not a summed unique total.",
-    "productionBuild": "passed"
+    "productionBuild": "passed",
+    "ebayRotation": {
+      "pass": 17,
+      "fail": 0
+    },
+    "elevenstDbWeb": {
+      "pass": 6,
+      "fail": 0
+    },
+    "requestIdReuse": {
+      "pass": 4,
+      "fail": 0
+    }
   },
-  "deployment": "pending"
+  "deployment": {
+    "deploymentId": "dpl_D8Zt1gyMZ1KNF9U9WDbx1qd82k45",
+    "origin": "https://sellerpilot-global-7kq56pnuc-project-e59d.vercel.app",
+    "release": "5adbed3b45b6fdfb924c3a0c7de38255aecf0837",
+    "sourceProof": "accepted",
+    "runtimeProof": "verified",
+    "productionPromotionPerformed": true
+  },
+  "canary": {
+    "release": "5adbed3b45b6fdfb924c3a0c7de38255aecf0837",
+    "claimed": 0,
+    "processed": 0,
+    "executed": false
+  },
+  "gateway": {
+    "status": "ready",
+    "mode": "gateway-only",
+    "version": "sellerpilot-cli-worker/1.61+5adbed3b45b6fdfb924c3a0c7de38255aecf0837.92b235ca02d",
+    "runtimeAttestation": {
+      "releaseSha": "5adbed3b45b6fdfb924c3a0c7de38255aecf0837",
+      "egressIpSha256": "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01"
+    },
+    "uptimeSeconds": 960,
+    "ready": true,
+    "configuredScopes": {
+      "gateway": true,
+      "scheduler": false
+    },
+    "capabilities": {
+      "gatewayQueue": true,
+      "periodicChannelSync": false
+    },
+    "activeGatewayJobs": 0,
+    "lastLoopAt": "2026-09-13T02:08:35.364Z",
+    "lastGatewayContactAt": "2026-09-13T02:08:19.616Z",
+    "lastGatewayStatus": 200,
+    "lastGatewayErrorAt": null
+  },
+  "activation": {
+    "request": {
+      "id": 1493,
+      "route": "channel_sync",
+      "outcome": "delivered",
+      "timedOut": false,
+      "httpStatus": 200,
+      "safeErrorCode": null
+    },
+    "runtime": {
+      "active": true,
+      "version": "serverless_runtime_v2",
+      "lastWake": {
+        "outcome": "queued",
+        "timedOut": false,
+        "httpStatus": null,
+        "resolvedAt": null,
+        "requestedAt": "2026-09-13T02:05:00.324645+00:00",
+        "safeErrorCode": null
+      },
+      "configured": true,
+      "activeRelease": "5adbed3b45b6fdfb924c3a0c7de38255aecf0837",
+      "scheduleCount": 6,
+      "internalSchedules": {
+        "maintenance": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-11T18:17:00.636952+00:00"
+        },
+        "channel_sync": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "delivered",
+          "lastHttpStatus": 200,
+          "lastRequestedAt": "2026-09-13T02:07:23.219169+00:00"
+        },
+        "product_research": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-13T01:10:00.185201+00:00"
+        },
+        "competitor_prices": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-13T02:08:00.090657+00:00"
+        },
+        "kakao_notifications": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-13T02:04:00.132122+00:00"
+        }
+      },
+      "reconciliationRequired": 84,
+      "unsafePendingMutations": 0,
+      "reconciliationRequiredMutations": 77
+    },
+    "blocking": 0,
+    "checkedAt": "2026-09-13T02:08:36.040969+00:00"
+  },
+  "elevenstStoredReadState": {
+    "sellerId": "account_537cdf2a10ed9408c5e8cbc8bd2ff8e4",
+    "productQna": {
+      "accepted": true,
+      "checkedAt": "2026-09-13T01:53:08.474Z",
+      "httpStatus": 200,
+      "resultCode": "500",
+      "providerRows": 0,
+      "storedRowCount": 0,
+      "latestStoredReceivedAt": null
+    },
+    "sellerName": "11번가 연결 계정 · v2",
+    "urgentAlimi": {
+      "accepted": true,
+      "checkedAt": "2026-09-13T01:26:26.985Z",
+      "httpStatus": 200,
+      "resultCode": "0",
+      "providerRows": 0,
+      "storedRowCount": 0,
+      "latestStoredReceivedAt": null
+    },
+    "credentialId": "b2dd0ff7-4420-495f-aead-a45857fb3bfe"
+  },
+  "elevenstBrowser": {
+    "verifiedAt": "2026-09-13T02:00:00+00:00",
+    "domain": "sellerpilot-global.vercel.app",
+    "productQna": "원격 0건 확인",
+    "urgentAlimi": "원격 0건 확인",
+    "scopeLimitation": "this queried window only, not all historical messages"
+  },
+  "ebayRotation": {
+    "acl": {
+      "anon": false,
+      "service": true,
+      "authenticated": false
+    },
+    "jobs": [
+      {
+        "id": "bf0d8982-9146-43c2-9fc7-5b419aba7732",
+        "kind": "periodic_summary",
+        "status": "queued",
+        "version": 203,
+        "created_at": "2026-09-13T02:00:09.830512+00:00",
+        "pagestored": false,
+        "completed_at": null,
+        "error_message": null
+      },
+      {
+        "id": "d88dd9ea-7468-48bc-b59f-b603b24ad25e",
+        "kind": "periodic_summary",
+        "status": "queued",
+        "version": 203,
+        "created_at": "2026-09-13T01:52:14.242933+00:00",
+        "pagestored": false,
+        "completed_at": null,
+        "error_message": null
+      },
+      {
+        "id": "8ec0ae61-d548-41ff-9a94-cae1a05a2b19",
+        "kind": "initial_backfill",
+        "status": "queued",
+        "version": 203,
+        "created_at": "2026-09-13T01:52:14.242933+00:00",
+        "pagestored": false,
+        "completed_at": null,
+        "error_message": null
+      },
+      {
+        "id": "7b215515-c33c-4846-98c0-b1d5406e01d5",
+        "kind": "periodic_summary",
+        "status": "cancelled",
+        "version": 203,
+        "created_at": "2026-09-13T01:00:09.74972+00:00",
+        "pagestored": false,
+        "completed_at": "2026-09-13T01:52:14.327275+00:00",
+        "error_message": "EBAY_CASE_DISPUTE_CREDENTIAL_ROTATED_RECOLLECT"
+      },
+      {
+        "id": "ee90cc25-7136-4bc4-81ba-8efe5e754099",
+        "kind": "periodic_summary",
+        "status": "cancelled",
+        "version": 203,
+        "created_at": "2026-09-13T00:00:10.160706+00:00",
+        "pagestored": false,
+        "completed_at": "2026-09-13T01:52:14.481642+00:00",
+        "error_message": "EBAY_CASE_DISPUTE_CREDENTIAL_ROTATED_RECOLLECT"
+      },
+      {
+        "id": "0cf77db4-105c-4cfe-83fc-30ace51f9e14",
+        "kind": "periodic_summary",
+        "status": "cancelled",
+        "version": 203,
+        "created_at": "2026-09-12T23:10:01.220054+00:00",
+        "pagestored": false,
+        "completed_at": "2026-09-13T01:52:14.454856+00:00",
+        "error_message": "EBAY_CASE_DISPUTE_CREDENTIAL_ROTATED_RECOLLECT"
+      },
+      {
+        "id": "afd8ceed-e541-45ea-b5fb-fa780ab235c6",
+        "kind": "initial_backfill",
+        "status": "cancelled",
+        "version": 203,
+        "created_at": "2026-09-12T23:10:01.220054+00:00",
+        "pagestored": false,
+        "completed_at": "2026-09-13T01:52:14.425658+00:00",
+        "error_message": "EBAY_CASE_DISPUTE_CREDENTIAL_ROTATED_RECOLLECT"
+      },
+      {
+        "id": "63144fe7-d141-4bb5-8ecf-e98a360b5a73",
+        "kind": "initial_backfill",
+        "status": "failed",
+        "version": 202,
+        "created_at": "2026-09-12T22:50:04.76108+00:00",
+        "pagestored": false,
+        "completed_at": "2026-09-13T00:56:24.630822+00:00",
+        "error_message": "Channel worker lease expired four times."
+      },
+      {
+        "id": "3bffd56f-4934-4cc9-ae8c-3f57e43a6859",
+        "kind": "initial_backfill",
+        "status": "succeeded",
+        "version": 201,
+        "created_at": "2026-09-12T22:49:53.351254+00:00",
+        "pagestored": true,
+        "completed_at": "2026-09-12T22:50:04.76108+00:00",
+        "error_message": null
+      },
+      {
+        "id": "00c18741-cc09-4ffa-aea3-9894b0437e1d",
+        "kind": "initial_backfill",
+        "status": "succeeded",
+        "version": 201,
+        "created_at": "2026-09-12T22:49:36.741682+00:00",
+        "pagestored": true,
+        "completed_at": "2026-09-12T22:49:53.351254+00:00",
+        "error_message": null
+      },
+      {
+        "id": "3cc02200-a91d-4414-aa27-1241b95986cf",
+        "kind": "initial_backfill",
+        "status": "succeeded",
+        "version": 201,
+        "created_at": "2026-09-12T22:49:20.986422+00:00",
+        "pagestored": true,
+        "completed_at": "2026-09-12T22:49:36.741682+00:00",
+        "error_message": null
+      },
+      {
+        "id": "dae2b24c-9d4b-4824-b03d-c944596c757e",
+        "kind": "initial_backfill",
+        "status": "succeeded",
+        "version": 201,
+        "created_at": "2026-09-12T22:49:04.894336+00:00",
+        "pagestored": true,
+        "completed_at": "2026-09-12T22:49:20.986422+00:00",
+        "error_message": null
+      }
+    ],
+    "blocking": 0,
+    "checkedAt": "2026-09-13T02:07:57.123083+00:00",
+    "retirementAuditCount": 4
+  },
+  "internalScheduleRecovery": {
+    "current": [
+      {
+        "route": "channel_sync",
+        "outcome": "queued",
+        "requestId": 1493,
+        "requestedAt": "2026-09-13T02:07:23.219169+00:00"
+      },
+      {
+        "route": "kakao_notifications",
+        "outcome": "queued",
+        "requestId": 1489,
+        "requestedAt": "2026-09-13T02:04:00.132122+00:00"
+      }
+    ],
+    "archives": [
+      {
+        "route": "channel_sync",
+        "reason": "pg_net_request_id_reused",
+        "requestId": 1493,
+        "oldOutcome": "transient_failure"
+      }
+    ],
+    "checkedAt": "2026-09-13T02:07:56.731744+00:00",
+    "recentHttp": [
+      {
+        "created": "2026-09-13T02:04:00.133361+00:00",
+        "timedOut": false,
+        "requestId": 1489,
+        "httpStatus": 200
+      },
+      {
+        "created": "2026-09-13T02:05:00.336431+00:00",
+        "timedOut": false,
+        "requestId": 1491,
+        "httpStatus": 200
+      },
+      {
+        "created": "2026-09-13T02:07:23.222956+00:00",
+        "timedOut": false,
+        "requestId": 1493,
+        "httpStatus": 200
+      }
+    ]
+  },
+  "remaining": [
+    "eBay Commerce Message authorization approval pending (HTTP 403 confirmed before approval)",
+    "Lazada supplemental country and permission bindings missing",
+    "eBay new case/dispute roots are queued; current-generation provider/page persistence not yet verified",
+    "71 static missing RPCs and 42 unresolved dynamic call sites; full registration/reply/shipping readiness remains unverified"
+  ]
 }

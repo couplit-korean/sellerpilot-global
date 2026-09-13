@@ -230,3 +230,38 @@ test("CONT-07 writer rejects caller-forged identity and ACLs separate service wr
     await db.close();
   }
 });
+
+test('verified provider-empty 500 is stored and rendered as empty; unsafe 500 shapes remain rejected', async () => {
+  const db=await createFixture();
+  const originalFetch=globalThis.fetch;
+  try {
+    globalThis.fetch=async()=>new Response('<ns2:productQnas xmlns:ns2="urn:elevenst"><result_code>500</result_code><result_message>검색된 대상이 없습니다.</result_message></ns2:productQnas>',{status:200});
+    const identity=await serviceIdentity(db,credentialA);
+    await assert.rejects(writeActualProviderObservation(db,credentialA,identity,'product_qna','2026-09-13T01:00:00.000Z'),/ELEVENST_READ_OBSERVATION_INVALID/);
+    const emptySql=await readFile(new URL('../supabase/migrations/20260913015651_cs_elevenst_verified_empty_observation.sql',import.meta.url),'utf8');
+    await db.exec(emptySql);
+    const receipt=await writeActualProviderObservation(db,credentialA,identity,'product_qna','2026-09-13T01:00:00.000Z');
+    assert.equal(receipt.accepted,true);
+    installAuthenticatedRpc(db);
+    const state=await fetchElevenstReadState(input=>GET(new Request('https://sellerpilot.test'+input)),credentialA);
+    assert.equal(state.productQna.providerState,'empty');
+    assert.equal(state.productQna.emptyConfirmed,true);
+    assert.equal(state.productQna.remoteCount,0);
+    assert.equal(state.productQna.replyEnabled,false);
+    assert.ok(renderToStaticMarkup(createElement(ElevenstReadStateSummary,{state})).length>0);
+    const latest=(await db.query("select result_code,accepted,provider_rows from sellerpilot_private.elevenst_cs_read_observations where credential_id=$1 order by checked_at desc limit 1",[credentialA])).rows[0];
+    assert.deepEqual(latest,{result_code:'500',accepted:true,provider_rows:0});
+    const base={surface:'product_qna',sellerId:identity.sellerId,sellerName:identity.sellerName,
+      scopeStart:'20260903',scopeEnd:'20260909',statusFilter:'00',checkedAt:'2026-09-13T01:00:01.000Z',
+      httpStatus:200,accepted:true,resultCode:'500',providerRows:0,parserMarker:'sellerpilot-elevenst-product-qna-parser/1',
+      parseIncomplete:false,evidenceSha256:'d'.repeat(64)};
+    await db.exec('set role service_role');
+    try {
+      for(const invalid of [{providerRows:1},{parserMarker:null},{parseIncomplete:true},{httpStatus:503},{resultCode:'501'}]) {
+        await assert.rejects(db.query("select public.sellerpilot_service_record_elevenst_cs_read_v1($1,$2::jsonb,'[]'::jsonb)",[credentialA,JSON.stringify({...base,...invalid})]),/ELEVENST_READ_OBSERVATION_INVALID/);
+      }
+    }finally{await db.exec('reset role');}
+    const acl=(await db.query("select has_function_privilege('anon','public.sellerpilot_service_record_elevenst_cs_read_v1(uuid,jsonb,jsonb)','execute') anon,has_function_privilege('authenticated','public.sellerpilot_service_record_elevenst_cs_read_v1(uuid,jsonb,jsonb)','execute') authenticated,has_function_privilege('service_role','public.sellerpilot_service_record_elevenst_cs_read_v1(uuid,jsonb,jsonb)','execute') service")).rows[0];
+    assert.deepEqual(acl,{anon:false,authenticated:false,service:true});
+  }finally{globalThis.fetch=originalFetch;delete globalThis.__elevenstAuthenticateAdmin;await db.close();}
+});
