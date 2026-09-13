@@ -604,7 +604,15 @@ export function upsertMarketplaceDetailImages(value: unknown, urls: string[], al
     .trimEnd();
   return injectMarketplaceDetailImages(source, urls, altTexts, roles);
 }
-export function buildCoupangMarketplaceContents(currentContentsValue: unknown, localizedSectionsValue: unknown, classificationValue: unknown, detailUrls: string[], detailRoles: string[]) {
+export function buildCoupangMarketplaceContents(currentContentsValue: unknown, localizedSectionsValue: unknown, classificationValue: unknown, detailUrls: string[], detailRoles: string[], approvedStudioDetailHtml?: string) {
+  if (approvedStudioDetailHtml?.trim()) {
+    // The manifest binder supplies this from the saved, approved server document.
+    // Generated section copy must not resurrect facts the merchant corrected.
+    return [{ contentsType: "TEXT", contentDetails: [{
+      content: upsertMarketplaceDetailImages(approvedStudioDetailHtml, detailUrls, [], detailRoles),
+      detailType: "TEXT",
+    }] }];
+  }
   const currentContents = Array.isArray(currentContentsValue) ? currentContentsValue : [];
   const classification = record(classificationValue);
   const localizedSections = Array.isArray(localizedSectionsValue)
@@ -856,7 +864,8 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
           imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
           vendorPath: url,
         }));
-        item.contents = buildCoupangMarketplaceContents(item.contents, localizedSections, classification, details, detailImageRoles);
+        item.contents = buildCoupangMarketplaceContents(item.contents, localizedSections, classification, details, detailImageRoles,
+          typeof assets?.approvedStudioDetailHtml === "string" ? assets.approvedStudioDetailHtml : undefined);
         count += combined.length;
         continue;
       }

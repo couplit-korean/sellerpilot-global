@@ -76,6 +76,31 @@ test("detail-page document accepts exactly eight distinct detail-role references
   assert.equal(inspected.images.length, 8);
 });
 
+test("approved Studio copy comes from the saved document and replaces forged client copy", () => {
+  const context = approvedContext();
+  Object.assign(context.detailPage.data.content[1]!.props, {
+    title: "제조원과 원재료명",
+    body: "제조원: 대경사과원예농협음료가공공장(F3). 원재료명: 정제수, 탄산가스.",
+  });
+  const approved = approvedProductDetailManifestFromPublishContext(context);
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  const input = { sellerpilotAssets: {
+    approvedStudioDetailHtml: "FORGED_CLIENT_COPY",
+    localizedDetailSections: defaultProductDetailImageRoles.map(imageAsset => ({ imageAsset })),
+  } };
+  const urls = defaultProductDetailImageRoles.map(role => `https://storage.example/${role}.png`);
+  const bound = bindMarketplaceArgumentsToApprovedDetailManifest(input, approved.value, urls);
+  const html = String((bound.sellerpilotAssets as Record<string, unknown>).approvedStudioDetailHtml);
+  assert.match(html, /대경사과원예농협음료가공공장/);
+  assert.doesNotMatch(html, /FORGED_CLIENT_COPY/);
+  assert.equal((html.match(/\{\{SELLERPILOT_IMAGE:/g) ?? []).length, 8);
+  const legacy = { version: approved.value.version, manifest: approved.value.manifest };
+  const withoutApprovedCopy = bindMarketplaceArgumentsToApprovedDetailManifest(input, legacy, urls);
+  assert.equal(Object.hasOwn(withoutApprovedCopy.sellerpilotAssets as object, "approvedStudioDetailHtml"), false);
+  assert.equal(input.sellerpilotAssets.approvedStudioDetailHtml, "FORGED_CLIENT_COPY");
+});
+
 test("detail-page document rejects 7, 9, duplicate, external, hero and inaccessible-alt image blocks", () => {
   const valid = exactEightDocument();
   const seven = { ...valid, content: valid.content.slice(0, -1) };

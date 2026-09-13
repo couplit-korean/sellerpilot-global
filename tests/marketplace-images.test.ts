@@ -667,6 +667,24 @@ test("Coupang content preserves manual text and carries classification, question
   assert.equal(images.filter((url) => serialized.includes(url)).length, 8);
 });
 
+test("Coupang approved saved copy replaces stale generated facts while retaining all eight images", () => {
+  const roles = Array.from({ length: 8 }, (_, index) => `detail-role-${index}`);
+  const images = roles.map((_, index) => `https://cdn.example.com/detail-${index}.jpg`);
+  const sections = roles.map(imageAsset => ({ imageAsset, heading: "OLD_MANUFACTURER", body: "INGREDIENTS_UNREADABLE" }));
+  const approvedHtml = `<section><h2>제조원과 원재료명</h2><p>대경사과원예농협음료가공공장(F3). 정제수, 탄산가스.</p>${roles.map(role => `{{SELLERPILOT_IMAGE:${role}}}`).join("")}</section>`;
+  const contents = buildCoupangMarketplaceContents(
+    [{ contentsType: "TEXT", contentDetails: [{ content: "UNSAVED_CLIENT_TEXT", detailType: "TEXT" }] }],
+    sections, { displayName: "탄산음료", evidence: "OLD_CLASSIFICATION_EVIDENCE" }, images, roles, approvedHtml,
+  );
+  const serialized = JSON.stringify(contents);
+  assert.match(serialized, /대경사과원예농협음료가공공장/);
+  assert.doesNotMatch(serialized, /OLD_MANUFACTURER|INGREDIENTS_UNREADABLE|UNSAVED_CLIENT_TEXT|OLD_CLASSIFICATION_EVIDENCE|SELLERPILOT_IMAGE/);
+  for (const url of images) assert.equal(serialized.split(url).length - 1, 1);
+  // Missing approval continues to preserve generated verification information.
+  const legacy = JSON.stringify(buildCoupangMarketplaceContents([], sections, {}, images, roles));
+  assert.match(legacy, /OLD_MANUFACTURER/);
+});
+
 test("gallery normalization is square while detail normalization preserves the source ratio", async () => {
   const source = await sharp({
     create: {

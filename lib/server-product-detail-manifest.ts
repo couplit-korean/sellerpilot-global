@@ -13,9 +13,12 @@ import {
 } from "./product-detail-image-manifest";
 import { validateStoredProductGeneratedAssetPaths } from "./studio-result-assets";
 import { inspectStudioResultQuality } from "./studio-result-quality";
+import { productDetailDataToHtml } from "./product-detail-html";
+import type { ProductDetailData } from "../app/product-detail-puck";
 
 export type ApprovedProductDetailManifest = {
   external?: ExternalDetailChannelSelection;
+  studioDetailHtml?: string;
   version: number;
   manifest: ProductDetailImageManifest;
 };
@@ -111,6 +114,7 @@ export function approvedProductDetailManifestFromPublishContext(
     ok: true,
     value: {
       version,
+      studioDetailHtml: productDetailDataToHtml(detailPage?.data as ProductDetailData, "ko-KR"),
       manifest: {
         contract: productDetailImageManifestContract,
         algorithm: "sha256",
@@ -147,6 +151,8 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
   const next = (approved.external ? sourceArguments : stripClientImageTokens(structuredClone(sourceArguments))) as Record<string, unknown>;
   const assets = recordValue(next.sellerpilotAssets);
   if (!assets) throw new Error("DETAIL_PAGE_MARKETPLACE_ASSETS_REQUIRED");
+  // Only the server's approved document may authorize replacing generated copy.
+  delete assets.approvedStudioDetailHtml;
 
   const rawSections = Array.isArray(assets.localizedDetailSections)
     ? assets.localizedDetailSections.map(recordValue)
@@ -203,6 +209,9 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
     approvedDetailImageSha256s: approved.manifest.images.map((entry) => entry.sourceSha256),
     detailImageAltTexts: altTexts,
     localizedDetailSections: sections,
+    ...(!approved.external && approved.studioDetailHtml?.trim()
+      ? { approvedStudioDetailHtml: approved.studioDetailHtml }
+      : {}),
     approvedDetailPageVersion: approved.version,
     detailImageManifestDigest: approved.manifest.digest,
   };
