@@ -356,8 +356,18 @@ const credentialBindingSchema = z.object({
   appFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
   tokenFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
   targetFingerprints: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).min(1).max(100),
+  sellerAccountKey: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   country: z.string().regex(/^[A-Z0-9_-]{1,40}$/u),
-}).strict();
+}).strict().superRefine((binding, context) => {
+  if (binding.channel === "temu") {
+    if (!binding.sellerAccountKey || binding.targetFingerprints.length !== 1
+        || binding.targetFingerprints[0] !== binding.sellerAccountKey) {
+      context.addIssue({ code: "custom", path: ["sellerAccountKey"], message: "Temu binding requires one matching verified seller target" });
+    }
+  } else if (binding.sellerAccountKey !== undefined) {
+    context.addIssue({ code: "custom", path: ["sellerAccountKey"], message: "explicit seller binding is only supported for Temu" });
+  }
+});
 
 const localCsRefreshTargetSchema = z.object({
   channel: z.literal("shopee"), targetType: z.enum(["shop", "merchant"]),

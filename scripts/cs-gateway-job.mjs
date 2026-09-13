@@ -78,7 +78,14 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     // read must run on the allowlisted Mac lane: the Temu app only accepts the
     // registered egress IP, so the Vercel lane cannot serve it at all.
     const result = await executeProvider({ job, signal, hooks: { assertLeaseHealthy, beginProviderMutation, beginCredentialMutation, stageCredentialRefresh, reserveProviderRequest } });
-    const credentialBinding = result.ok ? csCredentialBindingEvidence({ channel: job.channel, operation: job.operation, credential: credentialRefresh?.payload ?? job.credential, request: job.request }) : null;
+    const credentialBinding = result.ok ? csCredentialBindingEvidence({
+      channel: job.channel,
+      operation: job.operation,
+      credential: credentialRefresh?.payload ?? job.credential,
+      request: job.request,
+      providerResult: result,
+      credentialBindingContext: job.credential_binding_context ?? null,
+    }) : null;
     const status = csCompletionStatus(result);
     const completion = status !== "failed"
       ? { jobId: job.id, claimToken, status, ...(status === "reconciliation_required" ? { error: result.safeMessage } : {}), result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) }
