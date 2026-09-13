@@ -1,0 +1,575 @@
+{
+  "observedAt": "2026-09-13T07:44:46.288877+00:00",
+  "productionRelease": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+  "deploymentId": "dpl_8FNnfFXHBU9n1eegYiRU3ztVMPix",
+  "productionUrl": "https://sellerpilot-global.vercel.app",
+  "supabaseProject": "sqaoqucxakebqkiygdxb",
+  "rpcInventory": {
+    "sourceFileCount": 765,
+    "callCount": 664,
+    "resolvedFunctionCount": 381,
+    "missingResolvedFunctions": [],
+    "dynamicSites": [
+      {
+        "file": "app/api/admin/channel-operations/route.ts",
+        "line": 2153,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/channel-operations/route.ts",
+        "line": 2639,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/channels/ebay/cases-disputes/history/sync/route.ts",
+        "line": 79,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+        "line": 38,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/lazada-raw-inbox/reprocess/route.ts",
+        "line": 20,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/serverless-runtime-release/route.ts",
+        "line": 81,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/serverless-runtime-release/route.ts",
+        "line": 91,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/claim/route.ts",
+        "line": 184,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/lazada-recovery/route.ts",
+        "line": 63,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/shopee-create-stage/route.ts",
+        "line": 116,
+        "argument": "rpc"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/smartstore-create-complete/route.ts",
+        "line": 61,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/integrations/kakao/callback/route.ts",
+        "line": 44,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/integrations/kakao/settings/route.ts",
+        "line": 44,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/internal/kakao-notifications/route.ts",
+        "line": 71,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/internal/maintenance/route.ts",
+        "line": 511,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/commerce-worker-completion.ts",
+        "line": 326,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/elevenst-create-recovery-drain.ts",
+        "line": 143,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/gateway-completion-runtime.ts",
+        "line": 15,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-cs-gateway.ts",
+        "line": 285,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway-runtime.ts",
+        "line": 38,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 318,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 918,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 1236,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 83,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 274,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 302,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 457,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/schedule.ts",
+        "line": 198,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 113,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 287,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 323,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 482,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-research-runtime.ts",
+        "line": 49,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-research.ts",
+        "line": 1165,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-studio-runtime.ts",
+        "line": 88,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-studio.ts",
+        "line": 1584,
+        "argument": "name"
+      },
+      {
+        "file": "lib/serverless-runtime-release.ts",
+        "line": 75,
+        "argument": "name"
+      },
+      {
+        "file": "lib/shipping/worker-completion.ts",
+        "line": 27,
+        "argument": "name"
+      }
+    ],
+    "namePresenceIsExecutionProof": false
+  },
+  "database": [
+    {
+      "jsonb_build_object": {
+        "blocked": 0,
+        "runtime": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+        "activity": [
+          {
+            "count": 1,
+            "state": "active",
+            "wait_event_type": null
+          },
+          {
+            "count": 19,
+            "state": "idle",
+            "wait_event_type": "Client"
+          },
+          {
+            "count": 1,
+            "state": "idle",
+            "wait_event_type": "Extension"
+          },
+          {
+            "count": 1,
+            "state": null,
+            "wait_event_type": "Extension"
+          }
+        ],
+        "csCounts": [
+          {
+            "count": 13,
+            "channel_key": "lazada",
+            "sender_role": "system"
+          },
+          {
+            "count": 11,
+            "channel_key": "ebay",
+            "sender_role": "system"
+          }
+        ],
+        "database": {
+          "backends": 22,
+          "deadlocks": 0,
+          "statsReset": null,
+          "temporaryBytes": 3014656
+        },
+        "oldTransactions": 0
+      }
+    }
+  ],
+  "gateway": {
+    "status": "ready",
+    "mode": "gateway-only",
+    "version": "sellerpilot-cli-worker/1.61+191e5cc02789d4b1dfdbedb0ae0ad08db07fa510.92b235ca02d",
+    "runtimeAttestation": {
+      "releaseSha": "191e5cc02789d4b1dfdbedb0ae0ad08db07fa510",
+      "egressIpSha256": "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01"
+    },
+    "uptimeSeconds": 15,
+    "ready": true,
+    "configuredScopes": {
+      "gateway": true,
+      "scheduler": false
+    },
+    "capabilities": {
+      "gatewayQueue": true,
+      "periodicChannelSync": false
+    },
+    "activeGatewayJobs": 0,
+    "lastLoopAt": "2026-09-13T07:42:51.481Z",
+    "lastGatewayContactAt": "2026-09-13T07:42:53.725Z",
+    "lastGatewayStatus": 200,
+    "lastGatewayErrorAt": null
+  },
+  "csLedger": [
+    {
+      "jsonb_build_object": {
+        "tables": [
+          "lazada_create_raw_receipts_r7",
+          "lazada_im_raw_inbox",
+          "lazada_im_raw_outcomes"
+        ],
+        "children": [
+          {
+            "id": "3ea61c22-20c8-4cd1-8705-6a476eef8cf7",
+            "error": null,
+            "parent": null,
+            "status": "succeeded",
+            "receipt": true
+          },
+          {
+            "id": "2d0e4c7f-dfff-40f7-a7c2-1f8049600e23",
+            "error": null,
+            "parent": "3ea61c22-20c8-4cd1-8705-6a476eef8cf7",
+            "status": "succeeded",
+            "receipt": true
+          }
+        ],
+        "messages": [
+          {
+            "count": 11,
+            "channel_key": "ebay",
+            "sender_role": "system"
+          },
+          {
+            "count": 13,
+            "channel_key": "lazada",
+            "sender_role": "system"
+          }
+        ]
+      }
+    }
+  ],
+  "executionRoutes": [
+    {
+      "channel": "coupang",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "coupang",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "coupang",
+      "operation": "listing.create",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "coupang",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "ebay",
+      "operation": "listing.create",
+      "credential_status": "revoked",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "elevenst",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "elevenst",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "elevenst",
+      "operation": "listing.create",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "elevenst",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "lazada",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "lazada",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "lazada",
+      "operation": "listing.create",
+      "credential_status": "revoked",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "lazada",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "qoo10",
+      "operation": "listing.create",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "qoo10",
+      "operation": "listing.update",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "shopee",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "shopee",
+      "operation": "diagnostic.test",
+      "credential_status": "revoked",
+      "routes": 3,
+      "current_release": false
+    },
+    {
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "shopee",
+      "operation": "listing.create",
+      "credential_status": "revoked",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "shopee",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "smartstore",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "smartstore",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "smartstore",
+      "operation": "listing.create",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "smartstore",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "temu",
+      "operation": "diagnostic.test",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "temu",
+      "operation": "inquiries.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "temu",
+      "operation": "listing.create",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    },
+    {
+      "channel": "temu",
+      "operation": "orders.list",
+      "credential_status": "active",
+      "routes": 1,
+      "current_release": false
+    }
+  ],
+  "businessTargets": [
+    {
+      "jsonb_build_object": {
+        "orders": [
+          {
+            "count": 1,
+            "status": "cancelled",
+            "channel_key": "coupang"
+          }
+        ],
+        "listings": [
+          {
+            "count": 1,
+            "status": "published",
+            "channel_key": "coupang",
+            "remote_bound": 1
+          },
+          {
+            "count": 1,
+            "status": "failed",
+            "channel_key": "elevenst",
+            "remote_bound": 1
+          },
+          {
+            "count": 1,
+            "status": "failed",
+            "channel_key": "qoo10",
+            "remote_bound": 1
+          },
+          {
+            "count": 1,
+            "status": "failed",
+            "channel_key": "shopee",
+            "remote_bound": 0
+          },
+          {
+            "count": 1,
+            "status": "failed",
+            "channel_key": "smartstore",
+            "remote_bound": 0
+          }
+        ],
+        "shopee_session": {
+          "id": "ae897f66-ef3c-45b9-b44d-d335296541fc",
+          "jobId": null,
+          "expired": true,
+          "delivered": false
+        },
+        "customer_messages": null
+      }
+    }
+  ],
+  "limits": [
+    "No new marketplace publication, customer reply or shipment was executed in this checkpoint.",
+    "Lazada IM permission verified for MY only.",
+    "Shopee main login reached phone OTP; no OAuth exchange job was bound.",
+    "eBay direct provider normalization passed 21 system notifications; persisted count is the lower live ledger count shown above.",
+    "Dynamic call sites remain separate from resolved RPC name existence."
+  ]
+}
