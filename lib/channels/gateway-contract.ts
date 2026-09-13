@@ -1,6 +1,7 @@
 import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 export { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 import { z } from "zod";
+import { validLazadaInquiryContinuation } from "./lazada-history-continuation";
 import { temuBuyerChatRuntimeEvidenceSchema } from "./cs/temu/runtime-readiness";
 import { ebayPublicationReconciliationBindingSchema } from "./ebay-publication-reconciliation-contract";
 import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
@@ -316,6 +317,8 @@ const operationResultSchema = z.object({
         ? validShopeeInquiryContinuation(next)
         : value.channel === "lazada" && value.operation === "orders.list"
           ? nonNegativeInteger(queryParams.offset)
+          : value.channel === "lazada" && value.operation === "inquiries.list"
+            ? validLazadaInquiryContinuation(next)
           : value.channel === "coupang" && value.operation === "orders.list"
             ? nonEmpty(query.nextToken)
             : value.channel === "coupang" && value.operation === "inquiries.list"

@@ -25,3 +25,9 @@ The 5c1eaf1 candidate built successfully but was not promoted: runtime logs expo
 The Lazada IM credential successor left the existing Mac read routes pointing at the revoked predecessor. A reviewed rollback and exact successor operation transferred only three existing read routes (inquiries, orders, diagnostic) after verifying the successful IM diagnostic receipt, same certified seller and same credential owner. All write routes remained untouched. Bootstrap admission is now true; processing is queued behind a Mac completion retry.
 
 Latest stored reads: SmartStore product and customer inquiries, 11st Q&A and urgent notices, and the first Shopee shop completed with receipts. A later Shopee shop still has an uncertain refresh and has not been counted as a full multi-shop success.
+
+## 06:56 UTC live Temu result and Lazada continuation repair
+
+Release 390e93dd57791ecd2aa749ca7637d89e9820387f passed Vercel build/canary, was promoted, and is active in Supabase plus both Mac runtimes. Temu job 3357798f-d694-4c98-b988-5f7ccd4f975a succeeded with a completion receipt at 06:52:48 UTC after actual provider identity/after-sales reads. A subsequent periodic read was queued normally. eBay DB now stores the second system notice, including the absent recipient, with its real body preserved.
+
+Lazada bootstrap reached the provider but its HTTP completion was rejected (400): the completion schema had no Lazada inquiries continuation branch, although the provider reader emits durable session/message continuations. Added pure bounded validation for both cursor forms, explicit bootstrap, session count and paired IDs/timestamps; foreign/orphan/forward cursors are rejected. Regression failed before, 35 focused tests and TypeScript passed after. The actual first-page read-only probe passes the HTTP schema; it does not store a completion or reset the consumed bootstrap. Deploy this forward change and resume the existing lineage.

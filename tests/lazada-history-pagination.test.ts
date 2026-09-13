@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { executeLazadaInquiry } from "../lib/channels/lazada-inquiries";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { gatewayWorkerCompletionSchema } from "../lib/channels/gateway-contract";
+function assertHttpCompletion(result: unknown) {
+ return gatewayWorkerCompletionSchema.parse({ jobId:"11111111-1111-4111-8111-111111111111", claimToken:"22222222-2222-4222-8222-222222222222", status:"succeeded", result });
+}
 
 const payload = {
   app_key: "fixture-key", app_secret: "fixture-secret", access_token: "fixture-token", country: "my",
@@ -30,6 +34,14 @@ test("Lazada session remainder becomes a durable continuation after the current 
     : ({ message_list: [message], has_more: false }), async calls => {
     const result = await executeChannelOperation({ channel: "lazada", operation: "inquiries.list", payload, arguments: args, environment: "production" });
     assert.equal(result.ok, true);
+    assertHttpCompletion(result);
+    for (const changes of [
+      { bootstrap: false }, { sellerpilotLazadaSessionCount: 101 },
+      { sellerpilotLazadaLastSessionId: "" }, { sellerpilotLazadaSessionStartTime: "4000" },
+      { sellerpilotLazadaMessageStartTime: "1000", sellerpilotLazadaLastMessageId: "orphan-message" },
+    ]) assert.throws(() => assertHttpCompletion({ ...result, continuation: {
+      ...result.continuation, arguments: { ...result.continuation?.arguments, ...changes },
+    } }), /invalid provider pagination continuation/);
     assert.equal(calls.length, 2);
     assert.equal(result.continuation?.arguments.sellerpilotLazadaSessionStartTime, "2000");
     assert.equal(result.continuation?.arguments.sellerpilotLazadaLastSessionId, "s1");
@@ -93,6 +105,13 @@ test("Lazada completes every message page in the current session before enforcin
     assert.equal(first.ok, true);
     assert.equal(first.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
     assert.equal(first.continuation?.arguments.sellerpilotLazadaSession?.session_id, "s1");
+    assertHttpCompletion(first);
+    for (const changes of [
+      { sellerpilotLazadaSession: {} }, { sellerpilotLazadaMessageStartTime: "4000" },
+      { sellerpilotLazadaLastMessageId: "" }, { sellerpilotLazadaNextSessionCursor: { nextStart: "2000" } },
+    ]) assert.throws(() => assertHttpCompletion({ ...first, continuation: {
+      ...first.continuation, arguments: { ...first.continuation?.arguments, ...changes },
+    } }), /invalid provider pagination continuation/);
 
     const second = await executeChannelOperation({
       channel: "lazada", operation: "inquiries.list", payload,
@@ -101,6 +120,7 @@ test("Lazada completes every message page in the current session before enforcin
     assert.equal(second.ok, true);
     assert.equal(second.continuation?.arguments.sellerpilotLazadaSession, undefined);
     assert.equal(second.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
+    assertHttpCompletion(second);
     assert.equal(calls.filter(url => url.pathname.endsWith("/message/list")).length, 2);
 
     const stopped = await executeChannelOperation({
