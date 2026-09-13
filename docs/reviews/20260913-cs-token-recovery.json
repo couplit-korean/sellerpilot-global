@@ -1,0 +1,229 @@
+{
+  "shopeeRollback": [
+    {
+      "result": {
+        "rollbackOnly": true,
+        "wrongClaimBlocked": true,
+        "staleReleaseBlocked": true,
+        "disabledRouteBlocked": true,
+        "otherOperationBlocked": true,
+        "realTargetLockAcquired": "acquired",
+        "sharedAdminRouteAllowed": true
+      }
+    }
+  ],
+  "shopeeApplied": [
+    {
+      "version": "20260913070000",
+      "name": "local_shopee_cs_target_refresh",
+      "source_sha256": "5bd31f20ab3f498a660d3518455dc4d640ab5dd2d7d928fde24e1b6642e69809"
+    }
+  ],
+  "imRecoveryRollback": [
+    {
+      "result": {
+        "rollbackOnly": true,
+        "sourceStatus": "cancelled",
+        "sameResumeSameJob": true,
+        "wrongClaimBlocked": true,
+        "changedRecoveryBlocked": true,
+        "sourceReceiptPreserved": true,
+        "latestRecoveryTokenOnly": true,
+        "mainCredentialAndIdentityUnchanged": true
+      }
+    }
+  ],
+  "imRecoveryApplied": [
+    {
+      "version": "20260913071000",
+      "name": "lazada_im_recovery_handoff",
+      "source_sha256": "11af339a75cc2bfbb641bdeb4598aa5a42f2a3d343499e94c7c78eb0415f20a0"
+    }
+  ],
+  "ebayRecipientApplied": [
+    {
+      "version": "20260913072000",
+      "name": "ebay_system_optional_recipient",
+      "source_sha256": "75c59f0819f464dccbd520574d80cbe31c411e94f67c2ec397e87e15bb68d521"
+    }
+  ],
+  "ebayFullSystemRead": [
+    {
+      "page": 1,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "page": 2,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 3,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 4,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 5,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 6,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 7,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 8,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 9,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 10,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 11,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "page": 12,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 13,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 14,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 15,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 16,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 17,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 18,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 19,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 20,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "page": 21,
+      "ok": true,
+      "messageCount": 1,
+      "statuses": [
+        200,
+        200
+      ]
+    },
+    {
+      "complete": true,
+      "pages": 21,
+      "messageCount": 21,
+      "checkedAt": "2026-09-13T06:13:59.492Z"
+    }
+  ]
+}

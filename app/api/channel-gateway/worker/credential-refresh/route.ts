@@ -54,13 +54,15 @@ export async function POST(request: Request) {
     global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+  const target = parsed.data.target;
   if (parsed.data.action === "begin") {
     const { data, error } = await serviceClient.rpc(
-      "sellerpilot_service_begin_gateway_credential_refresh",
+      target ? "sellerpilot_service_begin_cs_shopee_target_refresh_v1" : "sellerpilot_service_begin_gateway_credential_refresh",
       {
         p_token_hash: tokenHash,
         p_job_id: parsed.data.jobId,
         p_claim_token: parsed.data.claimToken,
+        ...(target ? { p_target_type: target.targetType, p_target_id: target.targetId } : {}),
       },
     );
     if (error) {
@@ -71,19 +73,25 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
     }
-    if (data !== true) {
+    const acquired = target
+      ? data && typeof data === "object" && !Array.isArray(data)
+        && data.contract === "sellerpilot-shopee-target-refresh-claim/1"
+        && (data.status === "acquired" || data.status === "reused")
+      : data === true;
+    if (!acquired) {
       return NextResponse.json({ message: "실행 중인 채널 작업과 인증 갱신 요청이 일치하지 않습니다." }, { status: 409 });
     }
     return NextResponse.json({ status: "in_flight" });
   }
   const refresh = parsed.data.credentialRefresh;
   const { data, error } = await serviceClient.rpc(
-    "sellerpilot_service_prepare_gateway_credential_refresh",
+    target ? "sellerpilot_service_prepare_cs_shopee_target_refresh_v1" : "sellerpilot_service_prepare_gateway_credential_refresh",
     {
       p_token_hash: tokenHash,
       p_job_id: parsed.data.jobId,
       p_claim_token: parsed.data.claimToken,
-      p_secret_payload: refresh.payload,
+      ...(target ? { p_target_type: target.targetType, p_target_id: target.targetId,
+        p_candidate_payload: refresh.payload } : { p_secret_payload: refresh.payload }),
       p_expires_at: refresh.expiresAt,
       p_recovery_only: refresh.recoveryOnly === true,
       p_oauth_complete: refresh.oauthComplete === true,

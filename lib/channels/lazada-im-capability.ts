@@ -66,13 +66,23 @@ export async function diagnoseLazadaImCapability(input: {
     im_access_token_expires_at: expiry(remote.data.expires_in),
     im_refresh_token_expires_at: expiry(remote.data.refresh_expires_in),
     im_account_platform: remote.data.account_platform,
-    im_country_user_info: remote.data.country_user_info,
+    im_country_user_info: remote.data.country_user_info ?? remote.data.country_user_info_list,
+    im_country_user_info_list: remote.data.country_user_info_list,
     im_identity_source: "lazada.oauth_token",
   };
   const expiresAt = textValue(source, "refresh_token_expires_at") || null;
   await input.stage({ payload: withoutProviderAccountIdentity(next), expiresAt, recoveryOnly: true });
   if (!next.im_access_token_expires_at || !next.im_refresh_token_expires_at) {
     throw new Error("LAZADA_IM_TOKEN_EXPIRY_INVALID");
+  }
+  if (remote.data.country_user_info !== undefined && remote.data.country_user_info_list !== undefined) {
+    const canonical = normalizeLazadaProviderAccountIdentity({ account_platform: remote.data.account_platform,
+      country_user_info: remote.data.country_user_info });
+    const alternate = normalizeLazadaProviderAccountIdentity({ account_platform: remote.data.account_platform,
+      country_user_info: remote.data.country_user_info_list });
+    if (JSON.stringify(canonical.countryUserInfo) !== JSON.stringify(alternate.countryUserInfo)) {
+      throw new Error("LAZADA_IM_IDENTITY_CONFLICT");
+    }
   }
   const binding = lazadaImCredentialBinding(next, country);
   await input.assertLease();

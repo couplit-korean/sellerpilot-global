@@ -17,10 +17,10 @@ const mediaSchema = z.object({
 });
 const messageSchema = z.object({
   messageId: z.string().min(1).max(240), body: z.string().max(200000), subject: z.string().max(2000),
-  senderUsername: z.string().min(1).max(240), recipientUsername: z.string().min(1).max(240),
+  senderUsername: z.string().min(1).max(240), recipientUsername: z.string().min(1).max(240).nullable(),
   createdAt: z.string().datetime({ offset: true }), read: z.boolean(), media: z.array(mediaSchema).max(100),
   role: ebayMessageRoleSchema,
-}).refine(value => value.role === "system" || value.body.length <= 20000, "buyer message too long");
+}).refine(value => value.role === "system" || (value.body.length <= 20000 && value.recipientUsername !== null), "buyer message too long");
 const pagination = {
   total: z.number().int().nonnegative().nullable(), offset: z.number().int().nonnegative(),
   nextOffset: z.number().int().nonnegative().nullable(),

@@ -359,8 +359,14 @@ const credentialBindingSchema = z.object({
   country: z.string().regex(/^[A-Z0-9_-]{1,40}$/u),
 }).strict();
 
+const localCsRefreshTargetSchema = z.object({
+  channel: z.literal("shopee"), targetType: z.enum(["shop", "merchant"]),
+  targetId: z.string().regex(/^[1-9][0-9]{0,31}$/u),
+}).strict();
+
 export const gatewayCredentialRefreshStageSchema = z.object({
   action: z.literal("stage"),
+  target: localCsRefreshTargetSchema.optional(),
   jobId: z.string().uuid(),
   claimToken: z.string().uuid(),
   credentialRefresh: credentialRefreshSchema,
@@ -369,6 +375,7 @@ export const gatewayCredentialRefreshStageSchema = z.object({
 export const gatewayCredentialRefreshLifecycleSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("begin"),
+    target: localCsRefreshTargetSchema.optional(),
     jobId: z.string().uuid(),
     claimToken: z.string().uuid(),
   }),

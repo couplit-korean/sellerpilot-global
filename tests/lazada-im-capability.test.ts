@@ -92,3 +92,18 @@ test("invalid expiry is retained for recovery but not activated", async () => {
   assert.match(String(value.error), /TOKEN_EXPIRY_INVALID/);
   assert.deepEqual(value.events, ["begin", "refresh", "recovery"]);
 });
+
+
+test("refresh country list variant retains the same strict seller proof", async () => {
+  const variant = { ...tokenResponse, country_user_info: undefined, country_user_info_list: tokenResponse.country_user_info };
+  const value = await run(variant as unknown as typeof tokenResponse);
+  assert.equal(value.error, undefined);
+  assert.equal(value.result?.lazadaImCapability.sellerId, "300872000183");
+});
+test("conflicting country response fields remain in recovery and never gain a binding", async () => {
+  const variant = { ...tokenResponse, country_user_info_list: [{ ...commerce.country_user_info[0], seller_id: "99999999" }] };
+  const value = await run(variant);
+  assert.match(String(value.error), /LAZADA_IM_IDENTITY_CONFLICT/);
+  assert.equal(value.stages.length, 1);
+  assert.equal(value.stages[0].recoveryOnly, true);
+});

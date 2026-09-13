@@ -231,3 +231,16 @@ test("conversation replies reject missing scope, controls and unverified provide
     globalThis.fetch = previous;
   }
 });
+
+
+test("system messages can omit recipient while member messages must identify both parties", async () => {
+  const row = { ...rawMessage, recipientUsername: undefined };
+  await mocked({ ...response([row], "messages"), conversationType: "FROM_EBAY" }, async () => {
+    const page = await readEbayConversationMessagesPage({ ...base, type: "FROM_EBAY", conversationId: "system-thread" });
+    assert.equal(page.entries[0].recipientUsername, null);
+    assert.equal(ebayConversationMessageRole(page.entries[0], "FROM_EBAY", ["seller"]), "system");
+  });
+  await mocked(response([row], "messages"), async () => {
+    await assert.rejects(readEbayConversationMessagesPage({ ...base, conversationId: "buyer-thread" }), /INVALID:recipientUsername/);
+  });
+});

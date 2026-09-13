@@ -58,16 +58,16 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     persist: () => persist("/api/channel-gateway/worker/begin-mutation", { jobId: job.id, claimToken }, "CS 외부 호출 경계 저장 실패"),
     onStarted: () => { externalWriteStarted = true; },
   });
-  const beginCredentialMutation = async () => {
+  const beginCredentialMutation = async (target) => {
     await assertLeaseHealthy();
     credentialMutationInFlight = true;
-    await persist("/api/channel-gateway/worker/credential-refresh", { action: "begin", jobId: job.id, claimToken }, "CS 인증 갱신 경계 저장 실패");
+    await persist("/api/channel-gateway/worker/credential-refresh", { action: "begin", jobId: job.id, claimToken, ...(target ? { target } : {}) }, "CS 인증 갱신 경계 저장 실패");
     await assertLeaseHealthy();
   };
   const stageCredentialRefresh = async refresh => {
     credentialRefresh = refresh;
     await assertLeaseHealthy();
-    await persist("/api/channel-gateway/worker/credential-refresh", { action: "stage", jobId: job.id, claimToken, credentialRefresh: refresh }, "CS 인증 갱신 결과 저장 실패");
+    await persist("/api/channel-gateway/worker/credential-refresh", { action: "stage", jobId: job.id, claimToken, credentialRefresh: refresh, ...(refresh.target ? { target: refresh.target } : {}) }, "CS 인증 갱신 결과 저장 실패");
     await assertLeaseHealthy();
     credentialMutationInFlight = false;
   };

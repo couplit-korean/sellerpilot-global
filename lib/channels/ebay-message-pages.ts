@@ -12,7 +12,7 @@ export type EbayConversationMessage = {
   body: string;
   subject: string;
   senderUsername: string;
-  recipientUsername: string;
+  recipientUsername: string | null;
   createdAt: string;
   read: boolean;
   media: EbayMessageMedia[];
@@ -82,7 +82,8 @@ function message(value: unknown, conversationType: EbayConversationType = "FROM_
   return {
     messageId: id(row.messageId, "messageId"), body,
     subject: row.subject === undefined ? "" : string(row.subject, "subject", 2000, true),
-    senderUsername: id(row.senderUsername, "senderUsername"), recipientUsername: id(row.recipientUsername, "recipientUsername"),
+    senderUsername: id(row.senderUsername, "senderUsername"), recipientUsername: conversationType === "FROM_EBAY" && (row.recipientUsername === undefined || row.recipientUsername === null)
+      ? null : id(row.recipientUsername, "recipientUsername"),
     createdAt: timestamp(row.createdDate, "createdDate"), read: row.readStatus, media: attachments,
   };
 }
@@ -263,7 +264,11 @@ export function ebayConversationMessageRole(message: EbayConversationMessage, co
   type(conversationType);
   const self = new Set(verifiedAccountIdentifiers.filter(value => value.trim() === value && value.length > 0));
   const senderIsSelf = self.has(message.senderUsername);
-  const recipientIsSelf = self.has(message.recipientUsername);
+  const recipientIsSelf = message.recipientUsername !== null && self.has(message.recipientUsername);
+  // A validated FROM_EBAY response belongs to this authenticated account even
+  // when eBay omits its recipient. It never becomes a buyer or reply target.
+  if (conversationType === "FROM_EBAY" && message.recipientUsername === null
+      && self.size > 0 && !senderIsSelf) return "system" as const;
   if (senderIsSelf === recipientIsSelf) return "unverified" as const;
   if (conversationType === "FROM_EBAY") return recipientIsSelf ? "system" as const : "unverified" as const;
   return senderIsSelf ? "seller" as const : "customer" as const;
