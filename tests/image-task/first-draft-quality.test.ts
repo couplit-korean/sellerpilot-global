@@ -20,6 +20,7 @@ import {
   firstDraftImageAssetIds,
   firstDraftImageScenePlanSha256,
   firstDraftImageScenePlansMatchStudioResult,
+  firstDraftImageProductFactsSha256,
   validateFirstDraftImageQualityReceipt,
   type FirstDraftImageProductFacts,
 } from "../../lib/first-draft-images";
@@ -150,6 +151,70 @@ test("second-stage reuse requires the same normalized product facts", () => {
     packageContents: "본품 2개",
   }), false);
   assert.equal(firstDraftImageScenePlansMatchStudioResult(productFacts, result), true);
+});
+
+test("reviewed first-draft images allow missing administrative facts without changing their manifest facts", () => {
+  const productFacts = facts("일반식품 / 음료", "나랑드사이다 제로 500 ml");
+  const manualFields = {
+    productName: productFacts.name, categoryHint: productFacts.category,
+    brandName: productFacts.brandName, manufacturer: "동아오츠카(주)",
+    countryOfOrigin: "대한민국", material: productFacts.material,
+    packageContents: "상품 1개", description: productFacts.description,
+  };
+  const factsHash = firstDraftImageProductFactsSha256(productFacts);
+  assert.equal(firstDraftImageFactsMatchStudioRequest(productFacts, manualFields), true);
+  assert.equal(firstDraftImageProductFactsSha256(productFacts), factsHash);
+  for (const field of ["productName", "categoryHint", "brandName", "material", "description"] as const) {
+    assert.equal(firstDraftImageFactsMatchStudioRequest(productFacts, {
+      ...manualFields, [field]: "다른 상품 사실",
+    }), false, field);
+  }
+  assert.equal(firstDraftImageFactsMatchStudioRequest({
+    ...productFacts, manufacturer: "기존 제조사",
+  }, manualFields), false);
+  assert.equal(firstDraftImageFactsMatchStudioRequest({
+    ...productFacts, countryOfOrigin: "다른 원산지",
+  }, manualFields), false);
+});
+
+test("package aliases preserve the same quantity and reject package qualifiers or increased counts", () => {
+  const productFacts = facts("일반식품 / 음료", "나랑드사이다 제로 500 ml");
+  const manualFields = {
+    productName: productFacts.name, categoryHint: productFacts.category,
+    brandName: productFacts.brandName, manufacturer: productFacts.manufacturer,
+    countryOfOrigin: productFacts.countryOfOrigin, material: productFacts.material,
+    packageContents: "상품 1개", description: productFacts.description,
+  };
+  for (const packageContents of ["1병", "본품 1개", "단품", "상품 1개"]) {
+    assert.equal(firstDraftImageFactsMatchStudioRequest({ ...productFacts, packageContents }, manualFields), true, packageContents);
+  }
+  for (const packageContents of ["2병", "6개", "1+1", "500ml 1병", "1병 + 사은품", "레몬맛 1병"]) {
+    assert.equal(firstDraftImageFactsMatchStudioRequest({ ...productFacts, packageContents }, manualFields), false, packageContents);
+  }
+});
+
+test("the seller can confirm one unchanged product when research repeated only its name as package contents", () => {
+  const productFacts = facts("식품 > 음료 > 탄산음료", "나랑드사이다 제로 500 ml");
+  productFacts.packageContents = productFacts.name;
+  const manualFields = {
+    productName: productFacts.name, categoryHint: productFacts.category,
+    brandName: productFacts.brandName, manufacturer: productFacts.manufacturer,
+    countryOfOrigin: productFacts.countryOfOrigin, material: productFacts.material,
+    packageContents: "상품 1개", description: productFacts.description,
+    productFactsConfirmed: true,
+  };
+  const originalHash = firstDraftImageProductFactsSha256(productFacts);
+  assert.equal(firstDraftImageFactsMatchStudioRequest(productFacts, manualFields), true);
+  assert.equal(firstDraftImageProductFactsSha256(productFacts), originalHash);
+  assert.equal(firstDraftImageFactsMatchStudioRequest(productFacts, { ...manualFields, productFactsConfirmed: false }), false);
+  for (const packageContents of ["상품 1+1", "상품 6개"]) {
+    assert.equal(firstDraftImageFactsMatchStudioRequest(productFacts, { ...manualFields, packageContents }), false);
+  }
+  for (const name of ["나랑드사이다 6병", "나랑드사이다 1+1", "나랑드사이다 세트", "나랑드사이다 multipack"]) {
+    assert.equal(firstDraftImageFactsMatchStudioRequest({ ...productFacts, name, packageContents: name }, {
+      ...manualFields, productName: name,
+    }), false, name);
+  }
 });
 
 test("the installed worker connects first draft to the final source-composite batch and defers upload until approval", async () => {

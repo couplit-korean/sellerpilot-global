@@ -1,7 +1,8 @@
+import { adoptGeneratedImageFromInvocation } from "./image-generation-artifact.mjs";
 import { runLocalProductResearchOnce } from "./local-product-research-lane.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -554,6 +555,9 @@ async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage
                 stdio: ["ignore", "pipe", "pipe"],
             });
             let stdout = Buffer.alloc(0);
+            let jsonPrefix = "";
+            let jsonReceipt = "";
+            let stdoutTruncated = false;
             let stderr = Buffer.alloc(0);
             let heartbeatError = null;
             let heartbeatPromise = null;
@@ -630,7 +634,16 @@ async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage
                     });
                 }, AI_HEARTBEAT_INTERVAL_MS);
             }
-            child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
+            child.stdout.on("data", (chunk) => {
+                if (args.includes("--json") && !jsonReceipt && jsonPrefix.length < 65536) {
+                    jsonPrefix += chunk.toString("utf8").slice(0, 65536 - jsonPrefix.length);
+                    for (const line of jsonPrefix.split("\n").slice(0, -1)) {
+                        try { if (JSON.parse(line)?.type === "thread.started") { jsonReceipt = line; break; } } catch { /* incomplete line */ }
+                    }
+                }
+                stdoutTruncated ||= stdout.length + chunk.length > codexOutputLimitBytes;
+                stdout = appendBoundedOutput(stdout, chunk);
+            });
             child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
             child.once("error", (error) => {
                 if (!child.pid)
@@ -644,7 +657,10 @@ async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage
                 heartbeatTimer = null;
                 if (heartbeatPromise)
                     await heartbeatPromise;
-                const stdoutText = stdout.toString("utf8");
+                const stdoutTail = stdout.toString("utf8");
+                const stdoutText = args.includes("--json") && stdoutTruncated
+                    ? `${jsonReceipt}\n${stdoutTail.slice(stdoutTail.indexOf("\n") + 1)}`
+                    : stdoutTail;
                 const stderrText = stderr.toString("utf8");
                 if (heartbeatError)
                     finish(heartbeatError);
@@ -2288,6 +2304,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                 "exec",
                 "--model", model,
                 "--enable", "image_generation",
+                "--json",
                 "--sandbox", codexSandboxMode,
                 "--skip-git-repo-check",
                 "--ephemeral",
@@ -2295,8 +2312,10 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                 ...(!backgroundOnly ? referenceIndexes.map((index) => `--image=${imageFiles[index].file}`) : []),
                 assetPrompt,
             ];
+            const imageStartedAt = Date.now();
+            let imageInvocation = null;
             try {
-                await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, {
+                imageInvocation = await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, {
                     leaseSignal,
                     stage: `image:${preset.id}`,
                 });
@@ -2311,6 +2330,24 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
                 noveltyGuidance = `Image generation timeout retry ${attempt}: the prior invocation produced no accepted image. Generate the same trusted role from a fresh composition and follow the deterministic retry contract; do not infer any visual property from the timed-out invocation.`;
                 continue;
             }
+            const imageFinishedAt = Date.now();
+            const diagnosticsDir = join(homedir(), "Library", "Logs", "SellerPilot", "image-generation");
+            await mkdir(diagnosticsDir, { recursive: true, mode: 0o700 });
+            const diagnosticPath = join(diagnosticsDir, `${imageStartedAt}-${preset.id}-${randomUUID()}.json`);
+            await writeFile(diagnosticPath, JSON.stringify({
+                stage: preset.id, attempt, outputFile, startedAt: imageStartedAt, finishedAt: imageFinishedAt,
+                stdout: imageInvocation?.stdout ?? "", stderr: imageInvocation?.stderr ?? "",
+            }), { flag: "wx", mode: 0o600 });
+            const invocationText = `${imageInvocation?.stdout ?? ""}\n${imageInvocation?.stderr ?? ""}`;
+            if (/you(?:'|’)ve hit your usage limit|you have hit your usage limit|usage limit reached/i.test(invocationText)) {
+                throw new Error("Codex usage limit");
+            }
+            const adoptedImage = await adoptGeneratedImageFromInvocation({
+                stdout: imageInvocation?.stdout ?? "", outputFile,
+                expectedOutputDirectory: dirname(outputFile),
+                startedAtMs: imageStartedAt, completedAtMs: imageFinishedAt,
+            });
+            console.log(`[이미지 파일 연결] ${preset.id} · ${JSON.stringify(adoptedImage)}`);
             let generated;
             try {
                 generated = await normalizeGeneratedAsset(outputFile, generationPreset);
@@ -4021,6 +4058,5 @@ do {
 } while (!once && !stopping);
 if (activeAiJobs.size)
     await Promise.allSettled([...activeAiJobs]);
-if (firstDraftImagesTask)
-    await Promise.allSettled([firstDraftImagesTask]);
+await Promise.allSettled([localResearchTask, ...(firstDraftImagesTask ? [firstDraftImagesTask] : [])]);
 console.log(`SellerPilot ${"ChatGPT CLI"} worker 종료`);

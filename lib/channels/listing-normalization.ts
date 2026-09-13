@@ -35,6 +35,11 @@ function globalMarketplacePrice(usdPrice: number, currency: string) {
   return Math.max(0.01, Math.ceil(converted * 100) / 100);
 }
 
+export function marketplaceGlobalBasePriceMissing(channel: ActiveChannelKey, globalBaseUsdPrice: number | undefined) {
+  return ["qoo10", "shopee", "lazada", "ebay"].includes(channel)
+    && (!Number.isFinite(globalBaseUsdPrice) || Number(globalBaseUsdPrice) <= 0);
+}
+
 export function marketplaceListingPrice(channel: ActiveChannelKey, price: number, options?: {
   globalBaseUsdPrice?: number;
   targetCurrency?: string;
@@ -43,7 +48,10 @@ export function marketplaceListingPrice(channel: ActiveChannelKey, price: number
   if (channel === "temu") return price;
   if (channel !== "qoo10" && channel !== "shopee" && channel !== "lazada" && channel !== "ebay") return price;
   const usdPrice = Number(options?.globalBaseUsdPrice);
-  if (!Number.isFinite(usdPrice) || usdPrice <= 0) return price;
+  // Zero means an incomplete price draft; the positive-price requirement must
+  // block it. Never relabel the domestic KRW amount as USD/JPY/SGD/MYR.
+  // Keep this render-safe: confirmation previews call it before input is ready.
+  if (marketplaceGlobalBasePriceMissing(channel, usdPrice)) return 0;
   return globalMarketplacePrice(usdPrice, marketplaceListingCurrency(channel, options?.targetCurrency));
 }
 

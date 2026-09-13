@@ -14,7 +14,7 @@ import { qoo10JapaneseListingCopyFromCategory, repairLegacyQoo10JapaneseFallback
 import { marketplaceChannelDetailImageCount, marketplaceGeneratedAssetCount, marketplaceMinimumThumbnailCount } from "../lib/channels/marketplace-image-contract";
 import { parseProductDetailImageManifest, productDetailImageCount } from "../lib/product-detail-image-manifest";
 import { centralProductEditFieldSupport, channelProductEditFieldSupport, listingCoreContentForOperation, listingWriteOperation, legacyEbayListingUpdateCandidate, prepareListingUpdateArguments, productEditFieldKeys, productEditRemotePlan, qoo10RollbackListingUpdateCandidate } from "../lib/channels/listing-update";
-import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
+import { marketplaceGlobalBasePriceMissing, marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { buildLazadaKrwMyrPricePolicy, lazadaKrwMyrPricePolicyFromArguments, type LazadaKrwMyrRateEvidence } from "../lib/channels/lazada-price-policy";
 import { currentMarketListingHandoff, ebayListingHandoffFromDraft, fetchStoredListingHandoff, listingHandoffPersistenceStatus, listingHandoffStatusLabel, saveStoredListingHandoff, type StoredListingHandoff } from "../lib/channel-listing-handoff";
 import { bootstrapEbayAccount, buildEbayAccountBootstrapRequest, ebayAccountBootstrapResolvedFields, emptyEbayAccountBootstrapFormValues, type EbayAccountBootstrapFormValues } from "../lib/channels/ebay-account-bootstrap-client";
@@ -889,6 +889,15 @@ export function inspectWorkbenchListingDraft(channel: ActiveChannelKey, draft: R
     ...inspectListingDraft(channel, draft, operation),
     ...listingShippingRequirements(channel, draft, operation),
   ];
+  if (operation === "listing.update" && (channel === "qoo10" || channel === "shopee")) {
+    // These content updates strip all price fields before sending and preserve
+    // the provider price. A missing CREATE price must not block that operation.
+    const priceRequirement = requirements.find((requirement) => requirement.key === "price");
+    if (priceRequirement) {
+      priceRequirement.status = "runtime";
+      priceRequirement.help = "이 콘텐츠 수정은 가격을 전송하지 않고 현재 판매채널 가격을 보존합니다.";
+    }
+  }
   if (channel === "smartstore" && operation === "listing.update") {
     requirements.unshift({
       key: "unit-capacity-preserved",
@@ -1986,6 +1995,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     const listing = context.listings.find((item) => item.channel === channel
       && (!target || item.market === target.marketCode && item.targetId === target.targetId));
     const operation = listingWriteOperation(listing);
+    if (operation === "listing.create" && marketplaceGlobalBasePriceMissing(channel, globalBaseUsdPrice)) {
+      notify(`${channelCatalog[channel].name} 등록 전에 글로벌 채널 기준가 USD를 0보다 크게 입력해 주세요. 국내 원화 가격을 외화 가격으로 대신 전송하지 않습니다.`);
+      return false;
+    }
     const shopeeValidation = currentShopeeRequirementValidation();
     if (!shopeeSgChannelExecutionAllowed(channel, operation, shopeeValidation)) {
       notify(`Shopee SG 등록 조건 확인: ${shopeeValidation.blockers[0]?.code ?? "SHOPEE_SG_REQUIREMENT_SAVE_BLOCKED"}`);
@@ -2302,6 +2315,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const listing = context.listings.find((item) => item.channel === channel
         && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const operation = listingWriteOperation(listing);
+      // A restored positive payload cannot bypass a missing current USD base.
+      if (operation === "listing.create" && marketplaceGlobalBasePriceMissing(channel, globalBaseUsdPrice)) return false;
       const parsedDraft = parseDraft(drafts[channel]);
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
       const hasMissingRequired = !parsedDraft
@@ -2748,6 +2763,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
               : results[channel] ?? { phase: "idle" as const };
         const operation = listingWriteOperation(listing);
         const remoteUpdate = operation === "listing.update";
+        const globalPriceMissing = !remoteUpdate && marketplaceGlobalBasePriceMissing(channel, globalBaseUsdPrice);
         const operationRelease = channelOperationRelease(channel, operation);
 
         const operationAvailable = (operationRelease.available);
@@ -2829,6 +2845,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           {operationAvailable && <>
             <div className="publish-readiness"><span className={channelIntegrationStatus(linkInput).tone === "ok" ? "ok" : "missing"} title={channelIntegrationStatus(linkInput).label}>{channelIntegrationStatus(linkInput).tone === "ok" ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{channelIntegrationStatus(linkInput).short} · 운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? `원본 저장 · 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
             {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
+            {globalPriceMissing && <div className="publish-blocked" role="alert"><AlertTriangle size={18} /><b>글로벌 채널 기준가 USD를 입력해 주세요.</b><small>0보다 큰 기준가를 입력하고 채널별 통화·판매가를 확인한 뒤 등록할 수 있습니다.</small></div>}
             {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
             {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{typeof draftObject?.sellerpilotDraftError === "string" ? "채널 payload 조립 실패" : "채널 JSON 형식 확인 필요"}</b><small>{typeof draftObject?.sellerpilotDraftError === "string" ? String(draftObject.sellerpilotDraftError) : "아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다."}</small></div> : <div className="publish-required-fields">
               <div className="publish-required-head"><b>채널 필수 입력 체크</b><small>{blockingRequirements.length ? `${blockingRequirements.length}개 수동 입력 필요` : "모든 입력값 준비"}</small></div>
@@ -2894,7 +2911,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || studioBlocked || coupangCompletenessBlocked || !shopeeSgChannelExecutionAllowed(channel, operation, currentShopeeRequirementValidation())} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
             {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
             {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
-            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || coupangCompletenessBlocked || (channel === "shopee" && shopeeRequirementBlocked) || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : channel === "shopee" && shopeeRequirementBlocked ? "Shopee 공식 필수조건 선택 후 등록" : coupangCompletenessBlocked ? "쿠팡 공식 등록 조건 확인 후 등록" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
+            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={globalPriceMissing || !imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || coupangCompletenessBlocked || (channel === "shopee" && shopeeRequirementBlocked) || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : channel === "shopee" && shopeeRequirementBlocked ? "Shopee 공식 필수조건 선택 후 등록" : coupangCompletenessBlocked ? "쿠팡 공식 등록 조건 확인 후 등록" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
             {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           </>}
           {temuActivationLedgerEligible && listing && <>

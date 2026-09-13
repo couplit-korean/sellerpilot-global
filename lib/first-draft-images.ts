@@ -323,6 +323,41 @@ function normalizedFactText(value: unknown) {
   return text(value).normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
+// Administrative facts that the first pass explicitly could not establish may
+// be completed after image review. Known facts, and all visual identity fields,
+// remain immutable; this comparison never rewrites the signed image manifest.
+function sameOrCompletedAdministrativeFact(expected: unknown, actual: unknown) {
+  const before = normalizedFactText(expected);
+  const after = normalizedFactText(actual);
+  if (before === after) return true;
+  const unresolved = /^(?:미확인|확인\s*필요|알\s*수\s*없(?:음)?|unknown|tbd|not\s+provided|n\/?a)$/i;
+  return (!before || unresolved.test(before)) && Boolean(after) && !unresolved.test(after);
+}
+
+function normalizedPreparedSaleConfiguration(value: unknown) {
+  const normalized = normalizedFactText(value);
+  // Only count-only aliases are equivalent. Do not discard sizes, flavours,
+  // accessories or other qualifiers from a package description.
+  if (/^(?:단품|본품|상품|제품)$/.test(normalized)) return "count:1";
+  const count = /^(?:(?:상품|본품|제품)\s*)?(\d+)\s*(?:개|병|캔|팩|정|매|장)(?:\s*(?:구성|단품))?$/.exec(normalized);
+  return count ? `count:${Number(count[1])}` : normalized;
+}
+
+function sameOrConfirmedSinglePackage(facts: FirstDraftImageProductFacts, manual: Record<string, unknown>) {
+  const before = normalizedPreparedSaleConfiguration(facts.packageContents);
+  const after = normalizedPreparedSaleConfiguration(manual.packageContents);
+  if (before === after) return true;
+  // Research sometimes repeats the product name in the contents field without
+  // making a quantity claim. A seller may confirm one unchanged product; a
+  // multi-item offer still requires a new image preparation and review.
+  const repeatsProductName = normalizedFactText(facts.packageContents) === normalizedFactText(facts.name);
+  const quantityOrBundle = /(?:\d+\s*(?:개|병|캔|팩|정|매|장|입|세트|pack|pcs)|\d+\s*[+×x]\s*\d+|묶음|세트|번들|bundle|multi[ -]?pack)/i;
+  return manual.productFactsConfirmed === true
+    && after === "count:1"
+    && repeatsProductName
+    && !quantityOrBundle.test(normalizedFactText(facts.packageContents));
+}
+
 export function firstDraftImageFactsMatchStudioResult(
   productFacts: FirstDraftImageProductFacts,
   result: Pick<ProductStudioResult, "product">,
@@ -348,13 +383,13 @@ export function firstDraftImageFactsMatchStudioRequest(
     [facts.name, manual.productName],
     [facts.category, manual.categoryHint],
     [facts.brandName, manual.brandName],
-    [facts.manufacturer, manual.manufacturer],
-    [facts.countryOfOrigin, manual.countryOfOrigin],
     [facts.material, manual.material],
-    [facts.packageContents, manual.packageContents],
     [facts.description, manual.description],
   ];
-  return exactPairs.every(([expected, actual]) => normalizedFactText(expected) === normalizedFactText(actual));
+  return exactPairs.every(([expected, actual]) => normalizedFactText(expected) === normalizedFactText(actual))
+    && sameOrCompletedAdministrativeFact(facts.manufacturer, manual.manufacturer)
+    && sameOrCompletedAdministrativeFact(facts.countryOfOrigin, manual.countryOfOrigin)
+    && sameOrConfirmedSinglePackage(facts, manual);
 }
 
 export function firstDraftImageScenePlansMatchStudioResult(

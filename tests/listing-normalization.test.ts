@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  marketplaceGlobalBasePriceMissing,
   marketplaceListingCurrency,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
@@ -9,6 +10,7 @@ import {
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization";
+import { blockingListingRequirements } from "../lib/channels/listing-preflight";
 import { classifyListingFailure } from "../lib/channels/listing-remediation";
 
 test("KRW channels round positive prices up to the required ten-won unit", () => {
@@ -17,10 +19,34 @@ test("KRW channels round positive prices up to the required ten-won unit", () =>
   assert.equal(marketplaceListingPrice("coupang", 99_999), 100_000);
   assert.equal(marketplaceListingPrice("elevenst", 99_999, { globalBaseUsdPrice: 12.9 }), 100_000);
   assert.equal(marketplaceListingPrice("smartstore", 99_999), 100_000);
-  assert.equal(marketplaceListingPrice("lazada", 299), 299);
+  assert.equal(marketplaceListingPrice("temu", 3_000), 3_000);
 });
 
-test("global marketplaces derive a realistic local price from the USD base price", () => {
+test("missing or invalid USD input never becomes the domestic amount in a foreign currency", () => {
+  for (const channel of ["qoo10", "shopee", "lazada", "ebay"] as const) {
+    for (const globalBaseUsdPrice of [undefined, 0, -1, Number.NaN, Infinity, -Infinity]) {
+      assert.equal(marketplaceGlobalBasePriceMissing(channel, globalBaseUsdPrice), true);
+      assert.equal(marketplaceListingPrice(channel, 3_000, { globalBaseUsdPrice }), 0);
+    }
+  }
+  for (const channel of ["coupang", "elevenst", "smartstore", "temu"] as const) {
+    assert.equal(marketplaceGlobalBasePriceMissing(channel, 0), false);
+    assert.equal(marketplaceListingPrice(channel, 3_000, { globalBaseUsdPrice: 0 }), 3_000);
+  }
+});
+
+test("an unpriced eBay draft is blocked while an explicit USD price passes the price requirement", () => {
+  const draft = (globalBaseUsdPrice: number) => ({ offer: { pricingSummary: { price: {
+    currency: "USD", value: String(marketplaceListingPrice("ebay", 3_000, { globalBaseUsdPrice })),
+  } } } });
+  assert.ok(blockingListingRequirements("ebay", draft(0)).some(item => item.key === "price"));
+  assert.ok(!blockingListingRequirements("ebay", draft(2.25)).some(item => item.key === "price"));
+  // Existing eBay content updates preserve provider pricing instead of writing
+  // this draft field; zero must not acquire a new free-listing meaning.
+  assert.ok(!blockingListingRequirements("ebay", draft(0), "listing.update").some(item => item.key === "price"));
+});
+
+test("global marketplaces use the existing reference conversion only with an explicit USD base", () => {
   assert.equal(marketplaceListingPrice("lazada", 99_999, { globalBaseUsdPrice: 12.9, targetCurrency: "MYR" }), 58.05);
   assert.equal(marketplaceListingPrice("shopee", 99_999, { globalBaseUsdPrice: 12.9, targetCurrency: "SGD" }), 16.77);
   assert.equal(marketplaceListingPrice("qoo10", 99_999, { globalBaseUsdPrice: 12.9 }), 1871);
