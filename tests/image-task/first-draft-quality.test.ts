@@ -15,6 +15,7 @@ test("the installed first-draft prompt call accepts no prior failure as well as 
 import {
   buildFirstDraftImageQualityReceipt,
   buildFirstDraftStudioResult,
+  bindPreparedImageProduct,
   firstDraftImageFactsMatchStudioRequest,
   firstDraftImageFactsMatchStudioResult,
   firstDraftImageAssetIds,
@@ -151,6 +152,45 @@ test("second-stage reuse requires the same normalized product facts", () => {
     packageContents: "본품 2개",
   }), false);
   assert.equal(firstDraftImageScenePlansMatchStudioResult(productFacts, result), true);
+});
+
+test("unresolved image-pass classification permits a coherent evidence-backed final classification", () => {
+  const productFacts = facts("식품 / 탄산음료", "나랑드사이다 제로 500ml");
+  const first = buildFirstDraftStudioResult(productFacts);
+  const classification = {
+    displayName: "탄산음료(일반식품)", verificationStatus: "verified" as const,
+    evidence: "후면 실물 라벨의 식품유형에 탄산음료로 표시되어 있습니다.", isHealthFunctionalFood: false,
+  };
+  const result = { ...first, product: { ...first.product, classification },
+    localizedListings: [{ classification: { ...classification } }] };
+  const bound = bindPreparedImageProduct(result, productFacts);
+  assert.deepEqual(bound.product.classification, classification);
+  assert.equal(bound.localizedListings, result.localizedListings, "binding must not rewrite independently generated locale classifications");
+  assert.equal(bound.product.classification.isHealthFunctionalFood, bound.localizedListings[0].classification.isHealthFunctionalFood);
+  assert.equal(firstDraftImageFactsMatchStudioResult(productFacts, bound), true);
+  assert.equal(firstDraftImageFactsMatchStudioResult(productFacts, {
+    product: { ...bound.product, name: "다른 상품" },
+  }), false, "completing classification never relaxes visual product identity");
+  assert.deepEqual(productFacts.classification, first.product.classification, "reviewed first-pass facts remain immutable");
+});
+
+test("classification binding rejects incoherent status, missing evidence and known boolean conflicts", () => {
+  const productFacts = facts("식품 / 탄산음료");
+  const first = buildFirstDraftStudioResult(productFacts);
+  const known = { ...productFacts, classification: { ...productFacts.classification, isHealthFunctionalFood: true } } as unknown as FirstDraftImageProductFacts;
+  const final = { ...first, product: { ...first.product, classification: {
+    ...first.product.classification, verificationStatus: "verified" as const, isHealthFunctionalFood: false,
+  } } };
+  assert.throws(() => bindPreparedImageProduct(final, known), /PREPARED_IMAGE_CLASSIFICATION_CONFLICT/);
+  for (const classification of [
+    { ...final.product.classification, isHealthFunctionalFood: null },
+    { ...final.product.classification, verificationStatus: "needs-review" as const },
+    { ...final.product.classification, evidence: "" },
+  ]) {
+    const invalid = { ...final, product: { ...final.product, classification } };
+    assert.throws(() => bindPreparedImageProduct(invalid, productFacts), /PREPARED_IMAGE_CLASSIFICATION_CONFLICT/);
+    assert.equal(firstDraftImageFactsMatchStudioResult(productFacts, invalid), false);
+  }
 });
 
 test("reviewed first-draft images allow missing administrative facts without changing their manifest facts", () => {

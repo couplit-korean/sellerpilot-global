@@ -8,6 +8,8 @@ import {
   workerCompletionSchema,
 } from "../../../../../lib/ai-cli-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
+import { collectStudioCompletionImageDigests } from "../../../../../lib/studio-completion-image-digests";
+import { createSignedStudioImageDownloader } from "../../../../../lib/studio-image-validation";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
@@ -15,6 +17,7 @@ import {
 } from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
+export const maxDuration = 240;
 
 type LegacyWorkerSuccess = {
   jobId: string;
@@ -162,6 +165,24 @@ export async function POST(request: Request) {
         return NextResponse.json({ message: "재제작 이미지 저장 경로가 작업과 일치하지 않습니다." }, { status: 403 });
       }
       resultPayload.asset_storage_paths = completion.assetStoragePaths;
+    }
+  }
+
+  if (completion.status === "succeeded" && resultPayload
+      && (completion.result.mode === "cli" || completion.result.mode === "asset-regeneration")) {
+    try {
+      const paths = resultPayload.asset_storage_paths as Record<string, string>;
+      const download = await createSignedStudioImageDownloader({
+        paths: Object.values(paths),
+        sign: (values) => serviceClient.storage.from("sellerpilot-ai").createSignedUrls(values, 240),
+        fetchTimeoutMs: 20_000,
+      });
+      if (!download) throw new Error("STUDIO_COMPLETION_IMAGE_UNAVAILABLE");
+      resultPayload.asset_storage_sha256s = await collectStudioCompletionImageDigests({
+        jobId: completion.jobId, claimToken: completion.claimToken, paths, download,
+      });
+    } catch {
+      return NextResponse.json({ message: "저장된 생성 이미지 검증을 완료하지 못했습니다. 기존 작업과 이미지는 유지됩니다." }, { status: 503 });
     }
   }
 

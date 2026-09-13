@@ -344,10 +344,27 @@ export function buildFirstDraftStudioResult(productFacts: FirstDraftImageProduct
 export function bindPreparedImageProduct<Result extends Pick<ProductStudioResult, "product">>(
   result: Result, facts: FirstDraftImageProductFacts,
 ): Result {
+  if (!preparedClassificationAllowsFinal(facts.classification.isHealthFunctionalFood, result.product.classification)) {
+    throw new Error("PREPARED_IMAGE_CLASSIFICATION_CONFLICT");
+  }
   return { ...result, product: { ...result.product,
     name: facts.name, category: facts.category, features: [...facts.features],
-    classification: { ...result.product.classification, isHealthFunctionalFood: facts.classification.isHealthFunctionalFood },
+    // The first image pass explicitly leaves classification unresolved. Keep
+    // the later evidence-backed classification as one atomic record, including
+    // the status used by every localized listing; null is not a negative finding.
+    classification: { ...result.product.classification },
   } };
+}
+
+function preparedClassificationAllowsFinal(
+  expected: boolean | null,
+  actual: ProductStudioResult["product"]["classification"],
+) {
+  const coherent = actual.verificationStatus === "verified"
+    ? typeof actual.isHealthFunctionalFood === "boolean"
+    : actual.verificationStatus === "needs-review" && actual.isHealthFunctionalFood === null;
+  return coherent && Boolean(actual.displayName.trim()) && actual.evidence.trim().length >= 10
+    && (expected === null || expected === actual.isHealthFunctionalFood);
 }
 
 function normalizedFactText(value: unknown) {
@@ -406,7 +423,7 @@ export function firstDraftImageFactsMatchStudioResult(
   const finalFeatures = new Set(result.product.features.map(normalizedFactText).filter(Boolean));
   return normalizedFactText(facts.name) === normalizedFactText(result.product.name)
     && normalizedFactText(facts.category) === normalizedFactText(result.product.category)
-    && facts.classification.isHealthFunctionalFood === result.product.classification.isHealthFunctionalFood
+    && preparedClassificationAllowsFinal(facts.classification.isHealthFunctionalFood, result.product.classification)
     && requiredFeatures.size === finalFeatures.size
     && [...requiredFeatures].every((feature) => finalFeatures.has(feature));
 }

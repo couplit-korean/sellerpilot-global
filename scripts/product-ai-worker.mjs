@@ -3795,6 +3795,9 @@ async function processJob(job) {
         if (job.request?.firstDraftSourceResearchJobId && preparedFacts.success) {
             result = bindPreparedImageProduct(result, preparedFacts.data);
         }
+        // Recheck the final bound document before producing or uploading images.
+        // In particular, classification status and all locales must still agree.
+        result = cliStudioResultSchema.parse(normalizeStudioResultForTerminalValidation(result));
         const identityCutouts = await prepareIdentityCutoutsForJob(result, imageFiles, jobDir, jobHeartbeat.signal, job.request?.manualFields);
         const reusableFirstDraftAssets = await loadReusableFirstDraftAssets(
             job,
