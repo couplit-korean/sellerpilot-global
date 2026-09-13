@@ -1,0 +1,362 @@
+{
+  "checkedAt": "2026-09-13T04:05:46.960416+00:00",
+  "project": "sqaoqucxakebqkiygdxb",
+  "canonicalWorkspace": "/Users/kimchangheemac/dev/sellerpilot-app",
+  "implementationDeployed": false,
+  "liveRelease": "5adbed3b45b6fdfb924c3a0c7de38255aecf0837",
+  "migrations": [
+    {
+      "version": "20260913022524",
+      "file": "20260913022524_restore_reviewed_shopee_history_and_reply_contracts.sql",
+      "sha256": "aed6ea2d9ae33dac020a03ec552270a7140aea7d252441fa51e81765d9f21763",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913022759",
+      "file": "20260913022759_prioritize_short_lived_oauth_claims.sql",
+      "sha256": "777ab76810a4204822d78ca5349e3313ba1a6b371a3545fc06c3bb7f6f50d9f7",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913024658",
+      "file": "20260913024658_restore_lazada_create_receipts_with_byte_integrity.sql",
+      "sha256": "a4e7ad045d21fdd49550080fab052b3e66cd04bc68cf0226b0d1306efabc0c42",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913024900",
+      "file": "20260913024900_restore_elevenst_approval_and_create_recovery_contracts.sql",
+      "sha256": "97e9c5e0d07aea94f0fdc801e7f3a00043e0d10df991b66e3806f68fba4fc58d",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913030049",
+      "file": "20260913030049_restore_temu_cs_history_retry_and_account_contracts.sql",
+      "sha256": "dd02c1279c60b140d379b7fa1fc50e7cda9d22dc35b7b22ec2183a4de4d52a48",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913032500",
+      "file": "20260913032500_restore_smartstore_create_source_and_completion_contracts.sql",
+      "sha256": "b74ceec0b2e310efdf9d23a55f29ba15f6d55de79e5d909f39f284f6c62be000",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913034000",
+      "file": "20260913034000_restore_lazada_product_review_reply_contracts.sql",
+      "sha256": "280270d34ae41c9b2210f03f91ae3748b8df9d19824687c2a2c133e3af436128",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913034500",
+      "file": "20260913034500_restore_cs_order_binding_and_coupang_provenance.sql",
+      "sha256": "0a4be79d074608fbe82833f778126552a73ede5ee75e9596f95b8353462c9e1b",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913035000",
+      "file": "20260913035000_restore_smartstore_cs_history_and_exact_reply.sql",
+      "sha256": "9f1e3b623805ffd8e53b573061fa0a5f7c05c2d8d8d062a80e74cf6fcb33dd21",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913035500",
+      "file": "20260913035500_align_smartstore_create_with_production_product_state.sql",
+      "sha256": "7160194e25749d568220301c390f6b90f50836a1bb0f5a61733c96a4ed14e833",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913040000",
+      "file": "20260913040000_restore_qoo10_create_source_and_get_recovery.sql",
+      "sha256": "83f60ebfad40a30babb925788668c6024e8cdf95e37869233bc745daa0400378",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913041000",
+      "file": "20260913041000_restore_qoo10_cs_reply_and_source_contracts.sql",
+      "sha256": "b0b3fe44860200596b267aa1df20af8bb910eb2330d0516206b8c6ce0e8dc4fc",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913041500",
+      "file": "20260913041500_restore_coupang_reply_readback_and_retry.sql",
+      "sha256": "88144892b7fcad4dc7ef211b8324b4cf406798d1724fe560fe1ac2b568d356ce",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913042000",
+      "file": "20260913042000_restore_coupang_official_create_snapshot.sql",
+      "sha256": "d63a367fe1bc424a0368012bab9a7e0aa67ace844d2003c5bededdea341f1e34",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913042500",
+      "file": "20260913042500_restore_shopee_buyer_chat_transport_and_media.sql",
+      "sha256": "dd96bb021fbef55473d48705f61b305e2c285e76d137827ffecff6933583dbc1",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913043000",
+      "file": "20260913043000_restore_elevenst_account_lifecycle_and_pending_diagnostics.sql",
+      "sha256": "6b5529c68dc287568325612cd8b7cc6dcb4528a774b5dcf323b54cfddc221e1e",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913043500",
+      "file": "20260913043500_restore_temu_authoritative_create_contracts.sql",
+      "sha256": "4035f0c678aa58bd841f484ab7411363132db0dea84b4be2646ede5b7aa64343",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913044000",
+      "file": "20260913044000_restore_elevenst_legacy_snapshot_readback.sql",
+      "sha256": "d0cf2e26bdd7be1857ea0719e73dd3b657f2ea38eb094606a539876015674861",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913044500",
+      "file": "20260913044500_restore_shopee_refresh_and_create_stage_contracts.sql",
+      "sha256": "ab907a12e795fa870cf0ab3dbed54e3ac3cef066a75c8a47523b56ad6e2c839e",
+      "applied": true,
+      "journalMatches": true
+    },
+    {
+      "version": "20260913045000",
+      "file": "20260913045000_restore_publication_reverification_scheduler.sql",
+      "sha256": "f232a84a92710d961fcc25152fcd17b26d25118d291fdbbedba0c8729dc470ef",
+      "applied": true,
+      "journalMatches": true
+    }
+  ],
+  "rpcInventory": {
+    "sourceFileCount": 762,
+    "executableCallSites": 661,
+    "resolvedFunctions": 378,
+    "missing": [],
+    "unresolvedCallSites": [
+      {
+        "file": "app/api/admin/channel-operations/route.ts",
+        "line": 2153,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/channel-operations/route.ts",
+        "line": 2639,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/channels/ebay/cases-disputes/history/sync/route.ts",
+        "line": 79,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+        "line": 38,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/cs/lazada-raw-inbox/reprocess/route.ts",
+        "line": 20,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/serverless-runtime-release/route.ts",
+        "line": 81,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/admin/serverless-runtime-release/route.ts",
+        "line": 91,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/claim/route.ts",
+        "line": 184,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/lazada-recovery/route.ts",
+        "line": 63,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/shopee-create-stage/route.ts",
+        "line": 116,
+        "argument": "rpc"
+      },
+      {
+        "file": "app/api/channel-gateway/worker/smartstore-create-complete/route.ts",
+        "line": 61,
+        "argument": "name"
+      },
+      {
+        "file": "app/api/integrations/kakao/callback/route.ts",
+        "line": 44,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/integrations/kakao/settings/route.ts",
+        "line": 44,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/internal/kakao-notifications/route.ts",
+        "line": 71,
+        "argument": "functionName"
+      },
+      {
+        "file": "app/api/internal/maintenance/route.ts",
+        "line": 511,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/commerce-worker-completion.ts",
+        "line": 326,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/elevenst-create-recovery-drain.ts",
+        "line": 143,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/gateway-completion-runtime.ts",
+        "line": 15,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-cs-gateway.ts",
+        "line": 285,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway-runtime.ts",
+        "line": 37,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 313,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 913,
+        "argument": "name"
+      },
+      {
+        "file": "lib/channels/serverless-gateway.ts",
+        "line": 1221,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 83,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 274,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 302,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/complete.ts",
+        "line": 457,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/schedule.ts",
+        "line": 193,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 113,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 287,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 323,
+        "argument": "name"
+      },
+      {
+        "file": "lib/cs/operations/worker-completion.ts",
+        "line": 482,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-research-runtime.ts",
+        "line": 49,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-research.ts",
+        "line": 1165,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-studio-runtime.ts",
+        "line": 88,
+        "argument": "name"
+      },
+      {
+        "file": "lib/server-product-studio.ts",
+        "line": 1584,
+        "argument": "name"
+      },
+      {
+        "file": "lib/serverless-runtime-release.ts",
+        "line": 75,
+        "argument": "name"
+      },
+      {
+        "file": "lib/shipping/worker-completion.ts",
+        "line": 27,
+        "argument": "name"
+      }
+    ],
+    "scopeNote": "Forwarded function parameters remain listed; bounded Shopee stage names also resolved through executable callers. Names present does not prove body dependencies, privileges, or provider operation."
+  },
+  "runtimeReadback": {
+    "gatewayReady": true,
+    "lastGatewayStatus": 200,
+    "activeGatewayJobs": 0,
+    "readAt": "2026-09-13T03:55:39Z"
+  },
+  "remaining": [
+    "eBay fresh OAuth recovery and Commerce Message GET permission readback",
+    "Lazada per-country provider capability readback",
+    "Temu actual after-sales pagination failure",
+    "Shopee actual CS provider failures after recovered target refresh",
+    "Production deploy and runtime SHA synchronization",
+    "Per-channel real listing/reply/shipping verification"
+  ]
+}

@@ -1,4 +1,5 @@
 import type { ActiveChannelKey } from "./catalog";
+import type { TemuBuyerChatRuntimeEvidence } from "./cs/temu/runtime-readiness";
 import type { CredentialRefreshSnapshot, CredentialRefreshTarget } from "./protocols";
 import type {
   ShopeeSgCreateStageCompletion,
@@ -49,6 +50,6 @@ export type ProviderJob = {
   seller_account_key?: string | null;
   // Provenance of that key (`provider_certified_v1`, `credential_incarnation_v1`, ...).
   seller_account_key_source?: string | null;
-  temu_buyer_chat_readiness_context?: { status?: string; blocker?: string } | null;
+  temu_buyer_chat_readiness_context?: TemuBuyerChatRuntimeEvidence | null;
 };
 export type ProviderExecutionInput = { job: ProviderJob; signal: AbortSignal; hooks: ServerlessGatewayExecutionHooks };

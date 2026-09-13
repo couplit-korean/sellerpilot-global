@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hydrateCsProviderJob } from "../../../../../lib/cs/operations/hydrate";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { gatewayClaimSchema } from "../../../../../lib/channels/gateway-contract";
@@ -178,5 +179,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
   }
   if (rateReceipt.status === "deferred") return new NextResponse(null, { status: 204 });
-  return NextResponse.json(parsed.data, { headers: { "cache-control": "no-store, max-age=0" } });
+  try {
+    const job = await hydrateCsProviderJob(parsed.data, tokenHash,
+      (name, args) => serviceClient.rpc(name, args));
+    return NextResponse.json(job, { headers: { "cache-control": "no-store, max-age=0" } });
+  } catch {
+    console.error("channel gateway CS context hydration failed", { channel: parsed.data.channel, jobId: parsed.data.id });
+    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+  }
 }

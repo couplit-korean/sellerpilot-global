@@ -330,3 +330,41 @@ test("CONT-08 proposal refuses to overwrite a centrally combined active-index pr
     await db.close();
   }
 });
+
+
+test("forward recovery preserves current non-11st lineage and SmartStore/Lazada account indexes", async () => {
+  const { db, lineage } = await fixture();
+  try {
+    await finishFixtureSetup(db, lineage);
+    const lazada = await readFile(new URL('supabase/migrations/20260909124048_cs_lazada_multi_account_scope.sql',root),'utf8');
+    await db.exec(lazada.slice(lazada.indexOf('drop index if exists sellerpilot_private.channel_credentials_one_active_idx;'),lazada.indexOf('create function public.sellerpilot_list_active_lazada_credentials')));
+    await db.exec(`
+      drop index sellerpilot_private.channel_credentials_one_active_non_lazada_idx;
+      create unique index channel_credentials_one_active_non_lazada_smartstore_idx
+        on sellerpilot_private.channel_credentials(channel,environment)
+        where status='active' and channel not in ('lazada','smartstore');
+      create unique index channel_credentials_one_active_smartstore_account_idx
+        on sellerpilot_private.channel_credentials(created_by,channel,environment,seller_account_key)
+        where status='active' and channel='smartstore' and seller_account_key is not null;
+      create unique index channel_credentials_one_active_smartstore_legacy_idx
+        on sellerpilot_private.channel_credentials(created_by,channel,environment)
+        where status='active' and channel='smartstore' and seller_account_key is null;
+    `);
+    const originalLineage = (await db.query("select prosrc from pg_proc where oid='sellerpilot_private.credential_seller_account_lineage(text,text,uuid)'::regprocedure")).rows[0].prosrc;
+    const forward = (await readFile(new URL('supabase/migrations/20260913043000_restore_elevenst_account_lifecycle_and_pending_diagnostics.sql',root),'utf8'))
+      .replace(/do \$recovery_guard\$[\s\S]*?end \$recovery_guard\$;/u, '');
+    await db.exec(forward.slice(0, forward.indexOf('-- Reviewed source: 20260909133703'))+'commit;');
+    assert.equal((await db.query("select prosrc from pg_proc where oid='sellerpilot_private.credential_lineage_before_202609134300(text,text,uuid)'::regprocedure")).rows[0].prosrc, originalLineage);
+    const indexes=(await db.query("select indexname,indexdef from pg_indexes where schemaname='sellerpilot_private' and tablename='channel_credentials'")).rows;
+    assert.ok(indexes.some(x=>x.indexname==='channel_credentials_one_active_smartstore_account_idx'));
+    assert.ok(indexes.some(x=>x.indexname==='channel_credentials_one_active_lazada_account_idx'));
+    assert.match(indexes.find(x=>x.indexname.startsWith('channel_credentials_one_active_non_lazada_elevenst_smartstore')).indexdef,/lazada.*elevenst.*smartstore/u);
+    assert.equal((await db.query("select relrowsecurity from pg_class where oid='sellerpilot_private.elevenst_credential_identity_claims'::regclass")).rows[0].relrowsecurity,true);
+    const pending=(await asUser(db,adminA,"select public.sellerpilot_create_elevenst_credential_pending_v1('production',$1::jsonb,null,90,30) id",[JSON.stringify(sellerA)])).rows[0].id;
+    await assert.rejects(asUser(db,adminA,"select public.sellerpilot_activate_elevenst_credential_v1($1)",[pending]),/ELEVENST_RECENT_EXACT_ACCESS_TEST_REQUIRED/u);
+    const claim=(await db.query("select lifecycle_state,identity_evidence from sellerpilot_private.elevenst_credential_identity_claims where credential_id=$1",[pending])).rows[0];
+    assert.deepEqual(claim,{lifecycle_state:'pending',identity_evidence:'admin_claim_v1'});
+    const qoo10=await canonicalCreate(db,adminA,'qoo10',{api_key:'test-qoo10'});
+    assert.equal((await db.query("select seller_account_key_source from sellerpilot_private.channel_credentials where id=$1",[qoo10])).rows[0].seller_account_key_source,'credential_incarnation_v1');
+  } finally { await db.close(); }
+});

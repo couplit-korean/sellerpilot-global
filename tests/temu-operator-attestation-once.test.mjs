@@ -55,7 +55,7 @@ function browserFixture(privateKey, expectedAppId = "temu-app-931103") {
       return { status: 200, body: { contract: "temu_collector_challenge_v1",
       challengeId, nonce: "N".repeat(43), ownerId, keyId, expectedAppId,
         receiptKeyId: "receipt-key-1", credentialVersion: 3,
-        credentialFingerprint: "f".repeat(64),
+        credentialFingerprint: "A0B1C2D3E4F5",
         credentialVaultSecretId: "70000000-0000-4000-8000-000000000007",
         productRevisionFingerprint: "a".repeat(64) } };
     }

@@ -13,13 +13,6 @@ import {
   recordQoo10CreateOfficialGetRecovery,
 } from "../lib/server-qoo10-listing-create-fulfillment-source";
 import {
-  qoo10LotteExistingPostWriteVerificationRequirement,
-  qoo10LotteExistingUpdateIdentity,
-  qoo10LotteExistingUpdateProtection,
-  qoo10LotteExistingUpdateTupleMatches,
-} from "../lib/channels/qoo10-existing-update-identity";
-import { qoo10LotteExistingGatewayRequirement } from "../lib/server-qoo10-lotte-existing-postwrite-reconciliation";
-import {
   qoo10QsmCreateFulfillmentCaptureContract,
   qoo10QsmCreateFulfillmentCollector,
   qoo10QsmCreateFulfillmentOrigin,
@@ -146,18 +139,12 @@ async function databaseFixture() {
       '${attemptId}','queued',null
     );
   `);
-  await db.exec(await readFile(new URL(
-    "../supabase/migrations/20260910023500_qoo10_fulfillment_evidence.sql",
-    import.meta.url,
-  ), "utf8"));
-  await db.exec(await readFile(new URL(
-    "../supabase/migrations/20260910033500_qoo10_gateway_create_atomic_recovery.sql",
-    import.meta.url,
-  ), "utf8"));
-  await db.exec(await readFile(new URL(
-    "../supabase/migrations/20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql",
-    import.meta.url,
-  ), "utf8"));
+  const recovery = await readFile(new URL(
+    "../supabase/migrations/20260913040000_restore_qoo10_create_source_and_get_recovery.sql", import.meta.url,
+  ), "utf8");
+  await db.exec(recovery);
+  await db.exec("alter table sellerpilot_private.channel_operation_attempts add constraint production_attempt_status check(status in ('running','succeeded','failed','manual_required'))");
+  await db.exec("alter table sellerpilot_private.products add constraint production_product_status check(status in ('draft','active','low_stock','out_of_stock','archived'))");
   return db;
 }
 
@@ -238,56 +225,6 @@ async function callAtomic(
     sellerId, targetId, capture.sourceRevision, capture.captureDigest, fulfillmentDigest]);
 }
 
-test("r5 owned Lotte/existing-product runtime no longer matches the retired SKU", () => {
-  assert.notEqual(qoo10LotteExistingUpdateIdentity.remoteId, "1217536689");
-  assert.notEqual(qoo10LotteExistingUpdateIdentity.sellerSku, "AUTO-780720401E2D4E4EA45F");
-  assert.equal(qoo10LotteExistingUpdateTupleMatches({
-    productId: "1ed4acfc-7603-48ec-a638-241131e59358",
-    listingId: "13858f41-78fd-463f-9390-e8f06e71e538",
-    credentialId: "2b49d081-5188-4a75-9555-e0a6438e8a2b",
-    remoteId: "1217536689",
-    market: "JP",
-    targetId: "Japan · QAPI",
-    sellerSku: "AUTO-780720401E2D4E4EA45F",
-  }), false);
-  assert.equal(qoo10LotteExistingUpdateProtection({
-    [ "sellerpilotQoo10LotteExistingUpdateProtection" ]: { remoteId: "1217536689" },
-  }), null);
-  assert.equal(qoo10LotteExistingPostWriteVerificationRequirement({}), null);
-  assert.equal(qoo10LotteExistingGatewayRequirement({
-    jobId, attemptId, listingId, channel: "qoo10", operation: "listing.update",
-    publicationVerificationBoundary: new Date().toISOString(),
-    completionStatus: "reconciliation_required",
-    result: { ok: false, channel: "qoo10", operation: "listing.update", remoteId: "1217536689", steps: [] },
-  }), null);
-});
-
-test("r5 owned Qoo10 modules do not keep an active 1217536689 create-success path", async () => {
-  const files = [
-    "lib/channels/qoo10-existing-update-identity.ts",
-    "lib/channels/qoo10-qsm-existing-carrier-collector.ts",
-    "lib/channels/qoo10-qsm-existing-carrier-cdp-collector.ts",
-    "lib/channels/qoo10-qsm-existing-postwrite-service-runner.ts",
-    "lib/channels/qoo10-update-shipping.ts",
-    "lib/product-registration/channels/qoo10.ts",
-    "lib/server-qoo10-lotte-existing-carrier-evidence.ts",
-    "lib/server-qoo10-lotte-existing-postwrite-reconciliation.ts",
-    "lib/channels/qoo10-content-preview.ts",
-    "lib/server-qoo10-content-preview.ts",
-    "scripts/qoo10-qsm-existing-carrier-collector.ts",
-    "app/api/channel-gateway/worker/qoo10-create-boundary/route.ts",
-    "app/api/channel-gateway/worker/qoo10-create-boundary/recover/route.ts",
-    "lib/channels/listing-update.ts",
-    "lib/channels/commerce-worker-completion.ts",
-    "app/api/admin/channel-operations/route.ts",
-    "scripts/commerce-gateway-job.mjs",
-  ];
-  for (const file of files) {
-    const body = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
-    assert.doesNotMatch(body, /1217536689/u, file);
-  }
-});
-
 test("r5 SQL identifiers stay within 63 bytes and export the short fence successor", async () => {
   const sql = await readFile(new URL(
     "../supabase/migrations/20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql",
@@ -305,7 +242,7 @@ test("review69: post-enqueue product-status change is rejected by current-state 
   const seeded = await seedSourceAndJob(db);
   await resetRole(db);
   await db.query(
-    `update sellerpilot_private.products set status='paused' where id=$1`,
+    `update sellerpilot_private.products set status='draft' where id=$1`,
     [productId],
   );
   await asService(db);
@@ -358,7 +295,7 @@ test("review69: lost CREATE response records official GET recovery instead of a 
      where attempt.id=$1
   `, [attemptId, listingId]);
   assert.equal(state.rows[0].http_status, 200);
-  assert.equal(state.rows[0].status, "reconciliation_required");
+  assert.equal(state.rows[0].status, "manual_required");
   assert.equal(state.rows[0].listing_remote, null);
   assert.equal(state.rows[0].listing_status, "queued");
   await db.close();

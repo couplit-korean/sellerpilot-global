@@ -22,7 +22,7 @@ const attestation = temuCollectorAttestationSchema.parse({
   productId: "20000000-0000-4000-8000-000000000002",
   credentialId: "30000000-0000-4000-8000-000000000003",
   credentialVersion: 3,
-  credentialFingerprint: "f".repeat(64),
+  credentialFingerprint: "A0B1C2D3E4F5",
   credentialVaultSecretId: "70000000-0000-4000-8000-000000000007",
   productRevisionFingerprint: "a".repeat(64),
   partnerAccountSubject: `temu-account:sha256:${"1".repeat(64)}`,
@@ -91,4 +91,15 @@ test("admin route requires a signed challenge and exposes no provider/claim path
   assert.equal(source.includes("executeViaChannelGateway"), false);
   assert.equal(source.includes("temuRequest"), false);
   assert.equal(source.includes("accountLogin"), false);
+});
+
+
+test("credential metadata uses 12 uppercase hex characters while evidence remains SHA256", () => {
+  assert.equal(temuCollectorAttestationSchema.safeParse(attestation).success, true);
+  for (const fingerprint of ["f".repeat(64), "a0b1c2d3e4f5", "A0B1C2D3E4F", null]) {
+    assert.equal(temuCollectorAttestationSchema.safeParse({ ...attestation,
+      credentialFingerprint: fingerprint }).success, false);
+  }
+  assert.equal(temuCollectorAttestationSchema.safeParse({ ...attestation,
+    productRevisionFingerprint: "A0B1C2D3E4F5" }).success, false);
 });

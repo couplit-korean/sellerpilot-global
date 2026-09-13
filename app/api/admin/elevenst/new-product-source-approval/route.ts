@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { buildElevenstCreateCredentialRequestBinding } from "../../../../../lib/product-registration/elevenst/credential-request-binding";
+import { readElevenstApprovalObjectReceipts } from "../../../../../lib/product-registration/elevenst/approval-object-receipts";
 import {
   buildElevenstNewProductSourceApproval,
   elevenstNewProductSourceApprovalRequestSchema,
@@ -202,6 +203,16 @@ export async function POST(request: Request) {
       productImageUrls,
       detailImageUrls,
     });
+    const objectEvidence = await readElevenstApprovalObjectReceipts({
+      ownerId: automatic.data.ownerId,
+      productImagePaths: automatic.data.productImagePaths,
+      detailImagePaths: automatic.data.detailImagePaths,
+      detailImageBucket: detailExternal ? "sellerpilot-detail-imports" : "sellerpilot-ai",
+    }, (bucket, path) => admin.serviceClient.storage.from(bucket).download(path));
+    approval.payload.policySource.content = {
+      ...record(approval.payload.policySource.content),
+      ...objectEvidence,
+    };
   } catch (error) {
     return approvalError(error);
   }

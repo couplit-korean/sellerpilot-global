@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-const migration = await readFile(new URL(
-  "../supabase/migrations/20260910044000_shopee_create_transport_and_successor_hardening_r6.sql",
+const recovery = await readFile(new URL(
+  "../supabase/migrations/20260913044500_restore_shopee_refresh_and_create_stage_contracts.sql",
   import.meta.url,
 ), "utf8");
+const migration="begin;\n"+recovery.slice(recovery.indexOf("-- Reviewed source: 20260910044000"));
 
 async function compatibilityLayer() {
   const fixture = await readFile(
@@ -287,7 +288,7 @@ test("r6 successor rebind moves completed receipts and binds the current Vault i
   }
 });
 
-test("r6 local-publish completion writes mapping and internal job success atomically", async () => {
+test("recovered local-publish receipt maps IDs while preserving gateway completion ownership", async () => {
   const db = await fixture();
   try {
     await db.query(`
@@ -318,7 +319,7 @@ test("r6 local-publish completion writes mapping and internal job success atomic
       "select status from sellerpilot_private.channel_gateway_jobs where id=$1",
       [ids.job],
     )).rows[0];
-    assert.equal(job.status, "succeeded");
+    assert.equal(job.status, "running", "the final completion RPC still owns a running job");
     await db.query("delete from sellerpilot_private.product_registration_drafts");
     await assert.rejects(
       db.query(`

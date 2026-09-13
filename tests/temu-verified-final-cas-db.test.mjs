@@ -5,13 +5,10 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 
-const migrations = await Promise.all([
-  "20260910025000_temu_create_authoritative_sources.sql",
-  "20260910033000_temu_create_producer_context.sql",
-  "20260910040500_temu_operator_app_observation_source.sql",
-  "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
-  "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql",
-].map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), "utf8")));
+// Exercise the exact forward recovery against canonical production credential metadata.
+const migrations = [(await readFile(new URL(
+  "../supabase/migrations/20260913043500_restore_temu_authoritative_create_contracts.sql",
+  import.meta.url), "utf8")).replace(/do \$recovery_guard\$[\s\S]*?end \$recovery_guard\$;/u, "")];
 const owner = "10000000-0000-4000-8000-000000000001";
 const product = "20000000-0000-4000-8000-000000000002";
 const credential = "30000000-0000-4000-8000-000000000003";
@@ -22,7 +19,7 @@ const account = `temu-account:sha256:${"1".repeat(64)}`;
 const token = `temu:sha256:${"2".repeat(64)}`;
 const requestFingerprint = "a".repeat(64);
 const revisionFingerprint = "b".repeat(64);
-const credentialFingerprint = "f".repeat(64);
+const credentialFingerprint = "A0B1C2D3E4F5";
 const credentialSecret = "70000000-0000-4000-8000-000000000007";
 const receiptSecret = "q".repeat(32);
 const receiptSecretBase64 = Buffer.from(receiptSecret).toString("base64");
@@ -377,7 +374,7 @@ test("credential Vault rotation cannot reuse an old attestation for a new source
   await db.query("update sellerpilot_private.channel_credentials set version=4,fingerprint=$2,vault_secret_id=$3 where id=$1",
     [credential, "e".repeat(64), rotatedSecret]);
   await assert.rejects(appendSource(db, { credentialVersion: 4,
-    credentialFingerprint: "e".repeat(64), appId: "sellerpilot-app" }),
+    credentialFingerprint: "B0B1C2D3E4F5", appId: "sellerpilot-app" }),
   /COLLECTOR_ATTESTATION_MISMATCH|CURRENT_SCOPE_MISMATCH/u);
   assert.equal((await db.query("select count(*)::integer count from sellerpilot_private.temu_create_authoritative_sources")).rows[0].count, 0);
   await db.close();

@@ -75,7 +75,7 @@ function exactContext(value: unknown) {
     || !text(context.productUpdatedAt)
     || !/^[1-9]\d{0,31}$/u.test(String(context.productRevision ?? ""))
     || !Number.isSafeInteger(number(context.credentialVersion))
-    || !/^[a-f0-9]{64}$/u.test(String(context.credentialFingerprint ?? ""))
+    || !/^[A-F0-9]{12}$/u.test(String(context.credentialFingerprint ?? ""))
     || context.credentialEnvironment !== "production"
     || !Number.isSafeInteger(number(context.currentSourceRevision))) {
     throw new TemuCreateSourceLedgerError("TEMU_CREATE_SOURCE_UNAVAILABLE");

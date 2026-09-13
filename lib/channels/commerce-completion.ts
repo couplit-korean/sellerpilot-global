@@ -196,7 +196,8 @@ export async function completeCommerceClaim(
           || !String(map.localItemId ?? "").trim()) {
         return "unavailable";
       }
-      return "completed";
+      // The stage transaction stored the Global/local mapping, but the
+      // owned completion RPC must still persist response, attempt and receipt.
     }
   }
   const parsed = gatewayWorkerCompletionSchema.safeParse(completionInput);

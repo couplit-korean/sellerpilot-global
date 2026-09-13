@@ -674,6 +674,7 @@ test("normal drain enqueues only current supported inquiries before bounded conc
   let completedEnqueues = 0;
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
+    staticEgressChannels: ["lazada"],
     now: () => fixedNow,
     rpc: async (name, arguments_ = {}) => {
       calls.push({ name, arguments_ });
@@ -815,7 +816,7 @@ test("missing generic claim RPC falls back to the inquiries-only compatibility c
 test("Smartstore and Coupang current reads require explicit static egress", () => {
   const enqueues = serverlessCsCurrentInquiryEnqueues(
     new Date("2026-08-28T07:00:00.000Z"),
-    ["coupang", "smartstore"],
+    ["coupang", "smartstore", "lazada"],
   );
   assert.equal(enqueues.length, 18);
   assert.deepEqual(
@@ -827,7 +828,7 @@ test("Smartstore and Coupang current reads require explicit static egress", () =
 test("explicit Temu static egress enables its current inquiry read", () => {
   const enqueues = serverlessCsCurrentInquiryEnqueues(
     new Date("2026-08-28T07:00:00.000Z"),
-    ["temu"],
+    ["temu", "lazada"],
   );
   assert.equal(enqueues.length, 12);
   assert.deepEqual(
@@ -1049,6 +1050,7 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   let providerCalls = 0;
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
+    staticEgressChannels: ["lazada"],
     rpc: baseRpc(claim("qoo10", "inquiries.list"), calls, {
       sellerpilot_service_enqueue_periodic_sync: (arguments_) =>
         arguments_.p_channel === "qoo10"
@@ -1099,6 +1101,7 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
   const logged: unknown[] = [];
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
+    staticEgressChannels: ["lazada"],
     rpc: async (name) => {
       if (name === "sellerpilot_service_enqueue_periodic_sync") {
         return { data: null, error: { code: "transport_error" } };
@@ -1221,7 +1224,7 @@ test("two fenced jobs run concurrently within configured drain capacity", async 
   assert.ok(body.capacity * 5 > serverlessCsCurrentInquiryEnqueues(new Date()).length);
   assert.equal(
     calls.filter(({ name }) => name === "sellerpilot_claim_serverless_gateway_job").length,
-    SERVERLESS_CS_DRAIN_CONCURRENCY,
+    SERVERLESS_CS_DRAIN_CONCURRENCY * 2,
   );
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|Where is my item\?|buyer-1/);
 });
@@ -1230,6 +1233,7 @@ test("inquiry list completion normalizes provider data in the atomic transaction
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
+    staticEgressChannels: ["lazada"],
     rpc: baseRpc(claim("ebay", "inquiries.list"), calls),
     executeProvider: async () => inquiryListResult("ebay"),
   });
@@ -1259,7 +1263,7 @@ test("inquiry list completion normalizes provider data in the atomic transaction
   });
   assert.equal(
     calls.filter(({ name }) => name === "sellerpilot_claim_serverless_gateway_job").length,
-    SERVERLESS_CS_DRAIN_CONCURRENCY,
+    SERVERLESS_CS_DRAIN_CONCURRENCY * 2,
   );
   const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
   assert.equal(complete?.arguments_.p_status, "succeeded");

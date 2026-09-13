@@ -51,20 +51,41 @@ export async function collectRuntimeRpcInventory(root) {
     const members=type.isUnion()?type.types:[type];
     return members.length&&members.every(t=>t.flags&ts.TypeFlags.StringLiteral)?members.map(t=>t.value):null;
   }
+  function rpcArgumentIndex(call) {
+    if(ts.isPropertyAccessExpression(call.expression)&&call.expression.name.text==='rpc')return 0;
+    if(!ts.isIdentifier(call.expression))return null;
+    const declaration=checker.getResolvedSignature(call)?.declaration;
+    // Follow named wrappers such as callRpc(dependencies,name,args), runRpc,
+    // and requiredRpc by parameter identity, not by a hardcoded helper name.
+    if(declaration&&ts.isFunctionDeclaration(declaration)&&declaration.body) {
+      const indexes=new Set();
+      function inspect(node) {
+        if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)
+          &&node.expression.name.text==='rpc'&&node.arguments[0]) {
+          const symbol=checker.getSymbolAtLocation(node.arguments[0]);
+          declaration.parameters.forEach((parameter,index)=>{
+            if(symbol&&checker.getSymbolAtLocation(parameter.name)===symbol)indexes.add(index);
+          });
+        }
+        ts.forEachChild(node,inspect);
+      }
+      inspect(declaration.body);
+      // A local function named rpc(admin,product,action) with a fixed inner
+      // database name is already covered by its inner call, not unresolved.
+      return indexes.size===1?[...indexes][0]:null;
+    }
+    return call.expression.text==='rpc'?0:null;
+  }
   const entries=new Map();const unresolved=[];let callCount=0;
   for(const file of files) {
     const source=program.getSourceFile(file);if(!source)continue;
     function visit(node) {
-      // Adapters also accept a bound RPC callback (rpc(name, args)). These
-      // executable calls carry contracts just like client.rpc(name, args).
-      if(ts.isCallExpression(node)&&(
-        (ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='rpc')||
-        (ts.isIdentifier(node.expression)&&node.expression.text==='rpc')
-      )) {
+      const nameIndex=ts.isCallExpression(node)?rpcArgumentIndex(node):null;
+      if(nameIndex!==null) {
         callCount++;
         const location={file:path.relative(root,file).split(path.sep).join('/'),line:source.getLineAndCharacterOfPosition(node.getStart(source)).line+1};
-        const names=strings(node.arguments[0]);
-        if(!names)unresolved.push({...location,argument:node.arguments[0]?.getText(source).slice(0,200)??'<missing>'});
+        const names=strings(node.arguments[nameIndex]);
+        if(!names)unresolved.push({...location,argument:node.arguments[nameIndex]?.getText(source).slice(0,200)??'<missing>'});
         else for(const name of new Set(names)) {
           if(!/^sellerpilot_[a-z0-9_]+$/.test(name))continue;
           if(!entries.has(name))entries.set(name,[]);entries.get(name).push(location);

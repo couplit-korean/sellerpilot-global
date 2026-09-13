@@ -823,10 +823,10 @@ test("generic internal completion rejects Shopee SG success without atomic mappi
   assert.equal(rpcCalls, 0);
 });
 
-test("generic internal completion accepts Shopee SG success only with same-transaction mapping", async () => {
+test("a Shopee mapping without required provider readback cannot report completed", async () => {
   let rpcCalls = 0;
   const result = await completeCommerceClaim(
-    { rpc: async () => { rpcCalls += 1; return { data: { status: "completed" }, error: null }; } },
+    { rpc: async (name) => { rpcCalls += 1; return { data: name === "sellerpilot_service_serverless_cs_completion_context" ? {status:"running",channel:"shopee",operation:"listing.create"} : { status: "completed" }, error: null }; } },
     "a".repeat(64),
     shopeeCreateCompletionJob(),
     shopeeCreateSucceededCompletion({
@@ -835,6 +835,6 @@ test("generic internal completion accepts Shopee SG success only with same-trans
       localItemId: "8001",
     }),
   );
-  assert.equal(result, "completed");
+  assert.equal(result, "unavailable");
   assert.equal(rpcCalls, 0);
 });

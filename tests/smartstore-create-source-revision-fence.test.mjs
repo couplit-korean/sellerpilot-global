@@ -326,7 +326,7 @@ test("snapshot to TypeScript binding preserves microseconds and one microsecond 
       product: {
         id: ids.product,
         sku: "PRODUCT-FALLBACK-001",
-        status: "ready",
+        status: "active",
         name: "스마트스토어 현재 소스",
         onHand: 1,
       },

@@ -469,6 +469,12 @@ export async function executeShopeeSgCreateRuntime(
             sourceUrl: url,
             sourceSha256: identity.sourceSha256,
           };
+          // A durable upload receipt already identifies the provider image.
+          // The upload hook cannot return that ID, so check it before invoking
+          // the uploader; otherwise resuming would upload again and then fail.
+          if (durable.completed.has(stage.sequence)) {
+            return (await beginStage(stage))!;
+          }
           const imageId = await dependencies.uploadImage(
             input.shopeeShopCredential as SecretPayload,
             input.environment,

@@ -24,7 +24,7 @@ export const temuCollectorAttestationSchema = z.object({
   productId: z.string().uuid(),
   credentialId: z.string().uuid(),
   credentialVersion: z.number().int().positive(),
-  credentialFingerprint: digest,
+  credentialFingerprint: z.string().regex(/^[A-F0-9]{12}$/u),
   credentialVaultSecretId: z.string().uuid(),
   productRevisionFingerprint: digest,
   partnerAccountSubject: z.string().regex(

@@ -1362,6 +1362,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   delete effectiveArguments[qoo10ListingCreateApprovalBindingArgument];
   delete effectiveArguments[shopeeSgCreatePrewriteEvidenceArgument];
+  delete effectiveArguments.sellerpilotTemuAuthoritativeSource;
   delete effectiveArguments.sellerpilotTemuReviewAndCreatePrewrite;
   delete effectiveArguments.sellerpilotEbayCreateApproval;
   delete effectiveArguments.sellerpilotEbayCreateLedgerSnapshot;

@@ -15,6 +15,8 @@ import { type CredentialRefreshSnapshot, type CredentialRefreshTarget } from "./
 import { executeServerlessGatewayProviderJob, serverlessGatewayOperationAllowed, type ServerlessGatewayExecutionHooks, type ServerlessGatewayProviderExecutionInput, type ServerlessGatewayProviderResult } from "./serverless-gateway-provider";
 import { channelPriceUpdateRelease } from "./price-update-release";
 import { providerRateBudgetContract, providerRateLimitEvidence } from "./provider-rate-budget";
+import { isCoupangProductReplyReadbackRetry } from "./gateway-readback-contract";
+import { recordCoupangProductReplyReadbackRetryWithReplay } from "./cs/coupang/product-reply-readback-rpc";
 import { recordTemuDetailRetryWithReplay } from "./cs/temu/retry-rpc";
 import { SERVERLESS_STATIC_EGRESS_CHANNELS, type ServerlessStaticEgressChannel } from "./serverless-static-egress";
 import { resolveRuntimeReleaseIdentity, runtimeStatusMatchesCurrentRelease } from "../internal-scheduler-auth";
@@ -31,6 +33,8 @@ import {
   recordQoo10CreateOfficialGetRecovery,
 } from "../server-qoo10-listing-create-fulfillment-source";
 import { drainElevenstCreateRecovery } from "./elevenst-create-recovery-drain";
+import { collectDrainWaves } from "./serverless-drain-waves";
+import { hydrateCsProviderJob } from "../cs/operations/hydrate";
 
 export const SERVERLESS_GATEWAY_VERSION = "sellerpilot-vercel-gateway/2.0";
 export const SERVERLESS_CS_GATEWAY_VERSION = SERVERLESS_GATEWAY_VERSION;
@@ -1208,11 +1212,13 @@ export async function runOneServerlessCsGatewayJob(
   try {
     await heartbeat.start();
     await assertLeaseHealthy();
-    const executionJob = await hydrateListingPublicationVerificationJob(
+    const publicationJob = await hydrateListingPublicationVerificationJob(
       dependencies,
       gatewayTokenHash,
       job,
     );
+    const executionJob = await hydrateCsProviderJob(publicationJob, gatewayTokenHash,
+      (name, args) => callRpc(dependencies, name, args));
     await assertLeaseHealthy();
     const elevenstCredentialVersion = await verifyElevenstGatewayCredentialVersion(
       dependencies,
@@ -1261,10 +1267,12 @@ export async function runOneServerlessCsGatewayJob(
       ? result.retryContinuation
       : undefined;
     if (retryContinuation) {
+      const coupangReadbackRetry = isCoupangProductReplyReadbackRetry(retryContinuation);
       if (result.ok
-        || result.channel !== "temu"
-        || result.operation !== "inquiries.list") {
-        throw new Error("TEMU_AFTER_SALES_DETAIL_RETRY_RESULT_INVALID");
+        || result.channel !== (coupangReadbackRetry ? "coupang" : "temu")
+        || result.operation !== "inquiries.list"
+        || result.channel !== job.channel || result.operation !== job.operation) {
+        throw new Error("CS_PROVIDER_READ_RETRY_RESULT_INVALID");
       }
       await assertLeaseHealthy();
       await stopHeartbeat();
@@ -1279,8 +1287,12 @@ export async function runOneServerlessCsGatewayJob(
         p_replay_count: retryContinuation.replayCount,
         p_provider_status: retryContinuation.providerStatus,
       };
-      const receipt = await recordTemuDetailRetryWithReplay(
-        () => callRpc(dependencies, REQUEUE_TEMU_AFTER_SALES_DETAIL_RPC, retryRpcArguments),
+      const receipt = await (coupangReadbackRetry
+        ? recordCoupangProductReplyReadbackRetryWithReplay
+        : recordTemuDetailRetryWithReplay)(
+        () => callRpc(dependencies, coupangReadbackRetry
+          ? "sellerpilot_service_requeue_coupang_product_reply_readback_v1"
+          : REQUEUE_TEMU_AFTER_SALES_DETAIL_RPC, retryRpcArguments),
         retryContinuation,
       );
       // The provider read failed. A durable retry is scheduled, but neither
@@ -1587,12 +1599,14 @@ export async function runServerlessCsGatewayDrain(
       total: enqueue.attempted,
     });
   }
-  const workerResponses = await Promise.all(
-    Array.from(
-      { length: SERVERLESS_CS_DRAIN_CONCURRENCY },
-      () => runOneServerlessCsGatewayJob(dependencies, credentials.gatewayTokenHash),
-    ),
-  );
-  const workers = await Promise.all(workerResponses.map(safeDrainWorkerSummary));
+  const workers = await collectDrainWaves(async () => {
+    const workerResponses = await Promise.all(
+      Array.from(
+        { length: SERVERLESS_CS_DRAIN_CONCURRENCY },
+        () => runOneServerlessCsGatewayJob(dependencies, credentials.gatewayTokenHash),
+      ),
+    );
+    return Promise.all(workerResponses.map(safeDrainWorkerSummary));
+  });
   return aggregateDrainResponse(enqueue, workers);
 }

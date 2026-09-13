@@ -161,7 +161,13 @@ function drainRpc(
         error: null,
       };
     }
-    if (name === SHOPEE_STAGE_RPCS.rebind || name === SHOPEE_STAGE_RPCS.recordGlobal) {
+    if (name === SHOPEE_STAGE_RPCS.recordGlobal) {
+      return { data: { contract:"sellerpilot-shopee-sg-create-resume/1", status:"recorded" }, error:null };
+    }
+    if (name === "sellerpilot_service_enqueue_due_publication_reviews") {
+      return { data: { queued:0 }, error:null };
+    }
+    if (name === SHOPEE_STAGE_RPCS.rebind) {
       return { data: { status: "ok" }, error: null };
     }
     if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") {
@@ -177,6 +183,7 @@ function drainRpc(
           channel: "shopee",
           operation: "listing.create",
           normalization_timestamp: "2026-08-28T00:00:00.000Z",
+          publication_verification_boundary: "2026-09-09T23:59:00.000Z",
         },
         error: null,
       };
@@ -258,7 +265,7 @@ test("serverless gateway exposes Shopee create stage hooks and rebinds after cre
   assert.ok(rebindIndex > prepareIndex);
 });
 
-test("serverless Shopee create success uses same-transaction completion map and skips generic ledger RPC", async () => {
+test("serverless Shopee create success persists the final ledger after the stage mapping", async () => {
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
@@ -274,7 +281,7 @@ test("serverless Shopee create success uses same-transaction completion map and 
   assert.equal(body.status, "succeeded");
   assert.equal(
     calls.some(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction"),
-    false,
+    true,
   );
 });
 

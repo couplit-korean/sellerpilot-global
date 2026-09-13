@@ -111,7 +111,7 @@ function approvedContext() {
       name: "스마트스토어 신규 상품 회귀 검사",
       description: "실제 함수 경로만 검증하는 로컬 fixture",
       sourceUrl: null,
-      status: "ready",
+      status: "active",
       onHand: 1,
     },
     manualFields: {

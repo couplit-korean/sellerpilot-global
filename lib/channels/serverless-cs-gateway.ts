@@ -387,7 +387,7 @@ async function enqueueDuePublicationReviews(
 ) {
   const result = await callRpc(
     dependencies,
-    "sellerpilot_service_enqueue_due_listing_publication_verifications",
+    "sellerpilot_service_enqueue_due_publication_rechecks",
     { p_limit: 14 },
   );
   // Code-first and database-first rolling deployments can briefly lack the

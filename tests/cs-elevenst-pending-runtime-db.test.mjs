@@ -4,8 +4,8 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const root = new URL("../", import.meta.url);
-const cont08Url = new URL("supabase/migrations/20260909133643_cs_elevenst_account_lifecycle.sql", root);
-const cont09Url = new URL("supabase/migrations/20260909133703_cs_elevenst_pending_diagnostic.sql", root);
+const cont08Url = new URL("supabase/migrations/20260913043000_restore_elevenst_account_lifecycle_and_pending_diagnostics.sql", root);
+const cont09Url = new URL("supabase/migrations/20260913043000_restore_elevenst_account_lifecycle_and_pending_diagnostics.sql", root);
 
 const admin = "11111111-1111-4111-8111-111111111111";
 const pendingA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
@@ -172,7 +172,7 @@ async function fixture() {
   await db.exec('alter table sellerpilot_private.channel_gateway_jobs add column listing_id uuid, add column seller_account_key text');
   await db.exec(lineage.slice(start,end));
   await db.exec('create trigger guard_gateway_job_seller_lineage before insert or update on sellerpilot_private.channel_gateway_jobs for each row execute function sellerpilot_private.guard_gateway_job_seller_lineage()');
-  await db.exec(cont09);
+  await db.exec('begin;\n'+cont09.slice(cont09.indexOf('-- Reviewed source: 20260909133703')));
   return db;
 }
 

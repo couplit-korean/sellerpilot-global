@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-const sql = await readFile(new URL(
-  "../supabase/migrations/20260908142025_cs_shopee_target_refresh_cas.sql",
+const recovery = await readFile(new URL(
+  "../supabase/migrations/20260913044500_restore_shopee_refresh_and_create_stage_contracts.sql",
   import.meta.url,
 ), "utf8");
+const sql = recovery.slice(0,recovery.indexOf('-- Reviewed source: 20260909204000')).replace(/do \$recovery_guard\$[\s\S]*?end \$recovery_guard\$;/u,'')+'commit;';
 const owner = "00000000-0000-4000-8000-000000006001";
 const credential = "00000000-0000-4000-8000-000000006002";
 const vaultId = "00000000-0000-4000-8000-000000006003";

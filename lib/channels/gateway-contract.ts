@@ -1,6 +1,7 @@
 import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 export { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 import { z } from "zod";
+import { temuBuyerChatRuntimeEvidenceSchema } from "./cs/temu/runtime-readiness";
 import { ebayPublicationReconciliationBindingSchema } from "./ebay-publication-reconciliation-contract";
 import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operation-names";
@@ -28,6 +29,25 @@ const canonicalCredentialExpirySchema = z.string()
   .transform((value) => new Date(value).toISOString())
   .nullable();
 
+export const gatewayCsCredentialBindingContextSchema = z.discriminatedUnion("status", [
+  z.object({
+    contract: z.literal("sellerpilot-cs-credential-context/1"),
+    status: z.literal("verified"),
+    credentialId: z.string().uuid(),
+    sellerAccountKey: z.string().regex(/^[a-f0-9]{64}$/u),
+    sellerAccountKeySource: z.literal("provider_certified_v1"),
+    sellerAccountVerifiedAt: z.string().datetime({ offset: true }),
+    ownerBinding: z.literal("job_credential_same_owner"),
+    workerIdentityCompared: z.literal(false),
+  }).strict(),
+  z.object({
+    contract: z.literal("sellerpilot-cs-credential-context/1"),
+    status: z.literal("blocked"),
+    blocker: z.string().regex(/^TEMU_[A-Z0-9_]+$/u),
+    workerIdentityCompared: z.literal(false),
+  }).strict(),
+]);
+
 export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
   claim_token: z.string().uuid(),
@@ -50,7 +70,14 @@ export const gatewayClaimSchema = z.object({
   // The worker needs the credential's certified seller account key to verify
   // channel identity readbacks (Temu) without a separate lookup.
   seller_account_key: z.string().nullable().optional(),
+  credential_binding_context: gatewayCsCredentialBindingContextSchema.optional(),
+  temu_buyer_chat_readiness_context: temuBuyerChatRuntimeEvidenceSchema.nullable().optional(),
 }).superRefine((value, context) => {
+  const binding = value.credential_binding_context;
+  if (binding && (value.channel !== "temu" || value.operation !== "inquiries.list"
+    || (binding.status === "verified" && binding.credentialId !== value.credential_id))) {
+    context.addIssue({ code: "custom", path: ["credential_binding_context"], message: "invalid CS credential binding" });
+  }
   const ebayRecovery = value.ebay_publication_reconciliation;
   if (ebayRecovery && (
     value.channel !== "ebay"
