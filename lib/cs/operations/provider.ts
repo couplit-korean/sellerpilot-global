@@ -156,7 +156,11 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
         String(arguments_.shopId ?? arguments_.shop_id ?? "").trim(), input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true)).payload;
     } else if (input.job.channel === "lazada") {
       await input.hooks.assertLeaseHealthy();
-      credential = { ...credential, country: String(arguments_.country || textValue(credential, "country") || "my").toLowerCase() };
+      if (arguments_.sellerpilotLazadaCountry && arguments_.country
+        && String(arguments_.sellerpilotLazadaCountry).toLowerCase() !== String(arguments_.country).toLowerCase()) {
+        throw new Error("LAZADA_IM_COUNTRY_BINDING_MISMATCH");
+      }
+      credential = { ...credential, country: String(arguments_.sellerpilotLazadaCountry || arguments_.country || textValue(credential, "country") || "my").toLowerCase() };
       credential = (await ensureLazadaAccessToken(credential, undefined, input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true)).payload;
     } else if (input.job.channel === "ebay") {
       await input.hooks.assertLeaseHealthy();

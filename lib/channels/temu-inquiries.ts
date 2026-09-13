@@ -310,8 +310,13 @@ export async function executeTemuInquiry(input: TemuInquiryInput): Promise<TemuI
         }
         const total = result.total === undefined ? null : Number(result.total);
         const returnedPage = result.pageNumber === undefined ? pageNo : Number(result.pageNumber);
+        // Live Temu returns pageNumber=0 for an empty first-page result.
+        // Accept only that exact terminal shape; a later/mismatched page or
+        // nonempty response must still fail before advancing the checkpoint.
+        const emptyFirstPage = pageNo === 1 && result.total === 0
+          && result.pageNumber === 0 && rows.length === 0;
         if ((total !== null && (!Number.isSafeInteger(total) || total < 0))
-            || !Number.isSafeInteger(returnedPage) || returnedPage !== pageNo) {
+            || !Number.isSafeInteger(returnedPage) || (returnedPage !== pageNo && !emptyFirstPage)) {
           throw new Error("TEMU_AFTER_SALES_PAGINATION_INVALID");
         }
         const hasNextPage = total === null

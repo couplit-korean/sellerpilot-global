@@ -383,6 +383,16 @@ const diagnosticResultSchema = z.object({
     status: z.enum(["passed", "failed", "manual"]),
     message: z.string().min(1).max(1_000),
     remoteRequestId: z.string().max(160).optional(),
+    lazadaImCapability: z.object({
+      contract: z.literal("sellerpilot-lazada-im-capability/1"),
+      country: z.enum(["MY", "SG", "PH", "TH", "VN", "ID"]),
+      sellerId: z.string().regex(/^[1-9][0-9]{0,31}$/),
+      appFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      tokenFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      targetFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      responseSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      observedAt: z.string().datetime(),
+    }).strict().optional(),
   }),
   safeMessage: z.string().min(1).max(1_000),
 });

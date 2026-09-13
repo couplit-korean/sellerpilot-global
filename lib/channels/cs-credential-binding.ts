@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationName } from "./operation-names";
 import { readVerifiedTemuCsBindingFromResult } from "./cs/temu/account-binding";
+import { lazadaImCredentialBinding } from "./lazada-im-capability";
 export const csCredentialBindingContract="sellerpilot-cs-credential-binding/1" as const;
 const text=(value:unknown)=>typeof value==="string"||typeof value==="number"?String(value).trim():"";
 const digest=(value:string)=>createHash("sha256").update(value).digest("hex");
@@ -14,6 +15,14 @@ export type CsCredentialBindingInput={channel:ActiveChannelKey;operation:Channel
 export function csCredentialBindingEvidence(input:CsCredentialBindingInput){
  if(!["inquiries.list","inquiries.reply"].includes(input.operation))return null;
  const args=record(input.request.arguments);const c=input.credential;
+ if(input.channel==="lazada" && !["product_review","product_review_readback"].includes(text(args.kind))){
+  try {
+   const binding=lazadaImCredentialBinding(c,text(args.sellerpilotLazadaCountry||args.country||c.country));
+   return{contract:csCredentialBindingContract,channel:"lazada",operation:input.operation,
+    appFingerprint:binding.appFingerprint,tokenFingerprint:binding.tokenFingerprint,
+    targetFingerprints:[binding.targetFingerprint],country:binding.country};
+  } catch {return null;}
+ }
  const appParts=[c.partner_id,c.app_key,c.client_id,c.application_id,c.seller_id,c.vendor_id,c.access_key].map(text).filter(Boolean);
  const tokenParts=[c.access_token,c.api_key,c.open_api_key,c.refresh_token,c.partner_key,c.app_secret,c.client_secret,c.secret_key].map(text).filter(Boolean);
  const country=text(args.country||c.country||c.region||args.marketplaceId||c.marketplace_id).toUpperCase().slice(0,40)||"UNSCOPED";

@@ -1,0 +1,290 @@
+{
+  "checkedAt": "2026-09-13T05:03:00Z",
+  "ebayAuthorization": [
+    {
+      "audit": {
+        "sessions": [
+          {
+            "jobId": "26fbc20b-8a0f-4c1e-8e6b-0797a1509d9f",
+            "status": "succeeded",
+            "receipt": true,
+            "version": 204,
+            "createdAt": "2026-09-13T04:44:14.426241+00:00",
+            "finalizedAt": "2026-09-13T04:44:22.022926+00:00",
+            "credentialId": "0f101b00-8ee2-44dd-820a-8747f8dbf6b4",
+            "scopeGranted": true,
+            "includeMessages": true,
+            "credentialStatus": "active"
+          }
+        ]
+      }
+    }
+  ],
+  "ebayCommerceRead": [
+    {
+      "checkedAt": "2026-09-13T04:49:52.897Z",
+      "credentialId": "0f101b00-8ee2-44dd-820a-8747f8dbf6b4",
+      "version": 204,
+      "httpStatus": 200,
+      "keys": [
+        "limit",
+        "offset",
+        "total",
+        "href",
+        "next",
+        "conversations"
+      ],
+      "total": 21,
+      "conversationCount": 1,
+      "errorIds": []
+    }
+  ],
+  "lazadaAndTemuRead": {
+    "checkedAt": "2026-09-13T04:34:44.646Z",
+    "source": "Mac direct read-only official API",
+    "lazada": [
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "my",
+        "path": "/seller/get",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "name_company",
+          "name",
+          "verified",
+          "marketplaceEaseMode",
+          "seller_id",
+          "email",
+          "short_code",
+          "cb",
+          "status"
+        ],
+        "sellerId": "300872000183",
+        "sellerCountry": "",
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "my",
+        "path": "/im/session/list",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "session_list",
+          "next_start_time",
+          "has_more",
+          "last_session_id"
+        ],
+        "sessionCount": 1,
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "ph",
+        "path": "/seller/get",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "name_company",
+          "name",
+          "verified",
+          "marketplaceEaseMode",
+          "seller_id",
+          "email",
+          "short_code",
+          "cb",
+          "status"
+        ],
+        "sellerId": "501846640243",
+        "sellerCountry": "",
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "ph",
+        "path": "/im/session/list",
+        "httpStatus": 200,
+        "code": "IllegalAccessToken",
+        "error": null,
+        "dataKeys": [],
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "sg",
+        "path": "/seller/get",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "name_company",
+          "name",
+          "verified",
+          "marketplaceEaseMode",
+          "seller_id",
+          "email",
+          "short_code",
+          "cb",
+          "status"
+        ],
+        "sellerId": "1754224042",
+        "sellerCountry": "",
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "sg",
+        "path": "/im/session/list",
+        "httpStatus": 200,
+        "code": "IllegalAccessToken",
+        "error": null,
+        "dataKeys": [],
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "th",
+        "path": "/seller/get",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "name_company",
+          "name",
+          "verified",
+          "marketplaceEaseMode",
+          "seller_id",
+          "email",
+          "short_code",
+          "cb",
+          "status"
+        ],
+        "sellerId": "101407248667",
+        "sellerCountry": "",
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "th",
+        "path": "/im/session/list",
+        "httpStatus": 200,
+        "code": "IllegalAccessToken",
+        "error": null,
+        "dataKeys": [],
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "vn",
+        "path": "/seller/get",
+        "httpStatus": 200,
+        "code": "0",
+        "error": null,
+        "dataKeys": [
+          "name_company",
+          "name",
+          "verified",
+          "marketplaceEaseMode",
+          "seller_id",
+          "email",
+          "short_code",
+          "cb",
+          "status"
+        ],
+        "sellerId": "201095728264",
+        "sellerCountry": "",
+        "permissionDenied": false,
+        "ipDenied": false
+      },
+      {
+        "credentialId": "05af86fe-37dc-4768-8952-3ebde628e4dd",
+        "version": 6,
+        "country": "vn",
+        "path": "/im/session/list",
+        "httpStatus": 200,
+        "code": "IllegalAccessToken",
+        "error": null,
+        "dataKeys": [],
+        "permissionDenied": false,
+        "ipDenied": false
+      }
+    ],
+    "temu": {
+      "credentialId": "ca2af447-0706-4694-aed5-7658f12ec2c4",
+      "version": 2,
+      "httpStatus": 200,
+      "success": true,
+      "errorCode": "1000000",
+      "resultKeys": [
+        "total",
+        "pageNumber",
+        "data"
+      ],
+      "total": 0,
+      "pageNumber": 0,
+      "rowCount": 0,
+      "totalType": "number",
+      "pageNumberType": "number"
+    }
+  },
+  "lazadaMigration": [
+    {
+      "version": "20260913060000",
+      "name": "lazada_im_capability_bootstrap",
+      "source_sha256": "e9b72b14fa3ee63d8c1856c1d8d50f83ef892ac7fc9544f389c299b45fd2dc1a"
+    }
+  ],
+  "lazadaRollbackVerification": [
+    {
+      "result": {
+        "rollbackOnly": true,
+        "sameSellerCountry": true,
+        "forgedTokenBlocked": true,
+        "wrongSellerBlocked": true,
+        "otherCountryBlocked": true,
+        "firstBootstrapAdmitted": true
+      }
+    }
+  ],
+  "rpcInventory": {
+    "sourceFiles": 764,
+    "calls": 663,
+    "resolvedNames": 380,
+    "missingNames": 0,
+    "unresolvedSites": 38
+  },
+  "validation": {
+    "focusedTests": 44,
+    "focusedFailed": 0,
+    "typecheck": "passed",
+    "nextProductionBuild": "passed"
+  },
+  "deployment": "Lazada IM and Temu code pending deployment; eBay a5c7147 is active",
+  "notProved": [
+    "Lazada bootstrap receipt and projected customer history",
+    "PH SG TH VN IM authorization",
+    "all-channel product registration reply shipping external readback",
+    "38 dynamic RPC sites runtime proof"
+  ]
+}

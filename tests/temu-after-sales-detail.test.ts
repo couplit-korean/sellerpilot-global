@@ -12,6 +12,35 @@ const now = new Date("2026-09-08T03:00:00.000Z");
 const payload = { app_key: "app", app_secret: "secret", access_token: "token" };
 const expectSha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
+test("Temu's numeric zero-page empty first response is terminal, not a pagination error", async () => {
+  const previous = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ success: true, result: { total: 0, pageNumber: 0, data: [] } });
+  };
+  try {
+    const result = await executeTemuInquiry({ operation: "inquiries.list", payload,
+      arguments: { includeDetails: true, pageNo: 1, pageSize: 20,
+        updateAtStart: 1788840000, updateAtEnd: 1788926400 } });
+    assert.equal(calls, 1);
+    assert.equal(result.steps[0]?.ok, true);
+    assert.equal(result.continuationArguments, undefined);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("Temu zero-page exception never accepts a later page or contradictory totals", async () => {
+  const previous = globalThis.fetch;
+  try {
+    for (const [pageNo, total, pageNumber] of [[2, 0, 0], [1, 1, 0], [1, "0", 0], [1, 0, "0"]]) {
+      globalThis.fetch = async () => Response.json({ success: true, result: { total, pageNumber, data: [] } });
+      await assert.rejects(executeTemuInquiry({ operation: "inquiries.list", payload,
+        arguments: { includeDetails: true, pageNo, pageSize: 20,
+          updateAtStart: 1788840000, updateAtEnd: 1788926400 } }), /TEMU_AFTER_SALES_PAGINATION_INVALID/);
+    }
+  } finally { globalThis.fetch = previous; }
+});
+
 test("Temu current and history after-sales schedules use documented second timestamps and detail reads", () => {
   const current = inquirySyncRequests("temu", now);
   assert.equal(current.length, 1);

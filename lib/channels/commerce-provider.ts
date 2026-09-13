@@ -1,5 +1,6 @@
 import { assertNoRetiredProductRecovery } from "./retired-product-recovery";
 import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnostics";
+import { diagnoseLazadaImCapability } from "./lazada-im-capability";
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import { assertEbayCreatePublicationContract } from "./ebay-create-preflight";
@@ -272,6 +273,14 @@ async function prepareCredential(input: ServerlessGatewayProviderExecutionInput,
 }
 async function executeDiagnostic(input: ServerlessGatewayProviderExecutionInput) {
   const prepared = await prepareCredential(input, requestArguments(input.job));
+  if (input.job.channel === "lazada" && prepared.arguments_.lazadaImCapabilityProbe === true) {
+    const diagnostic = await diagnoseLazadaImCapability({ payload: prepared.credential,
+      country: textValue(prepared.arguments_, "country"),
+      begin: input.hooks.beginCredentialMutation, stage: input.hooks.stageCredentialRefresh,
+      assertLease: input.hooks.assertLeaseHealthy });
+    return { ok: true, channel: "lazada" as const, operation: "diagnostic.test" as const,
+      diagnostic, safeMessage: diagnostic.message };
+  }
   if (input.job.channel === "ebay"
     && !readProviderAccountIdentity(prepared.credential, "ebay")) {
     throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
