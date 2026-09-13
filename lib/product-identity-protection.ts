@@ -857,6 +857,7 @@ export async function compositeIdentityForeground(
   const top = surfaceSupported
     ? placement.top + placement.height - renderedForeground.info.height
     : placement.top + Math.max(0, Math.floor((placement.height - renderedForeground.info.height) / 2));
+  let contactShadow: { input: Buffer; left: number; top: number } | null = null;
   if (surfaceSupported) {
     const alpha = await sharp(renderedForeground.data, {
       failOn: "warning",
@@ -893,13 +894,45 @@ export async function compositeIdentityForeground(
     if (Math.abs(actualContactY - expectedContactY) > 1 || supportColumnCount / visibleWidth < 0.08) {
       throw new Error(`${spec.id} canonical 상품 하단이 reserved zone의 접촉면에 자연스럽게 닿지 않습니다.`);
     }
+    // A shallow contact-only shadow is derived from the verified alpha footprint.
+    // It belongs to the support surface, never to the preserved product pixels.
+    // No directional cast shadow, reflection, or product relighting is inferred.
+    const sigma = Math.max(0.6, Math.min(3, visibleWidth * 0.01));
+    const padding = Math.ceil(sigma * 3);
+    const contactDepth = Math.max(1, Math.min(4, Math.round(spec.height * 0.003)));
+    const shadowLeft = Math.max(0, left + minX - padding);
+    const shadowTop = Math.max(0, actualContactY - padding);
+    const shadowWidth = Math.min(spec.width - shadowLeft, visibleWidth + padding * 2);
+    const shadowHeight = Math.min(spec.height - shadowTop, padding * 2 + contactDepth);
+    const shadowPixels = Buffer.alloc(shadowWidth * shadowHeight * 4);
+    for (let x = minX; x <= maxX; x += 1) {
+      if (!supportedColumns[x]) continue;
+      const shadowX = left + x - shadowLeft;
+      if (shadowX < 0 || shadowX >= shadowWidth) continue;
+      for (let y = actualContactY; y < actualContactY + contactDepth; y += 1) {
+        const shadowY = y - shadowTop;
+        if (shadowY >= 0 && shadowY < shadowHeight) {
+          shadowPixels[(shadowY * shadowWidth + shadowX) * 4 + 3] = 84;
+        }
+      }
+    }
+    contactShadow = {
+      input: await sharp(shadowPixels, {
+        raw: { width: shadowWidth, height: shadowHeight, channels: 4 },
+      }).blur(sigma).png().toBuffer(),
+      left: shadowLeft,
+      top: shadowTop,
+    };
   }
   const output = await sharp(background, {
     failOn: "warning",
     limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
   })
     .resize(spec.width, spec.height, { fit: "cover", position: "centre" })
-    .composite([{ input: renderedForeground.data, left, top }])
+    .composite([
+      ...(contactShadow ? [contactShadow] : []),
+      { input: renderedForeground.data, left, top },
+    ])
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
   const metadata = await sharp(output).metadata();

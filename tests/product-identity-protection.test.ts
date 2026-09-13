@@ -621,6 +621,45 @@ test("surface-supported background plates require one horizontal seam inside the
   await assert.doesNotReject(assertIdentityBackgroundPlate(supported, spec, "surface-supported"));
 });
 
+test("supported composites add only a shallow alpha-footprint shadow while preserving source pixels", async () => {
+  const foregroundBytes = await sharp({ create: {
+    width: 40, height: 80, channels: 4, background: { r: 30, g: 100, b: 170, alpha: 1 },
+  } }).png().toBuffer();
+  const foreground: IdentityForeground = {
+    buffer: foregroundBytes, width: 40, height: 80, sourceDigest: "a".repeat(64), retainedPixelRatio: 1,
+  };
+  const spec = {
+    id: "contact-shadow-fixture", width: 200, height: 200,
+    identityPolicy: {
+      mode: "source-composite" as const, sourceRoles: ["main"], background: "#dddddd",
+      placement: { left: 0.25, top: 0.2, width: 0.5, height: 0.6 },
+    },
+  };
+  const background = await sharp({ create: { width: 200, height: 200, channels: 3, background: "#dddddd" } }).png().toBuffer();
+  const sourceDigest = createHash("sha256").update(foregroundBytes).digest("hex");
+  const output = await compositeIdentityForeground(background, foreground, spec, "surface-supported");
+  const pixels = await sharp(output).removeAlpha().raw().toBuffer();
+  const rgb = (x: number, y: number) => [...pixels.subarray((y * 200 + x) * 3, (y * 200 + x) * 3 + 3)];
+  assert.ok(rgb(100, 160)[0] < 221, "the visible support immediately below the product must receive contact shading");
+  assert.deepEqual(rgb(100, 175), [221, 221, 221], "no long cast shadow may extend into the background");
+  assert.deepEqual(rgb(20, 160), [221, 221, 221], "unrelated support surface stays unchanged");
+  for (let y = 40; y < 160; y += 1) {
+    for (let x = 70; x < 130; x += 1) assert.deepEqual(rgb(x, y), [30, 100, 170]);
+  }
+  assert.equal(createHash("sha256").update(foreground.buffer).digest("hex"), sourceDigest);
+  for (const [mode, contactMode] of [
+    ["source-composite", "suspended-or-planar"],
+    ["source-catalog", "surface-supported"],
+    ["source-evidence", "surface-supported"],
+  ] as const) {
+    const actual = await compositeIdentityForeground(background, foreground, {
+      ...spec, identityPolicy: { ...spec.identityPolicy, mode },
+    }, contactMode);
+    const actualPixels = await sharp(actual).removeAlpha().raw().toBuffer();
+    assert.deepEqual([...actualPixels.subarray((160 * 200 + 100) * 3, (160 * 200 + 100) * 3 + 3)], [221, 221, 221], `${mode}/${contactMode} must not receive a contact shadow`);
+  }
+});
+
 test("first-draft pixel checks allow a base inside the support plane for independent scene review", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait")!;
   const spec = { ...portrait, width: 320, height: 400 };
