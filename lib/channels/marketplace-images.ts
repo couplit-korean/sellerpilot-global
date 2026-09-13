@@ -662,6 +662,20 @@ export function buildCoupangMarketplaceContents(currentContentsValue: unknown, l
       ...(learnedContents.length ? learnedContents : detailImages),
     ];
 }
+export function selectMarketplaceGallerySources(channel: ActiveChannelKey, assets: Record<string, unknown>) {
+  const urls = strings(assets.galleryImageUrls);
+  const paths = strings(assets.approvedGalleryImagePaths);
+  const sha256s = strings(assets.approvedGalleryImageSha256s);
+  if ((paths.length || sha256s.length) && (
+    urls.length !== paths.length || urls.length !== sha256s.length
+    || new Set(urls).size !== urls.length || new Set(paths).size !== urls.length
+    || new Set(sha256s).size !== urls.length || sha256s.some(value => !/^[a-f0-9]{64}$/u.test(value))
+  )) throw new Error("MARKETPLACE_APPROVED_SOURCE_LINEAGE_INVALID");
+  const limit = channel === "qoo10" ? 1 : 12;
+  // Select the same approved entries before normalization; Qoo10 has one representative slot.
+  return { urls: urls.slice(0, limit), paths: paths.slice(0, limit), sha256s: sha256s.slice(0, limit) };
+}
+
 export async function prepareMarketplaceImages(serviceClient: SupabaseClient, channel: ActiveChannelKey, argumentsValue: Record<string, unknown>, lifecycle?: MarketplaceImageLifecycleReference) {
   const next = structuredClone(argumentsValue);
   delete next.sellerpilotPublicationAssetBinding;
@@ -757,10 +771,11 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   const approvedGalleryImagePaths = strings(assets?.approvedGalleryImagePaths);
   const approvedGalleryImageSha256s = strings(assets?.approvedGalleryImageSha256s);
   const preserveQoo10RepresentativeImage = qoo10RollbackRecoveryPreservesRepresentativeImage(channel, next);
+  const gallerySources = assets ? selectMarketplaceGallerySources(channel, assets) : { urls: [], paths: [], sha256s: [] };
   const gallery = assets
     ? preserveQoo10RepresentativeImage
       ? []
-      : await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square", approvedGalleryImagePaths, approvedGalleryImageSha256s)
+      : await normalizeList(gallerySources.urls, channel === "qoo10" ? 1 : 12, "gallery-square", gallerySources.paths, gallerySources.sha256s)
     : [];
   const details = assets
     ? await normalizeList(assets.detailImageUrls, manualSourceMode ? 10 : marketplaceChannelDetailImageCount, "detail-ratio", manualSourceMode ? [] : approvedDetailImagePaths, manualSourceMode ? [] : approvedDetailImageSha256s)

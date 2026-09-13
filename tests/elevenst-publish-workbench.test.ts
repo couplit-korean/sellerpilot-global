@@ -80,6 +80,21 @@ function elevenstDraft(context: WorkbenchContext) {
   ) as unknown as { sellerpilotAssets: Record<string, unknown>; product: Record<string, unknown> };
 }
 
+test("AI galleries use generated assets only and never fall back to analysis source photos", () => {
+  const context = publishContext();
+  const originalSources = structuredClone(context.sourceImages);
+  const generatedUrls = context.generatedImages.map(image => image.url);
+  const assets = elevenstDraft(context).sellerpilotAssets;
+  assert.equal((assets.galleryImageUrls as string[]).length, 4);
+  assert.equal((assets.galleryImageUrls as string[]).every(url => generatedUrls.includes(url)), true);
+  assert.doesNotMatch(JSON.stringify(assets.galleryImageUrls), /product\.jpg/);
+  context.generatedImages = [];
+  assert.deepEqual(elevenstDraft(context).sellerpilotAssets.galleryImageUrls, []);
+  context.contentMode = "manual_mvp";
+  assert.deepEqual(elevenstDraft(context).sellerpilotAssets.galleryImageUrls, originalSources.map(image => image.url));
+  assert.deepEqual(context.sourceImages, originalSources);
+});
+
 const processedFoodAttributes: Record<string, string> = {
   "notification:176400445": "롯데웰푸드㈜ / 대한민국",
   "notification:176398001": "제품 별도 표기일까지",

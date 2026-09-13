@@ -16,6 +16,7 @@ import {
   renderMarketplaceDetailImages,
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
+  selectMarketplaceGallerySources,
 } from "../lib/channels/marketplace-images";
 import { assertListingShippingReady } from "../lib/channels/listing-shipping";
 import {
@@ -23,6 +24,21 @@ import {
   parseListingPublicationAssetBinding,
   verifyListingPublicationContent,
 } from "../lib/channels/listing-publication-content";
+
+test("gallery channel limits keep approved URLs, source paths, and hashes at identical indexes", () => {
+  const urls = Array.from({ length: 8 }, (_, index) => `https://storage.example/generated-${index}.png`);
+  const paths = urls.map((_, index) => `results/job/claims/claim/generated-${index}.png`);
+  const sha256s = urls.map((_, index) => (index + 1).toString(16).padStart(64, "0"));
+  const assets = { galleryImageUrls: urls, approvedGalleryImagePaths: paths, approvedGalleryImageSha256s: sha256s };
+  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] as const) {
+    const selected = selectMarketplaceGallerySources(channel, assets);
+    const count = channel === "qoo10" ? 1 : 8;
+    assert.deepEqual(selected, { urls: urls.slice(0, count), paths: paths.slice(0, count), sha256s: sha256s.slice(0, count) });
+  }
+  assert.throws(() => selectMarketplaceGallerySources("qoo10", { ...assets, approvedGalleryImageSha256s: sha256s.slice(0, 1) }), /LINEAGE_INVALID/);
+  assert.throws(() => selectMarketplaceGallerySources("qoo10", { ...assets, approvedGalleryImagePaths: paths.map(() => paths[0]) }), /LINEAGE_INVALID/);
+  assert.deepEqual(selectMarketplaceGallerySources("temu", { galleryImageUrls: [] }), { urls: [], paths: [], sha256s: [] });
+});
 
 test("server-derived publication binding preserves approved detail lineage and Shopee's buyer-visible eight-image contract", () => {
   const roles = [

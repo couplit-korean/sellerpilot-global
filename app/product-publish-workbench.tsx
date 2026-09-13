@@ -8,7 +8,7 @@ import { ChannelRegistrationFields } from "./channel-registration-fields";
 import { ChannelLinkBadge } from "./channel-link-badge";
 import { channelIntegrationStatus } from "../lib/channels/integration-status";
 import { getProductRegistrationDraft, putProductRegistrationDraft, ProductRegistrationDraftClientError } from "../lib/product-registration-draft-client";
-import { editableCommonFacts, preserveChannelRegistrationEdits, publishRegistrationDataSchema, publishRegistrationIdentity, restoreChannelRegistrationPatches, type PublishRegistrationData } from "../lib/publish-registration-draft";
+import { editableCommonFacts, preserveChannelRegistrationEdits, publishRegistrationDataSchema, publishRegistrationIdentity, restoreChannelRegistrationForCategory, type PublishRegistrationData } from "../lib/publish-registration-draft";
 import { registrationIdentityIssue, registrationPatches, setRegistrationValue } from "../lib/channel-registration-form";
 import { elevenstProcessedFoodCategoryId, elevenstProcessedFoodNotificationFields, elevenstProcessedFoodNoticeType, elevenstSaleDateRange, elevenstListingShippingFields } from "../lib/channels/elevenst-listing";
 import { qoo10JapaneseListingCopyFromCategory, repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
@@ -475,10 +475,15 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const localizedDetailSections = normalizedLocalizedDetailSections(writeListing);
   const manualMvp = context.contentMode === "manual_mvp";
   const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
-  const galleryAssetIds = galleryAssetOrderForChannel(channel);
+  const aiGenerated = !manualMvp && context.contentMode !== "external_generated";
+  const approvedGalleryManifest = parseProductDetailImageManifest(context.detailPage?.imageManifest);
+  const galleryAssetIds = aiGenerated && approvedGalleryManifest
+    && context.detailPage?.version === context.detailPage?.approvedVersion
+    ? approvedGalleryManifest.images.map(image => image.role)
+    : galleryAssetOrderForChannel(channel);
   const galleryImageUrls = uniqueUrls([
     generatedImage(galleryAssetIds[0]),
-    ...context.sourceImages.map((item) => item.url),
+    ...(aiGenerated ? [] : context.sourceImages.map((item) => item.url)),
     ...galleryAssetIds.slice(1).map(generatedImage),
   ]);
   const imageSeo = localizedImageSeo(writeListing, channel, marketplaceTitle);
@@ -1469,8 +1474,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         const assignment = nextPayload.assignments.find(item => item.channel === channel && (!target || item.market === target.marketCode));
         const identity = publishRegistrationIdentity(channel, target?.marketCode ?? fallbackChannelMarkets[channel], target?.targetId ?? "", credential?.id ?? "");
         const stored = bank[identity];
-        if (stored && stored.categoryId === (assignment?.categoryId ?? "") && baseDrafts[channel]) {
-          try { restoredDrafts[channel] = JSON.stringify(restoreChannelRegistrationPatches(JSON.parse(baseDrafts[channel]!), stored.patches), null, 2); }
+        if (stored && baseDrafts[channel]) {
+          try { restoredDrafts[channel] = JSON.stringify(restoreChannelRegistrationForCategory(channel, JSON.parse(baseDrafts[channel]!), stored, assignment?.categoryId ?? ""), null, 2); }
           catch { setRegistrationSaveMessage("저장된 채널 입력의 형식을 확인해야 합니다. 서버 초안 원본은 유지됩니다."); }
         }
       }
@@ -1855,7 +1860,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         const assignment = context.assignments.find(item => item.channel === channel && item.market === resolvedTarget.marketCode);
         const key = publishRegistrationIdentity(channel, resolvedTarget.marketCode, resolvedTarget.targetId, credential?.id ?? "");
         const stored = registrationChannelBankRef.current[key];
-        const restored = stored && stored.categoryId === (assignment?.categoryId ?? "") ? restoreChannelRegistrationPatches(base, stored.patches) : base;
+        const restored = restoreChannelRegistrationForCategory(channel, base, stored, assignment?.categoryId ?? "");
         if (channel === "ebay") { listingHandoffRef.current = handoff; setEbayListingHandoff(handoff); setEbayHandoffError(null); }
         setSelectedTargets(nextTargets);
         registrationBaseDraftsRef.current = { ...registrationBaseDraftsRef.current, [channel]: JSON.stringify(base) };

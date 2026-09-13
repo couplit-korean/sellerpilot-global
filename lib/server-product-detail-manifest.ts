@@ -190,6 +190,7 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
       ? alt.trim()
       : `상품 상세 이미지 ${index + 1}`;
   });
+  const studioGallery = !approved.external && assets.contentMode !== "manual_mvp";
 
   next.sellerpilotAssets = {
     ...assets,
@@ -201,7 +202,12 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
           ],
         }
       : {}),
-    contentMode: approved.external ? "external_generated" : "ai_generated",
+    ...(studioGallery ? {
+      galleryImageUrls: [...signedUrls],
+      approvedGalleryImagePaths: approved.manifest.images.map(entry => entry.path),
+      approvedGalleryImageSha256s: approved.manifest.images.map(entry => entry.sourceSha256),
+    } : {}),
+    contentMode: approved.external ? "external_generated" : assets.contentMode === "manual_mvp" ? "manual_mvp" : "ai_generated",
     detailAssetMode: "dedicated",
     detailImageUrls: [...signedUrls],
     detailImageRoles: roles,
@@ -228,6 +234,11 @@ export function marketplaceArgumentsForApprovedDetailFingerprint(
   if (!assets) throw new Error("DETAIL_PAGE_MARKETPLACE_ASSETS_REQUIRED");
   next.sellerpilotAssets = {
     ...assets,
+    ...(!approved.external && assets.contentMode !== "manual_mvp" ? {
+      galleryImageUrls: approved.manifest.images.map(entry => `sellerpilot-storage://${entry.path}`),
+      approvedGalleryImagePaths: approved.manifest.images.map(entry => entry.path),
+      approvedGalleryImageSha256s: approved.manifest.images.map(entry => entry.sourceSha256),
+    } : {}),
     detailImageUrls: approved.manifest.images.map((entry) => `sellerpilot-storage://${entry.path}`),
     detailImageRoles: approved.manifest.images.map((entry) => entry.role),
     approvedDetailImagePaths: approved.manifest.images.map((entry) => entry.path),

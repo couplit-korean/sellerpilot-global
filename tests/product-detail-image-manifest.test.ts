@@ -205,6 +205,9 @@ test("channel arguments replace client detail URLs with approved signed manifest
   }, approved.value, signedUrls);
   const assets = bound.sellerpilotAssets as Record<string, unknown>;
   assert.deepEqual(assets.detailImageUrls, signedUrls);
+  assert.deepEqual(assets.galleryImageUrls, signedUrls, "AI gallery must discard old raw-source URLs");
+  assert.deepEqual(assets.approvedGalleryImagePaths, manifestImages.map(image => image.path));
+  assert.deepEqual(assets.approvedGalleryImageSha256s, manifestImages.map(image => image.sourceSha256));
   assert.deepEqual(assets.detailImageRoles, defaultProductDetailImageRoles);
   assert.equal(assets.detailImageManifestDigest, manifestDigest);
   assert.equal(assets.approvedDetailPageVersion, 4);
@@ -219,6 +222,30 @@ test("channel arguments replace client detail URLs with approved signed manifest
     marketplaceArgumentsForApprovedDetailFingerprint(alternateSigned, approved.value),
     "ephemeral signed URLs must not change the idempotency fingerprint input",
   );
+});
+
+test("AI gallery approval overrides forged gallery lineage but preserves explicit manual source galleries", () => {
+  const approved = approvedProductDetailManifestFromPublishContext(approvedContext());
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  const signed = manifestImages.map(image => `https://storage.example/${image.role}.png`);
+  const rawGallery = ["https://storage.example/raw-source-1.jpg", "https://storage.example/raw-source-2.jpg"];
+  const input = { sellerpilotAssets: {
+    contentMode: "ai_generated", galleryImageUrls: rawGallery,
+    approvedGalleryImagePaths: ["forged/source.png"], approvedGalleryImageSha256s: ["a".repeat(64)],
+    localizedDetailSections: defaultProductDetailImageRoles.map(imageAsset => ({ imageAsset })),
+  } };
+  const bound = bindMarketplaceArgumentsToApprovedDetailManifest(input, approved.value, signed);
+  const assets = bound.sellerpilotAssets as Record<string, unknown>;
+  assert.deepEqual(assets.galleryImageUrls, signed);
+  assert.deepEqual(assets.approvedGalleryImagePaths, manifestImages.map(image => image.path));
+  assert.doesNotMatch(JSON.stringify(assets), /raw-source|forged/);
+  const manualInput = { sellerpilotAssets: { contentMode: "manual_mvp", galleryImageUrls: rawGallery, localizedDetailSections: input.sellerpilotAssets.localizedDetailSections } };
+  const manual = bindMarketplaceArgumentsToApprovedDetailManifest(manualInput, approved.value, signed).sellerpilotAssets as Record<string, unknown>;
+  assert.deepEqual(manual.galleryImageUrls, rawGallery);
+  assert.equal(manual.contentMode, "manual_mvp");
+  assert.throws(() => bindMarketplaceArgumentsToApprovedDetailManifest(input, approved.value, signed.slice(0, 7)), /MANIFEST_SIGNING_FAILED/);
+  assert.deepEqual(input.sellerpilotAssets.galleryImageUrls, rawGallery, "analysis sources remain unchanged");
 });
 
 
