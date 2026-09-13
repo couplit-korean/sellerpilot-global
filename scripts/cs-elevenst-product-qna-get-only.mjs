@@ -168,7 +168,7 @@ async function safeProviderDiagnostic(response) {
   const root = /^(?:\s*<\?xml[^>]*>\s*)?<((?:[\w.-]+:)?[A-Za-z_][\w.:-]*)\b/u.exec(xml)?.[1] ?? "";
   const resultCode = xmlValue(xml, ["result_code", "resultCode", "ResultCode", "ErrorCode"]);
   const resultText = resultCode
-    ? xmlValue(xml, ["result_text", "resultText", "resultMessage", "ResultMessage", "ErrorMessage", "message", "AuthMessage"])
+    ? xmlValue(xml, ["result_text", "result_message", "resultText", "resultMessage", "ResultMessage", "ErrorMessage", "message", "AuthMessage"])
     : "";
   return {
     documentRoot: root.slice(0, 80) || null,

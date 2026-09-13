@@ -103,7 +103,9 @@ test("Qoo10 history RPC stores one body-free parent and enqueues each refinement
       completion_state: "refining",
       completion_reason: "provider_total_mismatch",
       provider_row_count: 0,
-      provider_total: null,
+      // The provider reported five rows, while the returned page is empty.
+      // Retain that total so refinement can explain the coverage gap.
+      provider_total: 5,
       refinement_count: 24,
     });
     const child = (await db.query("select id,request_payload,credential_id,seller_account_key from sellerpilot_private.channel_gateway_jobs where id<>$1 order by request_payload->>'periodicKey' limit 1", [job])).rows[0];

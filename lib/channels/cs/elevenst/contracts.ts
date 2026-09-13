@@ -90,7 +90,11 @@ export function classifyElevenstQnaResponse(input: {
   resultCode: string | null;
   providerRows: number;
 }) {
-  if (input.httpStatus === 200 && input.resultCode === "500") return "business_error";
+  if (input.httpStatus === 200 && input.resultCode === "500") {
+    // accepted is set only after the transport verifies the exact empty-search
+    // message in a valid Product Q&A document with no rows.
+    return input.accepted && input.providerRows === 0 ? "accepted_empty" : "business_error";
+  }
   if (input.accepted && input.httpStatus === 200) {
     return input.providerRows === 0 ? "accepted_empty" : "accepted_rows";
   }

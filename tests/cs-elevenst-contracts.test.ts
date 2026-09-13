@@ -27,12 +27,15 @@ test("11st history planner partitions 30 days into the existing five exact Q&A w
   }), /ELEVENST_RANGE_INVALID/u);
 });
 
-test("11st Product Q&A result 500 is a business error, never a zero-row success", () => {
+test("11st Product Q&A result 500 requires transport acceptance for an empty search", () => {
   assert.equal(classifyElevenstQnaResponse({
     httpStatus: 200, accepted: false, resultCode: "500", providerRows: 0,
   }), "business_error");
   assert.equal(classifyElevenstQnaResponse({
     httpStatus: 200, accepted: true, resultCode: "500", providerRows: 0,
+  }), "accepted_empty");
+  assert.equal(classifyElevenstQnaResponse({
+    httpStatus: 200, accepted: true, resultCode: "500", providerRows: 1,
   }), "business_error");
   assert.equal(classifyElevenstQnaResponse({
     httpStatus: 200, accepted: true, resultCode: null, providerRows: 0,

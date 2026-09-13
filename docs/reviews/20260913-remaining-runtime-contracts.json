@@ -1,8 +1,8 @@
 {
-  "checkedAt": "2026-09-12T22:25:30.391279+00:00",
-  "productionRelease": "737171efe3fe0dc14cf89ff0ef47a192af231272",
+  "checkedAt": "2026-09-13T01:24:23.766053+00:00",
+  "productionRelease": "a6efa006fddc95f13a4dcc66fad9f16198a4c3f0",
   "resolvedFunctionCount": 333,
-  "missingFunctionCount": 79,
+  "missingFunctionCount": 71,
   "unresolvedCallSiteCount": 42,
   "note": "Static call-site inventory. Dynamic callbacks may require additional functions. No missing function is replaced by a stub; existing provider mutation gates remain closed. Migration names are provenance, not an approved apply order.",
   "missing": [
@@ -124,19 +124,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_list_lazada_supplemental_ui_scopes_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/ui/route.ts",
-          "line": 42
-        }
-      ],
-      "sourceMigrations": [
-        "20260910051500_cs_lazada_supplemental_ui_scopes.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_list_temu_cs_accounts_v1",
       "callSites": [
         {
@@ -223,20 +210,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_read_coupang_cs_verification_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/coupang/verification/route.ts",
-          "line": 29
-        }
-      ],
-      "sourceMigrations": [
-        "20260908141314_cs_coupang_authenticated_web_verification.sql",
-        "20260909105117_cs_coupang_verification_legacy_namespaces.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_read_cs_history_coverage_v2",
       "callSites": [
         {
@@ -312,32 +285,6 @@
       ],
       "sourceMigrations": [
         "20260908142023_cs_shopee_history_ledger.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_read_lazada_supplemental_cs_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/route.ts",
-          "line": 41
-        }
-      ],
-      "sourceMigrations": [
-        "20260909165423_cs_lazada_supplemental_read_ledger.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_read_lazada_supplemental_ui_scope_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/ui/route.ts",
-          "line": 59
-        }
-      ],
-      "sourceMigrations": [
-        "20260910051500_cs_lazada_supplemental_ui_scopes.sql"
       ],
       "hasVersionCollision": false
     },
@@ -469,19 +416,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_service_begin_lazada_supplemental_resync_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
-          "line": 72
-        }
-      ],
-      "sourceMigrations": [
-        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_service_begin_qoo10_gateway_create_v1",
       "callSites": [
         {
@@ -591,24 +525,6 @@
       "hasVersionCollision": true
     },
     {
-      "name": "sellerpilot_service_ingest_and_ack_lazada_supplemental_page_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
-          "line": 56
-        },
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/sync/route.ts",
-          "line": 56
-        }
-      ],
-      "sourceMigrations": [
-        "20260909181000_cs_lazada_supplemental_provider_ingest.sql",
-        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_service_ingest_cs_shopee_buyer_chat_authorized_v1",
       "callSites": [
         {
@@ -671,24 +587,6 @@
       ],
       "sourceMigrations": [
         "20260831054000_recover_elevenst_listing_snapshot.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_service_prepare_lazada_supplemental_read_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
-          "line": 42
-        },
-        {
-          "file": "app/api/admin/cs/channels/lazada/supplemental/sync/route.ts",
-          "line": 40
-        }
-      ],
-      "sourceMigrations": [
-        "20260909181000_cs_lazada_supplemental_provider_ingest.sql",
-        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
       ],
       "hasVersionCollision": false
     },
@@ -800,19 +698,6 @@
       ],
       "sourceMigrations": [
         "20260910032500_fence_coupang_create_official_sources_r8.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_service_record_qoo10_history_window_v1",
-      "callSites": [
-        {
-          "file": "lib/cs/operations/worker-completion.ts",
-          "line": 498
-        }
-      ],
-      "sourceMigrations": [
-        "20260909153334_cs_qoo10_history_window_ledger.sql"
       ],
       "hasVersionCollision": false
     },

@@ -117,6 +117,7 @@ export async function elevenstCsXmlRequest(input: {
   const resultMessage = elevenstNamespacedXmlValue(parsedXml, "resultMessage")
     || elevenstNamespacedXmlValue(parsedXml, "ResultMessage")
     || elevenstNamespacedXmlValue(parsedXml, "result_text")
+    || elevenstNamespacedXmlValue(parsedXml, "result_message")
     || elevenstNamespacedXmlValue(parsedXml, "ErrorMessage")
     || elevenstNamespacedXmlValue(parsedXml, "message")
     || elevenstNamespacedXmlValue(parsedXml, "AuthMessage");
@@ -178,15 +179,24 @@ export async function elevenstCsXmlRequest(input: {
       })
     : [];
   const replyBoardInfoNo = elevenstNamespacedXmlValue(parsedXml, "brdInfoNo");
+  // The live Product Q&A endpoint returns this exact business-code envelope
+  // for an empty search. Keep the provider code and reject every other 500.
+  const explicitEmptyProductQna = isProductQnaList
+    && response.status === 200
+    && productQnaDocumentReady && !productQnaParseIncomplete
+    && productQnaObservedRows === 0
+    && !/<(?:[\w.-]+:)?productQna(?:\s|\/?>)/iu.test(parsedXml)
+    && resultCode === "500" && resultMessage === "검색된 대상이 없습니다.";
   const acceptedCode = isAlimiList
     ? !alimiParseIncomplete && (resultCode === "0" || (!resultCode && alimListInfos.length > 0))
     : (!isProductQnaList || (productQnaDocumentReady && !productQnaParseIncomplete))
-      && (!resultCode || ["0", "200", "210"].includes(resultCode));
+      && (explicitEmptyProductQna || !resultCode || ["0", "200", "210"].includes(resultCode));
   return {
     response,
     text: "",
     data: {
       accepted: response.ok && acceptedCode,
+      ...(explicitEmptyProductQna ? { sellerpilotEmptyEvidence: "elevenst_product_qna_no_matching_records_v1" } : {}),
       ...(resultCode ? { resultCode: resultCode.slice(0, 80) } : {}),
       ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
       ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),

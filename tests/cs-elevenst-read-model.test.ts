@@ -10,8 +10,8 @@ const base = {
   providerRows: 0,
 } as const;
 
-test("11st Product Q&A business code 500 is projected as unknown remote count, never zero", () => {
-  for (const accepted of [false, true]) {
+test("11st Product Q&A unaccepted business code 500 is projected as unknown remote count", () => {
+  for (const accepted of [false]) {
     const projection = buildElevenstReadonlyWebProjection({
       provider: { ...base, surface: "product_qna", accepted, resultCode: "500" },
       stored: { rowCount: 4, latestReceivedAt: "2026-08-31T01:00:00.000Z" },
@@ -51,10 +51,10 @@ test("11st Alimi unparsed or negative-code responses cannot become empty success
   }
 });
 
-test("11st read projection rejects a seller mismatch and invalid counters", () => {
+test("11st read projection rejects an invalid seller identifier and invalid counters", () => {
   assert.throws(() => buildElevenstReadonlyWebProjection({
     provider: {
-      ...base, surface: "product_qna", sellerId: "other", accepted: true, resultCode: null,
+      ...base, surface: "product_qna", sellerId: "invalid seller", accepted: true, resultCode: null,
     },
     stored: { rowCount: 0, latestReceivedAt: null },
   }), /ELEVENST_READ_MODEL_SELLER_SCOPE_MISMATCH/u);
@@ -64,4 +64,16 @@ test("11st read projection rejects a seller mismatch and invalid counters", () =
     },
     stored: { rowCount: 0, latestReceivedAt: null },
   }), /ELEVENST_READ_MODEL_INVALID/u);
+});
+
+test("11st accepted exact empty-search response keeps historical rows while showing the queried scope as empty", () => {
+  const projection = buildElevenstReadonlyWebProjection({
+    provider: { ...base, surface: "product_qna", accepted: true, resultCode: "500" },
+    stored: { rowCount: 4, latestReceivedAt: "2026-08-31T01:00:00.000Z" },
+  });
+  assert.equal(projection.providerState, "empty");
+  assert.equal(projection.remoteCount, 0);
+  assert.equal(projection.storedCount, 4);
+  assert.equal(projection.replyEnabled, false);
+  assert.match(projection.message, /이 조회 범위/);
 });
