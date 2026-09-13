@@ -1,6 +1,7 @@
 
 import { createHash } from "node:crypto";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
+import { diagnoseLazadaImCapability } from "../lib/channels/lazada-im-capability.ts";
 import { attachEbayCreateClaimIncarnation } from "../lib/channels/ebay-create-claim.ts";
 import { ebayCreateCredentialRefreshIncarnationFromResponse } from "../lib/channels/ebay-credential-refresh-receipt.ts";
 import { gatewayJobCompletionStatus, smartstoreManualAdoptionReadbackJobSchema } from "../lib/channels/gateway-contract.ts";
@@ -352,7 +353,12 @@ export async function processCommerceGatewayJob(job, {
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
       await assertGatewayLeaseHealthy();
-      const diagnostic = await runChannelDiagnostic(job.channel, diagnosticCredential, job.environment);
+      const diagnostic = job.channel === "lazada" && job.request?.arguments?.lazadaImCapabilityProbe === true
+        ? await diagnoseLazadaImCapability({ payload: diagnosticCredential,
+          country: textValue(job.request.arguments, "country"),
+          begin: markExternalMutationStarted, stage: rememberCredentialRefresh,
+          assertLease: assertGatewayLeaseHealthy })
+        : await runChannelDiagnostic(job.channel, diagnosticCredential, job.environment);
       result = {
         ok: diagnostic.status !== "failed",
         channel: job.channel,

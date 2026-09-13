@@ -17,3 +17,9 @@ CS binding fingerprint는 실제 IM 앱·토큰으로 계산하며, 전용 국�
 ## 배포 및 후속
 
 eBay a5c7147 웹·Supabase 일정은 운영 중이다. 이 보고서의 Lazada/Temu 코드는 커밋과 배포 준비 중이며 실제 MY bootstrap→raw inbox→CS 투영을 후속 확인한다. Mac runtime도 후속 배포 SHA로 맞춘다. PH/SG/TH/VN IM 신규 권한, Shopee 잔여 수집 오류, 전체 채널 상품 등록/답변/배송 실제 readback은 별도 검증이 남는다. 실제 고객 답변이나 배송 변경을 이 검사의 목적으로 전송하지 않았다.
+
+## Mac 분기 후속 수정
+
+81286d5 배포 뒤 실제 Mac `commerce-gateway-job.mjs`가 일반 진단 함수를 직접 호출하는 별도 경로임을 확인했다. 동일 `diagnoseLazadaImCapability`를 이 경로에도 연결하고 local/serverless 각각 IM 토큰 갱신·동일 판매자·완료 schema 통과 시험을 추가했다. 관련 검사10개와 타입 검사 통과. 최초 대기 진단 e1980f5d-e32f-4539-8d2b-45ff26eab84f는 취소 시도와 수령이 경합하여 취소되지 않았으므로 강제로 다시 쓰지 않고 정상 종료를 기다린다. 승인/쓰기 작업을 재실행한 것은 아니다.
+
+동적38곳의 소스를 별도 확인했다. 37곳은 내부 RPC 이름 전달 adapter, 1곳은 Zod action으로 여섯 Shopee 함수 이름을 선택하는 경로다. 여섯 이름 모두 기존380개 운영 이름 검사에 포함돼 있다. 실행 결과·인자/권한 계약 검증은 이름 존재와 구분한다.
