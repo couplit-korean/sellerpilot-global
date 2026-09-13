@@ -10,6 +10,8 @@ Old Documents/dev/sellerpilot/channel folders and archives are not development r
 
 # Current delivery scope: MVP (user correction, 2026-09-13)
 
+The user explicitly owns real marketplace acceptance testing. Agent delivery ends with scoped implementation, necessary DB changes, relevant automated checks, deployment/runtime alignment, and a short user test checklist. Do not delay this handoff to perform real product publication, customer replies, or shipment acceptance tests yourself. Report implementation/deployment readiness separately from user-verified operation.
+
 Read `docs/MVP-완료기준.md` before choosing remaining work. The user wants basic documented channel operations, not a comprehensive recovery platform before first use. This scope supersedes older recovery backlog priorities and time estimates. Reuse completed code; fix only concrete blockers to account connection, product create/read, CS fetch/manual reply, order read, and shipment submission. Keep all requested channels in scope and report unsupported or permission-blocked operations separately. Manual triggers are acceptable. Historical job repair, generic token-recovery systems, every-market automation, and unattended operation are not MVP prerequisites. Preserve existing data, security, accurate result storage, and duplicate-send safeguards; do not bypass them to label a flow complete.
 
 
