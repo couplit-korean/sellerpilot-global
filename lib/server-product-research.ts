@@ -146,6 +146,8 @@ type RpcError = { code?: string | null } | null;
 type RpcResult = { data: unknown; error: RpcError };
 
 export type ServerProductResearchDependencies = {
+  runtimeBudgetMs?: number;
+  signal?: AbortSignal;
   cronSecret?: string;
   releaseId?: string;
   vercelGitCommitSha?: string;
@@ -1251,7 +1253,7 @@ export async function runOneServerProductResearch(
     return jsonResponse({ ok: false, status: "failed", processed: 1 });
   }
 
-  const runtimeSignal = AbortSignal.timeout(MAX_RESEARCH_RUNTIME_MS);
+  const runtimeSignal = AbortSignal.any([AbortSignal.timeout(Math.min(12 * 60_000, dependencies.runtimeBudgetMs ?? MAX_RESEARCH_RUNTIME_MS)), ...(dependencies.signal ? [dependencies.signal] : [])]);
   let result: ServerProductResearchResult;
   let preflightPaths: string[] = [];
   const preflightPromise = request.preflight

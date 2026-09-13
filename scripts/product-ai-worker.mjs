@@ -1,3 +1,4 @@
+import { runLocalProductResearchOnce } from "./local-product-research-lane.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -381,6 +382,21 @@ const codexTerminationGraceMs = 5000;
 // The lane is opt-in and runs beside, never inside, the AI job claim loop.
 const firstDraftImagesEnabled = process.env.SELLERPILOT_FIRST_DRAFT_IMAGES === "1";
 const firstDraftImagesPollMs = Math.max(5000, Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGES_POLL_MS ?? 10000));
+async function runLocalResearchLane() {
+    let reported = false;
+    while (!stopping) {
+        try {
+            const result = await runLocalProductResearchOnce({ api, invokeSegment: invokeStudioSegment });
+            if (result.processed) markWorkerBusy();
+            reported = false;
+        } catch (error) {
+            if (!reported) console.error(`[로컬 상품정보 분석] ${error instanceof Error ? error.message : "연결 실패"}`);
+            reported = true;
+        }
+        if (once) break;
+        await delay(15000);
+    }
+}
 async function runFirstDraftImagesLane() {
     let laneErrorLogged = false;
     while (!stopping) {
@@ -515,13 +531,13 @@ async function runLeaseBoundedProcess(executable, args, { timeoutMs, leaseSignal
         });
     });
 }
-async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage = "worker", heartbeatOwnedExternally = false, onDequeued, } = {}) {
+async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage = "worker", heartbeatOwnedExternally = false, onDequeued, touchOwnedClaim = touchJob, } = {}) {
     const queuedAt = Date.now();
     const execute = () => codexExecutionGate.run(async () => {
         const queueWaitMs = Date.now() - queuedAt;
         onDequeued?.(queueWaitMs);
         if (jobId)
-            await touchJob(jobId, claimToken);
+            await touchOwnedClaim(jobId, claimToken);
         if (leaseSignal?.aborted) {
             throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
         }
@@ -3191,7 +3207,7 @@ function buildStudioMasterRepairPrompt(job, referenceText, competitorContext, dr
         "제공된 마스터 JSON Schema를 충족하는 JSON만 최종 응답으로 반환하세요.",
     ].join("\n");
 }
-async function invokeStudioSegment({ jobDir, schema, segmentId, prompt, imageFiles = [], timeoutMs, artifactAttempts = 2, reasoningEffort = "medium", timeoutRetryReasoningEffort = reasoningEffort, retryTimedOutRun = false, masterInvocationBudget = null, jobId, claimToken, leaseSignal, stage, }) {
+async function invokeStudioSegment({ jobDir, schema, segmentId, prompt, imageFiles = [], timeoutMs, artifactAttempts = 2, reasoningEffort = "medium", timeoutRetryReasoningEffort = reasoningEffort, retryTimedOutRun = false, masterInvocationBudget = null, jobId, claimToken, leaseSignal, stage, touchOwnedClaim, }) {
     if (!["low", "medium"].includes(reasoningEffort)
         || !["low", "medium"].includes(timeoutRetryReasoningEffort)
         || (!masterInvocationBudget && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
@@ -3266,6 +3282,7 @@ async function invokeStudioSegment({ jobDir, schema, segmentId, prompt, imageFil
                     leaseSignal,
                     stage,
                     heartbeatOwnedExternally: true,
+                    touchOwnedClaim,
                     onDequeued: (queueWaitMs) => masterInvocationBudget?.excludeQueueWait(allocation, queueWaitMs),
                 });
             }
@@ -3908,6 +3925,7 @@ const workerMode = "product-only";
 console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Worker scope · product=${aiWorkerConfigured ? "configured" : "disabled"}`);
 console.log(`Worker scope · first-draft-images=${firstDraftImagesEnabled ? `enabled(poll=${firstDraftImagesPollMs}ms)` : "disabled"}`);
+const localResearchTask = runLocalResearchLane();
 const firstDraftImagesTask = firstDraftImagesEnabled ? runFirstDraftImagesLane() : null;
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 9);
 const maxAiConcurrency = Math.min(9, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 9));

@@ -75,7 +75,7 @@ test("vision inspects every photo against the same main anchor with bounded conc
 
 test("a confident different-product photo blocks the set instead of mixing identities", async () => {
   await assert.rejects(analyzeServerStudioSources(photos(), { generateStructured: async input => input.schema.parse({
-    ...observation("left"), sameProduct: "no",
+    ...observation("left"), sameProduct: "no", reason: "Different brand printed on target",
   }) }, AbortSignal.timeout(5000)), /source_product_identity_mismatch/);
 });
 
@@ -105,4 +105,15 @@ test("source loader keeps multiple label photos and input order without silently
   const loaded = await loadStudioSources(request as Parameters<typeof loadStudioSources>[0], async () => bytes, AbortSignal.timeout(5000));
   assert.deepEqual(loaded.map(photo => photo.path), ["a", "b", "c"]);
   await assert.rejects(loadStudioSources({ image_paths: Array(11).fill("a"), image_specs: Array(11).fill(request.image_specs[0]) } as Parameters<typeof loadStudioSources>[0], async () => bytes, AbortSignal.timeout(5000)), /source_photo_analysis_limit/);
+});
+
+test("self-observation cannot reject the main photo as a different product", async () => {
+  const logged: unknown[] = [];
+  const result = await analyzeServerStudioSources(photos(), { generateStructured: async input =>
+    input.images.length === 2
+      ? input.schema.parse({ sameProduct: "yes", confidence: 0.99, reason: "Matching identifiers" })
+      : input.schema.parse({ ...observation("front"), sameProduct: "no" })
+  }, AbortSignal.timeout(5000), { onIdentity: details => logged.push(details) });
+  assert.ok(result.every(photo => photo.observation?.sameProduct === "yes"));
+  assert.equal(logged.length, photos().length - 1);
 });

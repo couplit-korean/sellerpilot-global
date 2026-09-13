@@ -2767,6 +2767,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [uploadError, setUploadError] = useState("");
   const [productResearchError, setProductResearchError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
+  const [researchProgress, setResearchProgress] = useState("상품사진 업로드를 준비하고 있습니다.");
   const [activeResearchJobId, setActiveResearchJobId] = useState("");
   const [controllingActivity, setControllingActivity] = useState(false);
   const [recoveringProductResearch, setRecoveringProductResearch] = useState(false);
@@ -3311,6 +3312,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         result?: ProductResearchUiResult | null;
         error?: string | null;
         message?: string;
+        attempt_count?: number;
+        research_runtime?: string;
+        available_at?: string;
       };
       const pollScope = createPageAbortScope([signal], 15_000, "상품정보 상태 확인 시간이 초과되었습니다.");
       try {
@@ -3343,6 +3347,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (payload.status === "failed" || payload.status === "cancelled") {
         throw new ProductResearchTerminalError(payload.error);
       }
+      const location = payload.research_runtime === "local" ? "Mac 작업자" : "서버";
+      const attempt = payload.attempt_count ?? 0;
+      setResearchProgress(payload.status === "queued"
+        ? `${location} 실행 대기 중 · ${attempt > 0 ? `${attempt}회 시도 후 재시도 대기` : "접수 완료"}${payload.error ? ` · ${payload.error}` : ""} · 대기 중에도 추가 상품 또는 뒤로 가기를 사용할 수 있습니다.`
+        : `${location}에서 사진 ${totalPhotoCount}장과 상품정보 분석 중 · ${attempt}/3회 시도 · 완료 후 연출 이미지 8장 제작을 시작합니다.`);
       await abortableBrowserDelay(3_000, signal);
     }
     throw new Error("AI 상품정보 수집 대기시간이 20분을 초과했습니다.");
@@ -3746,6 +3755,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setCompetitorResearchRetryInput("");
     setCompetitorResearchRetryAvailable(false);
     setResearchingProduct(true);
+    setResearchProgress("선택한 사진을 업로드하고 분석 작업을 접수하고 있습니다.");
     setUploadError("");
     setProductResearchError("");
     resetFirstDraftImages();
@@ -4280,7 +4290,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const publishBusy = running
     ? { title: "준비한 이미지로 상세페이지를 제작하고 있습니다.", detail: "확인한 연출 이미지를 재사용해 상세페이지 내용과 배치를 만듭니다." }
     : researchingProduct || firstImagesPending
-      ? { title: "상품정보와 상세페이지용 이미지 8개를 준비하고 있습니다.", detail: "상품 링크·설명과 대표사진을 분석해 1차 정보와 이미지 8장을 만듭니다." }
+      ? { title: "상품정보와 상세페이지용 이미지 8개를 준비하고 있습니다.", detail: researchingProduct ? researchProgress : firstDraftConceptStatus || "Mac에서 역할별 연출 이미지 8장을 제작하고 있습니다." }
       : recoveringProductResearch
         ? { title: "접수한 1차 작업 상태를 확인하고 있습니다.", detail: "서버에 접수된 작업의 진행 상황을 다시 읽고 있습니다." }
         : photoSelectionsProcessing
