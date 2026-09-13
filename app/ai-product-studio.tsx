@@ -849,7 +849,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         || !normalizedSourceResearchLineageReceipt
         || !firstDraftReviewed)) {
       setSubmissionTrace("거부: 1차 검토/원본 확인값 부족");
-      const message = "먼저 1차 상품정보와 이미지 6개를 생성하고 사람이 확인한 뒤 상세페이지 제작을 시작해 주세요.";
+      const message = "먼저 1차 상품정보와 이미지 8개를 생성하고 사람이 확인한 뒤 상세페이지 제작을 시작해 주세요.";
       setLastError(message);
       notify(message);
       onRunningChange(false);
@@ -1339,7 +1339,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     && firstDraftReviewed;
   const submissionAvailable = submissionMode === "manual_mvp" || (studioExecutionReady && hasResearchDraft);
   const submissionUnavailableMessage = submissionMode !== "manual_mvp" && !hasResearchDraft
-    ? "먼저 1차 상품정보와 이미지 6개를 생성하고 사람이 확인해 주세요."
+    ? "먼저 1차 상품정보와 이미지 8개를 생성하고 사람이 확인해 주세요."
     : workerReadiness?.message;
   const studioAssetUrls = useMemo(() => ({
     ...(currentImageUrl ? { hero: currentImageUrl } : {}),
@@ -1451,7 +1451,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
-        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>검토 완료 정보로 상세페이지 제작</h3><p>1차에서 만든 핵심 이미지 6장을 그대로 재사용하고, 사람이 확인한 상품정보를 기준으로 후속 자산과 상세페이지 내부 draft를 서버에서 준비합니다.</p></div>
+        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>검토 완료 정보로 상세페이지 제작</h3><p>1차에서 만든 핵심 이미지 8장을 그대로 재사용하고, 사람이 확인한 상품정보를 기준으로 후속 자산과 상세페이지 내부 draft를 서버에서 준비합니다.</p></div>
         <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "상세페이지 제작 중" : "Supabase 큐 대기 중" : result ? "상세페이지 준비됨" : submissionMode === "manual_mvp" ? "AI 없이 원본 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "상세페이지 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "상세페이지 제작 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? submissionUnavailableMessage : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 상품 저장" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : result ? "상세페이지 다시 만들기" : "상세페이지 제작 시작"}</button></div>
       </div>
       <div className="studio-source-row">

@@ -21,17 +21,10 @@ import type { ProductStudioResult } from "../app/product-studio-types";
 import { z } from "zod";
 
 /**
- * First-draft concept images.
- *
- * The Vercel preflight degrades to a `source-photo-catalog` for this account
- * because the AI-Gateway image model is unavailable (403), so the six canonical
- * first-draft assets are crops of the source photo instead of generated scenes.
- * The detail-page studio lane on the operator's Mac is the only lane that can
- * draw those six assets, so it adopts them back into the same research result.
- *
- * This module owns the shared contract between the admin enqueue endpoint, the
- * worker endpoints, and the Mac worker loop. Everything here is pure so the
- * routes stay thin and the rules stay testable.
+ * Prepared studio scenes. All eight generative roles are made before detail
+ * authoring using the same renderer and review as the full studio pipeline.
+ * Historical first-draft names remain API/storage identifiers only. Catalog
+ * placeholders are internal research metadata and never generated output.
  */
 
 export const firstDraftImageAssetIds = coreFirstDraftAssetIds;
@@ -156,7 +149,7 @@ export const firstDraftImageEnqueuePayloadSchema = z.object({
 }).strict().superRefine((value, context) => {
   const ids = value.assets.map((asset) => asset.id);
   if (new Set(ids).size !== firstDraftImageAssetIds.length) {
-    context.addIssue({ code: "custom", path: ["assets"], message: "1차 생성 이미지 여섯 역할이 중복됐습니다." });
+    context.addIssue({ code: "custom", path: ["assets"], message: "1차 생성 이미지 여덟 역할이 중복됐습니다." });
   }
   for (const assetId of firstDraftImageAssetIds) {
     if (!ids.includes(assetId)) {
@@ -187,7 +180,7 @@ export const firstDraftImageQualityManifestSchema = z.object({
   const keys = Object.keys(value.assets);
   if (keys.length !== firstDraftImageAssetIds.length
       || firstDraftImageAssetIds.some((assetId) => !Object.hasOwn(value.assets, assetId))) {
-    context.addIssue({ code: "custom", path: ["assets"], message: "1차 이미지 품질 manifest에는 정확히 6개 역할이 필요합니다." });
+    context.addIssue({ code: "custom", path: ["assets"], message: "1차 이미지 품질 manifest에는 정확히 8개 역할이 필요합니다." });
   }
 });
 
@@ -295,7 +288,7 @@ export function buildFirstDraftStudioResult(productFacts: FirstDraftImageProduct
         purchaseDecision: oneLine,
         contentDensity: "concise",
         targetSectionCount: 8,
-        lengthRationale: "1차 생성 이미지 여섯 장 전용 작업이며 상세 본문 구성은 사용하지 않습니다.",
+        lengthRationale: "1차 생성 이미지 여덟 장 전용 작업이며 상세 본문 구성은 사용하지 않습니다.",
         differentiationKey: `${name}의 확인된 형태와 사용 맥락`,
         artDirection: `${name}; 입력된 원본 사진의 색·형태·라벨만 근거로 한 사실적 상업 이미지`,
         motionPolicy: "static-first",
@@ -314,6 +307,16 @@ export function buildFirstDraftStudioResult(productFacts: FirstDraftImageProduct
     localizedListings: [],
     warnings: [],
   } as unknown as ProductStudioResult;
+}
+
+/** Keep reviewed product facts authoritative when the copy writer expands the detail page. */
+export function bindPreparedImageProduct<Result extends Pick<ProductStudioResult, "product">>(
+  result: Result, facts: FirstDraftImageProductFacts,
+): Result {
+  return { ...result, product: { ...result.product,
+    name: facts.name, category: facts.category, features: [...facts.features],
+    classification: { ...result.product.classification, isHealthFunctionalFood: facts.classification.isHealthFunctionalFood },
+  } };
 }
 
 function normalizedFactText(value: unknown) {

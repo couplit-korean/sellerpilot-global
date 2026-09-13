@@ -28,18 +28,23 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { RegistrationWaitingActions } from "../../../app/_publishing/registration-waiting-actions.tsx";
 import "../../../app/globals.css";
+import "../../../app/responsive-fit.css";
+import "../../../app/responsive-ops.css";
+import "../../../app/responsive-overview.css";
+import "../../../app/shell-fit.css";
 function Fixture() {
  const [accepted, setAccepted] = useState(false);
  const [events, setEvents] = useState([]);
  const record = (event) => () => setEvents((current) => [...current, event]);
- return <main className="publishing-page publishing-busy">
+ return <main className="publishing-page">
   <section>배경 입력 화면</section>
-  <div className="publishing-busy-overlay"><div className="publishing-busy-card">
+  <div className="panel publishing-progress-panel"><div className="publishing-progress-card">
    <b>상품 작업 대기</b><button onClick={() => setAccepted(true)}>접수 확인</button>
    <RegistrationWaitingActions canLeaveWaiting={accepted} acceptedActivity={accepted} controllingActivity={false}
     onAdditional={record("additional")} onBack={record("back")} onHistory={record("history")} onStop={record("stop")} onDelete={record("delete")} />
    <output data-events>{JSON.stringify(events)}</output>
   </div></div>
+  <section style={{height: 2000}}>상품 입력 내용</section>
  </main>;
 }
 createRoot(document.getElementById("root")).render(<Fixture />);
@@ -85,7 +90,7 @@ async function serveFixture(output) {
   return { server, url: `http://127.0.0.1:${address.port}/` };
 }
 
-test("대기 오버레이 안에서 추가 상품·이전 화면·진행상황·중지·삭제를 누를 수 있다", { timeout: 90_000 }, async () => {
+test("제작 진행 화면에서 추가 상품·뒤로 가기·진행상황·중지·삭제를 누를 수 있다", { timeout: 90_000 }, async () => {
  const executablePath = await firstExecutable([process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Aside.app/Contents/MacOS/Aside"]);
  assert.ok(executablePath, "browser executable required");
  const workspace = await mkdtemp(new URL("outputs/registration-waiting-test-", repositoryRoot).pathname);
@@ -96,11 +101,14 @@ test("대기 오버레이 안에서 추가 상품·이전 화면·진행상황·
   browser = await chromium.launch({ executablePath, headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(serving.url);
-  for (const name of ["추가 상품 등록", "이전 화면", "진행상황 보기", "중지", "삭제"]) assert.equal(await page.getByRole("button", { name, exact: true }).isDisabled(), true);
+  for (const name of ["다음 상품 등록", "뒤로 가기", "진행상황 보기", "중지", "삭제"]) assert.equal(await page.getByRole("button", { name, exact: true }).isDisabled(), true);
   await page.getByRole("button", { name: "접수 확인", exact: true }).click();
-  for (const name of ["추가 상품 등록", "이전 화면", "진행상황 보기", "중지", "삭제"]) {
+  await page.evaluate(() => window.scrollTo(0, 900));
+  for (const name of ["다음 상품 등록", "뒤로 가기", "진행상황 보기", "중지", "삭제"]) {
     const button = page.getByRole("button", { name, exact: true });
     assert.equal(await button.isEnabled(), true);
+    const bounds = await button.boundingBox();
+    assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 844);
     await button.click();
   }
   assert.deepEqual(JSON.parse(await page.locator("[data-events]").textContent()), ["additional", "back", "history", "stop", "delete"]);

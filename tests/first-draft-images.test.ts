@@ -142,7 +142,7 @@ function qualityReceiptFor(
   });
 }
 
-test("degraded research job resolves the source original, six canonical paths and product facts", () => {
+test("degraded research job resolves the source original, eight canonical paths and product facts", () => {
   const resolved = buildFirstDraftImageEnqueuePayload({
     jobId,
     ownerId,
@@ -154,7 +154,7 @@ test("degraded research job resolves the source original, six canonical paths an
   assert.equal(resolved.payload.sourcePath, `${ownerId}/${jobId}/original/001.source`);
   assert.equal(resolved.payload.sourcePhotoSha256, sourcePhotoSha256);
   assert.deepEqual(resolved.payload.assets.map((asset) => asset.id), [...coreFirstDraftAssetIds]);
-  assert.equal(new Set(resolved.payload.assets.map((asset) => asset.path)).size, 6);
+  assert.equal(new Set(resolved.payload.assets.map((asset) => asset.path)).size, coreFirstDraftAssetIds.length);
   assert.equal(resolved.payload.productFacts.name, "테스트 단백질 파우더");
   assert.equal(resolved.payload.productFacts.category, "일반 상품");
   assert.equal(resolved.payload.productFacts.oneLine, "확인된 설명 문장입니다.");
@@ -416,7 +416,7 @@ test("the six first-draft assets are planned with the shared detail-page prompt 
   }
 });
 
-test("the Mac lane draws and submits the six assets without a network or a real codex call", async () => {
+test("the Mac lane draws and submits the eight assets without a network or a real codex call", async () => {
   const laneSource = Buffer.from("authoritative-source-photo");
   const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
   const payload = {
@@ -447,7 +447,7 @@ test("the Mac lane draws and submits the six assets without a network or a real 
       }
       const body = JSON.parse(String(init.body ?? "{}"));
       posted.push(body);
-      return new Response(JSON.stringify({ ok: true, status: posted.length === 6 ? "done" : "recorded" }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, status: posted.length === coreFirstDraftAssetIds.length ? "done" : "recorded" }), { status: 200 });
     },
     uploadVerifiedAsset: async ({ asset }) => {
       uploaded.push(asset.id);
@@ -472,9 +472,9 @@ test("the Mac lane draws and submits the six assets without a network or a real 
   });
 
   assert.equal(result.status, "done");
-  assert.equal(posted.length, 6);
+  assert.equal(posted.length, coreFirstDraftAssetIds.length);
   assert.equal(posted.every((body) => body.assets.length === 1), true);
-  assert.equal(new Set(posted.flatMap((body) => body.assets.map((asset) => asset.id))).size, 6);
+  assert.equal(new Set(posted.flatMap((body) => body.assets.map((asset) => asset.id))).size, coreFirstDraftAssetIds.length);
   assert.equal(posted.every((body) => Boolean(body.assets[0]?.verification)), true);
   assert.equal(posted.every((body) => Buffer.byteLength(JSON.stringify(body)) < 256 * 1024), true);
   assert.deepEqual(uploaded, [...coreFirstDraftAssetIds]);

@@ -15,7 +15,7 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const { FirstDraftImageReview } = await import("../../app/_publishing/first-draft-image-review");
 
-test("the extracted image review renders all six roles without a server or generator", () => {
+test("the extracted image review renders all eight roles without a server or generator", () => {
   const props = {
     firstDraftImages: coreFirstDraftAssetIds.map(id => ({ id, url: `https://example.test/${id}.png` })),
     phase: "source-photo-catalog" as const,
@@ -25,27 +25,27 @@ test("the extracted image review renders all six roles without a server or gener
     onRetry: () => undefined,
   };
   const html = renderToStaticMarkup(createElement(FirstDraftImageReview, props));
-  assert.equal((html.match(/<figure>/g) ?? []).length, 6);
-  assert.equal((html.match(/<figcaption>/g) ?? []).length, 6);
+  assert.equal((html.match(/<figure>/g) ?? []).length, coreFirstDraftAssetIds.length);
+  assert.equal((html.match(/<figcaption>/g) ?? []).length, coreFirstDraftAssetIds.length);
   assert.match(html, /원본사진을 규격에 맞춘 임시 초안/);
   assert.doesNotMatch(html, /동일한 품질|생성된 6장입니다/);
-  for (const id of coreFirstDraftAssetIds) assert.ok(html.includes(`/${id}.png`));
-  assert.match(html, /생성 확인 0 \/ 6장/);
+  for (const id of coreFirstDraftAssetIds) assert.equal(html.includes(`/${id}.png`), false, "reference photos are never generation results");
+  assert.match(html, /생성 확인 0 \/ 8장/);
   const partial = renderToStaticMarkup(createElement(FirstDraftImageReview, {
     ...props,
     firstDraftImages: props.firstDraftImages.slice(0, 2),
     phase: "partial",
     confirmedGeneratedCount: 2,
-    firstDraftConceptStatus: "역할별 생성 이미지 2 / 6장을 확인했습니다.",
+    firstDraftConceptStatus: "역할별 생성 이미지 2 / 8장을 확인했습니다.",
   }));
-  assert.equal((partial.match(/<figure>/g) ?? []).length, 6);
-  assert.equal((partial.match(/생성 대기/g) ?? []).length, 4);
+  assert.equal((partial.match(/<figure>/g) ?? []).length, coreFirstDraftAssetIds.length);
+  assert.equal((partial.match(/생성 대기/g) ?? []).length, coreFirstDraftAssetIds.length - 2);
   assert.match(partial, /role="status"/);
   const stopped = renderToStaticMarkup(createElement(FirstDraftImageReview, {
     ...props, firstDraftImages: props.firstDraftImages.slice(0, 2),
     phase: "failed", confirmedGeneratedCount: 2,
     firstDraftConceptStatus: "나머지 이미지 생성이 중단됐습니다.",
   }));
-  assert.match(stopped, /생성 확인 2 \/ 6장/);
+  assert.match(stopped, /생성 확인 2 \/ 8장/);
   assert.equal(renderToStaticMarkup(createElement(FirstDraftImageReview, { ...props, phase: "idle", firstDraftImages: [] })), "");
 });

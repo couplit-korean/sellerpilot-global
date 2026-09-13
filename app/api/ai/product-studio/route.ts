@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ...(humanReviewRequired ? { code: "HUMAN_REVIEW_REQUIRED" } : {}),
       message: humanReviewRequired
-        ? "사람이 1차 상품정보와 이미지 6장을 확인한 뒤 상세페이지 제작을 시작해 주세요."
+        ? "사람이 1차 상품정보와 이미지 8장을 확인한 뒤 상세페이지 제작을 시작해 주세요."
         : "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요.",
     }, { status: humanReviewRequired ? 409 : 400 });
   }
@@ -221,13 +221,18 @@ export async function POST(request: Request) {
         endpoint: "/api/ai/product-research",
         reuseSourceResearchJob: false,
       },
-      message: "이전 1차 이미지에는 복원 가능한 품질 manifest가 없어 재사용하지 않습니다. 같은 진입점에서 기존 작업을 다시 큐잉하지 말고, 현재 원본과 판매자 사실로 새 1차 상품정보 분석 작업을 만든 뒤 이미지 6장을 검수해 주세요.",
+      message: "이전 1차 이미지에는 복원 가능한 품질 manifest가 없어 재사용하지 않습니다. 같은 진입점에서 기존 작업을 다시 큐잉하지 말고, 현재 원본과 판매자 사실로 새 1차 상품정보 분석 작업을 만든 뒤 이미지 8장을 검수해 주세요.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const reuseFirstDraftAssets = firstDraftImageFactsMatchStudioRequest(
     firstDraftProductFacts,
     parsed.data.manualFields,
   );
+
+  if (!reuseFirstDraftAssets) {
+    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
+    return NextResponse.json({ code: "PREPARED_IMAGE_FACTS_CHANGED", message: "이미지를 만든 뒤 상품 사실정보가 변경되었습니다. 변경된 정보로 이미지 준비를 다시 완료해 주세요. 상세페이지 단계에서 이미지를 자동 재생성하지 않습니다." }, { status: 409 });
+  }
 
   const lineageReceiptVerification = verifyIssuedProductResearchLineageReceipt(
     parsed.data.sourceResearchLineageReceipt,

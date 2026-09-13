@@ -18,7 +18,7 @@ test("the detail-page action requires six first-stage images plus explicit human
   assert.match(action, /if \(!firstDraftGenerated[\s\S]*?!isProductResearchJobId\(sourceResearchJobId\)[\s\S]*?!productSourcePhotoSha256Pattern\.test\(sourceResearchPhotoSha256\)[\s\S]*?!sourceResearchLineageReceipt[\s\S]*?!studioDraftImagesMerged[\s\S]*?firstDraftImages\.length !== coreFirstDraftAssetIds\.length\)/);
   assert.match(action, /if \(!firstDraftReviewed\)/);
   assert.match(action, /setStudioSubmissionMode\("ai"\)/);
-  assert.match(action, /검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 상품 원장을 만듭니다/);
+  assert.match(action, /검토한 1차 정보와 이미지 8개를 바탕으로 상세페이지와 상품 원장을 만듭니다/);
   assert.doesNotMatch(page, /startAutomation\(\{ automatic: true \}\)/);
   assert.match(page, /firstDraftReviewed=\{firstDraftReviewed\}/);
   assert.doesNotMatch(page, /firstDraftReviewed=\{firstDraftReviewed \|\|/);
@@ -44,8 +44,8 @@ test("a succeeded research job becomes Studio lineage and changing only the sour
 test("the UI names first-stage concurrency, human review, detail authoring, then upload", async () => {
   const page = await readFile(pageUrl, "utf8");
 
-  assert.match(page, /1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다/);
-  assert.match(page, /상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다/);
+  assert.match(page, /상품을 분석해 상세 제작 방식으로 연출 이미지 8개를 먼저 만듭니다/);
+  assert.match(page, /확인한 이미지를 그대로 재사용해 상세페이지를 구성한 뒤 채널에 등록합니다/);
   assert.match(page, /동일상품 가격은 별도 확인 중/);
   assert.match(page, />상세페이지 제작 시작</);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(resolvedProductId\)\}/);

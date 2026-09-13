@@ -32,6 +32,7 @@ import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
 import { firstDraftUsageLimitWaitMs, readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
 import {
     buildFirstDraftImageQualityReceipt,
+    bindPreparedImageProduct,
     firstDraftImageFactsMatchStudioResult,
     firstDraftImageFactsMatchStudioRequest,
     firstDraftImageProductFactsSchema,
@@ -2647,7 +2648,7 @@ async function generateDistinctAsset({ firstDraftScenes = false, result, outputF
     }
     throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
 }
-const generateVerifiedFirstDraftCandidate = generateDistinctAsset;
+// Prepared images use exactly the final studio renderer and quality checks.
 async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir, signal }) {
     signal?.throwIfAborted();
     const source = await readFile(sourceFile);
@@ -2779,8 +2780,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
             if (!retryState)
                 throw new Error(`${preset.id} 1차 이미지 재시도 상태가 없습니다.`);
             const outputFile = join(jobDir, preset.file);
-            const generated = await generateVerifiedFirstDraftCandidate({
-                firstDraftScenes: true,
+            const generated = await generateDistinctAsset({
                 result: studioResult,
                 outputFile,
                 preset,
@@ -2809,7 +2809,6 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
             };
         },
         findPostGenerationConflict: ({ spec: preset, attempt, candidate, acceptedCandidates, signal }) => findProductImageBatchSemanticConflict({
-            firstDraftScenes: true,
             result: studioResult,
             preset,
             attempt,
@@ -2882,7 +2881,7 @@ async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceF
         },
     });
     if (verifiedAssets.length !== specs.length) {
-        throw new Error("1차 생성 이미지 6장의 공통 품질 검수 결과가 완전하지 않습니다.");
+        throw new Error("1차 생성 이미지 8장의 공통 품질 검수 결과가 완전하지 않습니다.");
     }
     return verifiedAssets;
 }
@@ -2917,8 +2916,7 @@ async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
         || !firstDraftImageFactsMatchStudioRequest(productFacts.data, job.request?.manualFields)
         || !firstDraftImageFactsMatchStudioResult(productFacts.data, result)
         || !firstDraftImageScenePlansMatchStudioResult(productFacts.data, result)) {
-        console.warn(`[1차 이미지 재사용 생략] ${job.id} · 원본 또는 상품 사실 버전 불일치`);
-        return new Map();
+        throw new Error("선제작 이미지와 상품 사실 또는 장면 계획이 달라졌습니다. 이미지 준비 단계에서 변경 내용을 확인해 주세요. 상세 단계에서 자동 재생성하지 않습니다.");
     }
     const entryById = new Map(entries.map((entry) => [entry?.id, entry]));
     if (entryById.size !== coreFirstDraftAssetIds.length) {
@@ -3643,7 +3641,7 @@ async function processJob(job) {
             ? JSON.stringify(references.map((reference) => ({ url: reference.url, title: reference.title, status: reference.status, text: reference.text }))).slice(0, 60000)
             : "참고 링크 없음 · 판매자 입력 텍스트만 사용";
         const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
-        const result = await generateSegmentedStudioResult({
+        let result = await generateSegmentedStudioResult({
             job,
             jobDir,
             imageFiles,
@@ -3653,6 +3651,10 @@ async function processJob(job) {
             claimToken,
             leaseSignal: jobHeartbeat.signal,
         });
+        const preparedFacts = firstDraftImageProductFactsSchema.safeParse(job.request?.firstDraftProductFacts);
+        if (job.request?.firstDraftSourceResearchJobId && preparedFacts.success) {
+            result = bindPreparedImageProduct(result, preparedFacts.data);
+        }
         const identityCutouts = await prepareIdentityCutoutsForJob(result, imageFiles, jobDir, jobHeartbeat.signal, job.request?.manualFields);
         const reusableFirstDraftAssets = await loadReusableFirstDraftAssets(
             job,
@@ -3660,6 +3662,9 @@ async function processJob(job) {
             jobDir,
             jobHeartbeat.signal,
         );
+        if (job.request?.firstDraftSourceResearchJobId && reusableFirstDraftAssets.size !== coreFirstDraftAssetIds.length) {
+            throw new Error("상세페이지에 재사용할 선제작 이미지가 완전하지 않습니다. 이미지 준비 단계에서 완료해 주세요.");
+        }
         const imagePresets = aiGeneratedAssetSpecs;
         const remainingImagePresets = imagePresets.filter((preset) => !reusableFirstDraftAssets.has(preset.id));
         const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];

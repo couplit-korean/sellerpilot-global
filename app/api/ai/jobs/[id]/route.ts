@@ -86,7 +86,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       ...parsedResult.data,
       generatedImages: entries.map(([assetId], index) => ({
         id: assetId,
-        url: signed[index]!.signedUrl,
+        url: preflight.preflight.auditLineage[assetId].auditMode === "segmented-source-composite" ? signed[index]!.signedUrl : null,
       })),
     };
     delete result.asset_storage_paths;

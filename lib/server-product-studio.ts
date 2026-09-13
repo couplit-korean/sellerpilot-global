@@ -26,6 +26,7 @@ import {
 } from "./ai-generated-assets";
 import { resolveProductSettingShot } from "./ai-image-planning";
 import {
+  bindPreparedImageProduct,
   firstDraftImageFactsMatchStudioResult,
   firstDraftImageProductFactsSchema,
   firstDraftImageQualityManifestSchema,
@@ -2838,14 +2839,19 @@ async function runFullStudioClaim(
       diagnostic: cutoutResolution.transientFallbackDiagnostic,
     });
   }
-  const master = masterGeneration.master;
+  const master = parsedRequest.mode === "preflight" && parsedRequest.data.first_draft_product_facts
+    ? bindPreparedImageProduct(masterGeneration.master, parsedRequest.data.first_draft_product_facts)
+    : masterGeneration.master;
   if (generated.size && parsedRequest.mode === "preflight") {
     const facts = parsedRequest.data.first_draft_product_facts;
     if (!facts
         || !firstDraftImageFactsMatchStudioResult(facts, master)
         || !firstDraftImageScenePlansMatchStudioResult(facts, master)) {
-      generated.clear();
+      throw new ServerProductStudioError("prepared_image_facts_changed", true);
     }
+  }
+  if (parsedRequest.mode === "preflight" && generated.size !== coreFirstDraftAssetIds.length) {
+    throw new ServerProductStudioError("prepared_images_required", true);
   }
   for (const [id, asset] of generated) asset.sourcePath = sourcePlan.get(id)?.path;
   const finalSpecs = parsedRequest.mode === "preflight" && generated.size === coreFirstDraftAssetIds.length
@@ -2859,8 +2865,8 @@ async function runFullStudioClaim(
   const sourceSpecs = finalSpecs.filter((asset) => asset.identityPolicy.mode !== "source-composite");
   const touch = () => touchClaim(dependencies, claim.id, claim.claim_token);
 
-  // New registration restores the first six before these lanes start and only
-  // generates the remaining ten. Legacy/revision work starts with an empty map
+  // New registration restores all eight scenes before these lanes start and only
+  // renders source-derived catalog/evidence assets. Legacy/revision work starts with an empty map
   // and preserves the prior all-sixteen generation behavior. The per-claim
   // remote gate shared by all three lanes enforces the aggregate ceiling.
   const localizationPromise = generateStudioLocalizedResult(

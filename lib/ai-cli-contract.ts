@@ -73,7 +73,7 @@ function exactCoreFirstDraftRecord<Value extends z.ZodType>(value: Value) {
         || coreFirstDraftAssetIds.some((assetId) => !Object.hasOwn(record, assetId))) {
       context.addIssue({
         code: "custom",
-        message: "1차 이미지 결과는 지정된 핵심 이미지 6개를 정확히 포함해야 합니다.",
+        message: "1차 이미지 결과는 지정된 핵심 이미지 8개를 정확히 포함해야 합니다.",
       });
     }
   });
@@ -110,7 +110,7 @@ export const productResearchPreflightStoragePathsSchema = exactCoreFirstDraftRec
       context.addIssue({
         code: "custom",
         path: [assetId],
-        message: "1차 이미지 여섯 장은 같은 작업과 같은 claim 경로에 있어야 합니다.",
+        message: "1차 이미지 여덟 장은 같은 작업과 같은 claim 경로에 있어야 합니다.",
       });
     }
   }

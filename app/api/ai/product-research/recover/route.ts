@@ -238,7 +238,7 @@ export async function POST(request: Request) {
       firstDraftGeneration: recordValue(job.firstDraftGeneration),
       generatedImages: generatedEntries.map(([assetId], index) => ({
         id: assetId,
-        url: generatedSigned[index]!.signedUrl,
+        url: storedResult.data.preflightAssetLineage?.[assetId].auditMode === "segmented-source-composite" ? generatedSigned[index]!.signedUrl : null,
       })),
     },
   }, { headers: { "cache-control": "no-store, max-age=0" } });

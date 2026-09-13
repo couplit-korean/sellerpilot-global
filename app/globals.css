@@ -1784,3 +1784,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .first-draft-image-review > header small { overflow-wrap: anywhere; }
   .first-draft-image-review figcaption { padding-inline: 6px; font-size: 8px; }
 }
+
+/* Progress stays in normal flow so the workspace and navigation remain reachable. */
+.publishing-progress-card { display: grid; justify-items: start; gap: 12px; padding: 12px; min-width: 0; }
+.publishing-progress-card small, .publishing-progress-card em { overflow-wrap: anywhere; font-style: normal; }
+.publishing-progress-card > div { justify-content: flex-start !important; }
+
+.publishing-progress-panel { position: sticky; top: 72px; z-index: 30; }

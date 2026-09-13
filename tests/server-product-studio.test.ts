@@ -966,9 +966,9 @@ async function assertFailedClosed(
   assert.equal(run.completionCalls[0].p_result_payload, null);
 }
 
-test("final server Studio restores six assets and plans only the remaining 2+8 roles", () => {
+test("final server Studio restores all eight scenes and performs no additional scene generation", () => {
   const plan = serverStudioRemoteWorkPlan();
-  assert.deepEqual(plan.settingWaves, [2]);
+  assert.deepEqual(plan.settingWaves, []);
   assert.deepEqual(plan.sourceAuditWaves, [3, 3, 2]);
   assert.deepEqual(plan.localizedWaves, [3, 3, 3]);
   assert.equal(plan.maximumRemoteConcurrency, 3);
@@ -1301,7 +1301,7 @@ test("reviewed transient gateway failure fails closed without mosaic catalog or 
   const run = await runReviewedTransientPipelineFixture();
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.structuredCalls, 1, "only the master provider call should be attempted");
-  assert.equal(run.segmentationCalls, 2);
+  assert.equal(run.segmentationCalls, 1);
   assert.equal(run.backgroundCalls, 0, "fail closed must not start setting-shot generation");
   assert.equal(run.auditCalls, 0);
   for (const assetId of coreFirstDraftAssetIds) {
@@ -1425,7 +1425,7 @@ test("reviewed transient failure logs the original Gateway diagnostic without an
   const run = await runReviewedTransientPipelineFixture({ transientDiagnostic: diagnostic });
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.structuredCalls, 1, "the diagnostic path must not add a provider retry");
-  assert.equal(run.segmentationCalls, 2, "each of the two selected physical views is attempted once");
+  assert.equal(run.segmentationCalls, 1, "only the remaining catalog source needs segmentation");
   const executionLog = run.logs.find((entry) => entry.stage === "execution");
   assert.ok(executionLog);
   assert.equal(executionLog.details.reason, "gateway_rate_limited");
@@ -1582,6 +1582,7 @@ test("reviewed classification copy follows the exact channel market locale key a
 
 test("a transient image failure after remote candidates exist fails closed without a mosaic rebuild", async () => {
   const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
     providerScenario: "partial-image-transient",
   });
   await assertFailedClosed(run, "gateway_rate_limited");
@@ -1596,13 +1597,14 @@ test("a transient image failure after remote candidates exist fails closed witho
 
 test("the shared remote gate caps all lanes at three and one image 429 cancels queued siblings", async () => {
   const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
     providerScenario: "image-rate-limit-circuit",
   });
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.peakRemoteCalls, 3, "text and image lanes must remain concurrent up to the shared cap");
   assert.deepEqual(
     run.backgroundAssetIds,
-    ["detail-storage"],
+    ["portrait"],
     "the first image 429 must cancel the queued sibling before it reaches the provider",
   );
   assert.equal(run.imageCallsStartedAfterRateLimit, 0);
@@ -1640,6 +1642,7 @@ for (const providerScenario of ["image-preprovider-rate-limit-repaired", "text-p
 
 test("a second explicit pre-provider 429 trips the existing image circuit without more retries", async () => {
   const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
     providerScenario: "image-preprovider-rate-limit-exhausted",
     transientDiagnostic: {
       reason: "gateway_rate_limited",
@@ -1650,7 +1653,7 @@ test("a second explicit pre-provider 429 trips the existing image circuit withou
     },
   });
   await assertFailedClosed(run, "gateway_rate_limited");
-  assert.ok(run.backgroundCalls <= 2);
+  assert.ok(Math.max(...run.backgroundAssetIds.map(id => run.backgroundAssetIds.filter(candidate => candidate === id).length)) <= 2, "each asset receives at most the one explicit pre-provider retry");
   assert.ok(run.completionActiveRemoteCounts.every((count) => count === 0));
 });
 
@@ -1663,6 +1666,7 @@ test("a queued image receives its full operation timeout only after the shared g
     return controller.signal;
   });
   const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
     providerScenario: "queued-image-timeout-budget",
   });
   await assertFailedClosed(run, "gateway_rate_limited");
@@ -1734,7 +1738,7 @@ test("a hard first-draft restore failure settles active providers before complet
   });
   assert.equal(run.response.status, 200);
   assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
-  assert.equal(run.peakRemoteCalls, 3, "master and both selected source segmentations overlap within the shared cap");
+  assert.equal(run.peakRemoteCalls, 2, "master and the remaining catalog segmentation overlap within the shared cap");
   assert.deepEqual(run.completionActiveRemoteCounts, [0]);
   assert.deepEqual(run.wakeActiveRemoteCounts, [0]);
   assert.equal(run.wakeCalls, 1);
@@ -2112,20 +2116,8 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     assert.equal(uploadedDigests.get(finalPath), preflight.request.preflight_asset_digests[assetId]);
   }
   const finalSettingCalls = backgroundCalls.filter((call) => call.assetId === "detail-storage");
-  assert.ok(finalSettingCalls.length >= 2, "the remaining setting asset must retry after a rejected OCR audit");
-  assert.doesNotMatch(finalSettingCalls[0].prompt, /REJECTED CANDIDATE LINEAGE/u);
-  const ocrRetry = finalSettingCalls.find((call) => /ocr:missing-token/u.test(call.prompt));
-  assert.ok(ocrRetry, "OCR lineage must be fed back into a later setting-shot attempt");
-  assert.match(ocrRetry.prompt, /REJECTED CANDIDATE LINEAGE/u);
-  assert.match(ocrRetry.prompt, /ocr:quantity-unit/u);
-  assert.match(ocrRetry.prompt, /semantic:assigned-scene/u);
-  assert.match(ocrRetry.prompt, /500 g/u);
-  assert.match(ocrRetry.prompt, /400 g/u);
-  assert.match(ocrRetry.referencePaths[0] ?? "", /^rejected-background:detail-storage:\d+$/u);
-  assert.deepEqual(
-    [...new Set(backgroundCalls.map((call) => call.assetId))].sort(),
-    ["detail-context", "detail-storage"],
-  );
+  assert.equal(finalSettingCalls.length, 0, "detail authoring reuses all eight prepared scenes without another image call");
+  assert.equal(backgroundCalls.length, 0, "all prepared scene bytes are reused without any background generation");
   assert.deepEqual(
     Object.keys((completionCalls[0].p_result_payload as { asset_audit_modes: Record<string, string> }).asset_audit_modes).sort(),
     aiGeneratedAssetSpecs.map((asset) => asset.id).sort(),
@@ -2256,7 +2248,7 @@ test("main then front segmentation quality failures fail closed instead of a ful
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: false, status: "failed", processed: 1 });
-  assert.deepEqual(attemptedRoles, ["main", "front"]);
+  assert.deepEqual(attemptedRoles, ["main"]);
   assert.equal(uploadedPaths.length, 0);
   assert.equal(auditModes.size, 0);
   assert.equal(resultPayload, null);

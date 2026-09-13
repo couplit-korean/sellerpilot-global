@@ -102,7 +102,7 @@ export function classifyFirstDraftImageResult(result: FirstDraftImageResult | nu
 
   if (complete) return { phase: "complete", images, confirmedGeneratedCount };
   if (result?.firstDraftGeneration?.exhausted) return { phase: "failed", images, confirmedGeneratedCount };
-  if (allCatalog && knownImages.length === coreFirstDraftAssetIds.length) {
+  if (allCatalog) {
     return { phase: "source-photo-catalog", images, confirmedGeneratedCount: 0 };
   }
   if (knownImages.length < coreFirstDraftAssetIds.length || confirmedGeneratedCount > 0) {
@@ -170,8 +170,8 @@ function defaultFetcher(input: RequestInfo | URL, init?: RequestInit) {
 function firstDraftPhaseMessage(phase: FirstDraftImagePhase, confirmedGeneratedCount: number) {
   if (phase === "source-photo-catalog") return "역할별 이미지 생성을 준비하고 있습니다. 원본사진은 생성 결과에 표시하지 않습니다.";
   if (phase === "queued") return "역할별 1차 이미지를 생성하고 있습니다. 검증된 생성 결과부터 표시합니다.";
-  if (phase === "partial") return `역할별 생성 이미지 ${confirmedGeneratedCount} / 6장을 확인했습니다. 나머지 이미지와 계보를 기다리고 있습니다.`;
-  if (phase === "complete") return "원본 계보와 서로 다른 역할별 생성 근거가 확인된 1차 이미지 6장입니다.";
+  if (phase === "partial") return `역할별 생성 이미지 ${confirmedGeneratedCount} / 8장을 확인했습니다. 나머지 이미지와 계보를 기다리고 있습니다.`;
+  if (phase === "complete") return "원본 계보와 서로 다른 역할별 생성 근거가 확인된 1차 이미지 8장입니다.";
   if (phase === "failed") return "1차 이미지 생성을 완료하지 못해 중단됐습니다. 원본사진을 생성 결과로 표시하지 않습니다.";
   if (phase === "unknown") return "이미지 URL은 있으나 생성 계보를 확인할 수 없어 완료로 표시하지 않습니다.";
   return "";

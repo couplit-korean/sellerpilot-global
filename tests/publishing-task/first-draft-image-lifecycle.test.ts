@@ -36,7 +36,7 @@ test("six source-photo catalog URLs stay provisional rather than becoming genera
   assert.equal(snapshot.confirmedGeneratedCount, 0);
 });
 
-test("missing lineage, partial assets, mixed lineage, and genuine six-role completion are distinct", () => {
+test("missing lineage, partial assets, mixed lineage, and genuine eight-role completion are distinct", () => {
   assert.equal(classifyFirstDraftImageResult({ generatedImages: images() }).phase, "unknown");
   assert.equal(classifyFirstDraftImageResult({ generatedImages: images(3) }).phase, "partial");
 
@@ -51,7 +51,7 @@ test("missing lineage, partial assets, mixed lineage, and genuine six-role compl
   );
 
   const complete = classifyFirstDraftImageResult(resultWithLineage(["segmented-source-composite"]));
-  assert.deepEqual({ phase: complete.phase, count: complete.confirmedGeneratedCount }, { phase: "complete", count: 6 });
+  assert.deepEqual({ phase: complete.phase, count: complete.confirmedGeneratedCount }, { phase: "complete", count: 8 });
 
   const duplicated = classifyFirstDraftImageResult(resultWithLineage(["segmented-source-composite"], 6, true));
   assert.notEqual(duplicated.phase, "complete");

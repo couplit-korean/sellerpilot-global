@@ -12,6 +12,8 @@ const firstDraftImageLabels: Record<(typeof coreFirstDraftAssetIds)[number], str
   "detail-use": "사용 설정샷",
   "detail-routine": "생활 루틴 설정샷",
   "detail-scale": "크기 비교 설정샷",
+  "detail-storage": "보관 설정샷",
+  "detail-context": "사용 환경 설정샷",
 };
 
 export function FirstDraftImageReview({ firstDraftImages, phase, confirmedGeneratedCount, firstDraftConceptStatus, retryAvailable, onRetry }: {
@@ -23,12 +25,12 @@ export function FirstDraftImageReview({ firstDraftImages, phase, confirmedGenera
   onRetry: () => void;
 }) {
   if (phase === "idle" && !firstDraftImages.length) return null;
-  const imagesById = new Map(firstDraftImages.map((image) => [image.id, image]));
+  const imagesById = new Map((["complete", "partial", "failed"].includes(phase) ? firstDraftImages : []).map((image) => [image.id, image]));
   const statusLabel = phase === "complete"
-    ? "생성 확인 6 / 6장"
-    : `생성 확인 ${confirmedGeneratedCount} / 6장`;
-  return (<section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
-              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small role="status" aria-live="polite">{firstDraftConceptStatus || "역할별 이미지 생성 상태를 확인하고 있습니다."}{retryAvailable && <> <button type="button" onClick={onRetry}>같은 작업 다시 확인</button></>}</small></span><em>{statusLabel}</em></header>
+    ? "생성 확인 8 / 8장"
+    : `생성 확인 ${confirmedGeneratedCount} / 8장`;
+  return (<section className="first-draft-image-review" aria-label="상세페이지용 선제작 이미지 8개">
+              <header><span><ImageIcon size={16} /><b>상세페이지용 선제작 이미지</b><small role="status" aria-live="polite">{firstDraftConceptStatus || "역할별 이미지 생성 상태를 확인하고 있습니다."}{retryAvailable && <> <button type="button" onClick={onRetry}>같은 작업 다시 확인</button></>}</small></span><em>{statusLabel}</em></header>
               <div>{coreFirstDraftAssetIds.map((id) => {
                 const image = imagesById.get(id);
                 const label = firstDraftImageLabels[id];

@@ -412,6 +412,8 @@ export const coreFirstDraftAssetIds = [
   "detail-use",
   "detail-routine",
   "detail-scale",
+  "detail-storage",
+  "detail-context",
 ] as const satisfies readonly AiGeneratedAssetId[];
 
 export const remainingFinalAssetIds = [
@@ -419,8 +421,6 @@ export const remainingFinalAssetIds = [
   "square",
   "detail-feature",
   "detail-package",
-  "detail-storage",
-  "detail-context",
   "detail-material",
   "detail-dimensions",
   "detail-contents",
