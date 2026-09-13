@@ -9,6 +9,7 @@ export type CategoryAttributeInputKind =
   | "number_with_unit"
   | "boolean"
   | "repeatable_text"
+  | "smartstore_range"
   | "unsupported";
 export type CategoryAttributeSourceKind = "attribute" | "notice" | "certification";
 export type CategoryAttributeValue = string | string[];
@@ -30,6 +31,11 @@ export type CategoryAttribute = {
   sourceKind: CategoryAttributeSourceKind;
   condition: CategoryAttributeCondition | null;
   unsupportedReason: string | null;
+  maxValueCount?: number;
+  smartstoreRange?: {
+    unitRequired: boolean;
+    ranges: Array<{ id: string; min: string; max: string; unitCodes: string[] }>;
+  };
 };
 
 export type CategoryOfficialMetadata = {
@@ -316,16 +322,63 @@ function deduplicateAttributes(attributes: CategoryAttribute[]) {
   });
 }
 
+function smartstoreAttributes(payloads: unknown[]): CategoryAttribute[] {
+  const rows = records({ payloads });
+  const valueRows = rows.filter(row => row.attributeSeq !== undefined && row.attributeValueSeq !== undefined);
+  return rows.flatMap(row => {
+    if (row.attributeSeq === undefined || !row.attributeName) return [];
+    // PRIMARY/OPTIONAL describe importance. The official classification determines the control.
+    const mode = text(row, ["attributeClassificationType"]).toUpperCase();
+    const matches = valueRows.filter(value => String(value.attributeSeq) === String(row.attributeSeq));
+    const ranges = matches.map(value => ({
+      id: text(value, ["attributeValueSeq"]),
+      min: text(value, ["minAttributeValue"]),
+      max: text(value, ["maxAttributeValue"]),
+      unitCodes: uniqueText([value.minAttributeValueUnitCode, value.maxAttributeValueUnitCode]),
+    }));
+    const options = matches.map(value => ({
+      id: text(value, ["attributeValueSeq"]),
+      name: mode === "RANGE"
+        ? `${text(value, ["minAttributeValue"]) || "하한 없음"} ~ ${text(value, ["maxAttributeValue"]) || "상한 없음"} ${text(value, ["minAttributeValueUnitCode", "maxAttributeValueUnitCode"])}`.trim()
+        : text(value, ["minAttributeValue", "maxAttributeValue"]),
+    }));
+    const normalized = standardAttribute({ ...row, mode: mode || "SMARTSTORE_UNKNOWN", options });
+    if (!normalized) return [];
+    const supportedSelect = ["SINGLE_SELECT", "MULTI_SELECT"].includes(mode) && normalized.values.length > 0;
+    const supportedRange = mode === "RANGE" && ranges.length > 0
+      && ranges.every(range => /^\d+$/u.test(range.id) && (range.min || range.max)
+        && [range.min, range.max].every(value => !value || /^\d+(?:\.\d+)?$/u.test(value))
+        && (row.unitUsable !== true || range.unitCodes.length > 0));
+    const max = Number(row.attributeValueMaxMatchingCount);
+    return [{
+      ...normalized,
+      inputKind: supportedRange ? "smartstore_range" as const : supportedSelect ? normalized.inputKind : "unsupported" as const,
+      units: supportedRange ? uniqueText(ranges.flatMap(range => range.unitCodes)) : [],
+      unsupportedReason: supportedSelect || supportedRange ? null : `공식 ${mode || "미확인"} 속성의 값·범위·단위 정보를 확인할 수 없습니다.`,
+      ...(Number.isSafeInteger(max) && max > 0 ? { maxValueCount: max } : {}),
+      ...(supportedRange ? { smartstoreRange: { unitRequired: row.unitUsable === true, ranges } } : {}),
+    }];
+  });
+}
+
+export function smartstoreRangeValue(value: unknown): { attributeValueSeq: string; attributeRealValue: string; attributeRealValueUnitCode: string } | null {
+  let parsed: unknown = value;
+  if (typeof value === "string") { try { parsed = JSON.parse(value); } catch { return null; } }
+  const row = record(parsed);
+  if (!row || Object.keys(row).some(key => !["attributeValueSeq", "attributeRealValue", "attributeRealValueUnitCode"].includes(key))) return null;
+  return { attributeValueSeq: text(row, ["attributeValueSeq"]), attributeRealValue: text(row, ["attributeRealValue"]), attributeRealValueUnitCode: text(row, ["attributeRealValueUnitCode"]) };
+}
+
 export function normalizeCategoryMetadata(channel: ActiveChannelKey, payloads: unknown[]): CategoryOfficialMetadata {
   const native = channel === "coupang"
     ? coupangMetadata(payloads)
     : { attributes: [], noticeCategories: [], certifications: [] };
   const standardRows = channel === "coupang" ? native.attributes : records({ payloads });
   const attributes = deduplicateAttributes([
-    ...standardRows.flatMap((row) => {
+    ...(channel === "smartstore" ? smartstoreAttributes(payloads) : standardRows.flatMap((row) => {
       const normalized = standardAttribute(row);
       return normalized ? [normalized] : [];
-    }),
+    })),
     ...(channel === "coupang" ? coupangNoticeAttributes(native.noticeCategories) : []),
     ...(channel === "coupang" ? coupangCertificationAttributes(native.certifications) : []),
   ]);
@@ -351,8 +404,18 @@ export function categoryAttributeValueValid(attribute: CategoryAttribute, value:
   const supplied = strings(value);
   if (!supplied.length) return false;
   if (attribute.inputKind === "unsupported") return false;
+  if (attribute.inputKind === "smartstore_range") {
+    const rangeValue = smartstoreRangeValue(value);
+    const range = attribute.smartstoreRange?.ranges.find(candidate => candidate.id === rangeValue?.attributeValueSeq);
+    if (!rangeValue || !range || !/^\d+(?:\.\d+)?(?:[~x]\d+(?:\.\d+)?)?$/u.test(rangeValue.attributeRealValue)) return false;
+    if (attribute.smartstoreRange?.unitRequired && !range.unitCodes.includes(rangeValue.attributeRealValueUnitCode)) return false;
+    if (!attribute.smartstoreRange?.unitRequired && rangeValue.attributeRealValueUnitCode && !range.unitCodes.includes(rangeValue.attributeRealValueUnitCode)) return false;
+    return rangeValue.attributeRealValue.split(/[~x]/u).map(Number).every(number => Number.isFinite(number)
+      && (!range.min || number >= Number(range.min)) && (!range.max || number <= Number(range.max)));
+  }
   if (attribute.inputKind === "single_select") return supplied.length === 1 && attribute.values.some((option) => option.id === supplied[0]);
-  if (attribute.inputKind === "multi_select") return supplied.every((item) => attribute.values.some((option) => option.id === item));
+  if (attribute.inputKind === "multi_select") return (!attribute.maxValueCount || supplied.length <= attribute.maxValueCount)
+    && new Set(supplied).size === supplied.length && supplied.every((item) => attribute.values.some((option) => option.id === item));
   if (attribute.inputKind === "boolean") return supplied.length === 1 && ["true", "false"].includes(supplied[0]);
   if (attribute.inputKind === "number") return supplied.length === 1 && /^[-+]?\d+(?:\.\d+)?$/u.test(supplied[0]);
   if (attribute.inputKind === "number_with_unit") {
@@ -390,10 +453,18 @@ export function serializeCategoryAttributeValues(
   attributes: CategoryAttribute[],
   values: Record<string, CategoryAttributeValue>,
 ) {
-  return Object.fromEntries(attributes.flatMap((attribute) => {
+  return Object.fromEntries(attributes.flatMap<[string, unknown]>((attribute) => {
     if (!categoryAttributeApplies(attribute, values) || attribute.inputKind === "unsupported") return [];
     const supplied = strings(values[attribute.id]);
     if (!supplied.length) return [];
+    if (channel === "smartstore" && attribute.inputKind === "smartstore_range") {
+      if (!categoryAttributeValueValid(attribute, values[attribute.id])) return [];
+      const range = smartstoreRangeValue(values[attribute.id])!;
+      return [[attribute.id, {
+        attributeValueSeq: Number(range.attributeValueSeq), attributeRealValue: range.attributeRealValue,
+        ...(range.attributeRealValueUnitCode ? { attributeRealValueUnitCode: range.attributeRealValueUnitCode } : {}),
+      }]];
+    }
     const serialized = channel === "lazada"
       ? supplied.map((item) => attribute.values.find((option) => option.id === item)?.name ?? item)
       : supplied;
@@ -487,7 +558,7 @@ export function normalizeStoredCategoryAttribute(value: unknown): CategoryAttrib
   const requirement = text(row, ["requirement"]) as CategoryAttributeRequirement;
   return {
     ...normalized,
-    ...(input && ["text", "single_select", "multi_select", "number", "number_with_unit", "boolean", "repeatable_text", "unsupported"].includes(input)
+    ...(input && ["text", "single_select", "multi_select", "number", "number_with_unit", "boolean", "repeatable_text", "smartstore_range", "unsupported"].includes(input)
       ? { inputKind: input as CategoryAttributeInputKind }
       : {}),
     ...(requirement && ["required", "optional", "one_of_group"].includes(requirement)
@@ -503,6 +574,9 @@ export function normalizeStoredCategoryAttribute(value: unknown): CategoryAttrib
       ? { attributeId: text(record(row.condition)!, ["attributeId"]), equals: text(record(row.condition)!, ["equals"]) }
       : null,
     unsupportedReason: typeof row.unsupportedReason === "string" && row.unsupportedReason.trim() ? row.unsupportedReason.trim() : normalized.unsupportedReason,
+    ...(Number.isSafeInteger(row.maxValueCount) && Number(row.maxValueCount) > 0 ? { maxValueCount: Number(row.maxValueCount) } : {}),
+    ...(record(row.smartstoreRange) && Array.isArray(record(row.smartstoreRange)?.ranges)
+      ? { smartstoreRange: row.smartstoreRange as CategoryAttribute["smartstoreRange"] } : {}),
   };
 }
 

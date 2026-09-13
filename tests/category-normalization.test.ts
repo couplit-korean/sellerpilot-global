@@ -377,6 +377,56 @@ test("Lazada normalization maps Malay soap wording to a beauty cleanser leaf", (
   assert.equal(normalizeSuggestions("lazada", lazadaCategoryResponse, "Sabun pembersih pepejal")[0]?.id, "1002");
 });
 
+test("Lazada keeps official soft-drink leaves for Korean cider and excludes alcoholic cider and rum", () => {
+  // Minimal projection of official MY receipt 062a5764-fcbc-44c7-93fc-fa3eaf9593b1,
+  // completed 2026-09-13T23:03:37Z. Names, IDs, paths and leaf flags are unchanged.
+  const response = { ok: true, steps: [{
+    name: "category-suggestion", ok: true, status: 200, data: { data: { categorySuggestions: [
+      { categoryId: 10003131, categoryName: "Lemon Lime", categoryPath: "Groceries>Drinks>Soft Drinks>Carbonated Drinks>Lemon Lime" },
+      { categoryId: 10100513, categoryName: "Apple", categoryPath: "Groceries>Alcoholic Beverages>Cider>Apple" },
+      { categoryId: 10100514, categoryName: "Flavoured", categoryPath: "Groceries>Alcoholic Beverages>Cider>Flavoured" },
+      { categoryId: 10003130, categoryName: "Sparkling Flavoured Drinks", categoryPath: "Groceries>Drinks>Soft Drinks>Carbonated Drinks>Sparkling Flavoured Drinks" },
+    ] } },
+  }, {
+    name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: 3752, name: "Groceries", leaf: false, children: [
+        { category_id: 3753, name: "Minuman Beralkohol", leaf: false, children: [
+          { category_id: 3754, name: "Spirits", leaf: false, children: [{ category_id: 3755, name: "Rum", leaf: true }] },
+          { category_id: 10100512, name: "Cider", leaf: false, children: [
+            { category_id: 10100514, name: "Flavoured", leaf: true },
+            { category_id: 10100513, name: "Apple", leaf: true },
+          ] },
+        ] },
+        { category_id: 8038, name: "Minuman", leaf: false, children: [
+          { category_id: 10002163, name: "Minuman BerGas", leaf: false, children: [
+            { category_id: 10003133, name: "Carbonated Drinks", leaf: false, children: [
+              { category_id: 10003129, name: "Cola", leaf: true },
+              { category_id: 10003130, name: "Sparkling Flavoured Drinks", leaf: true },
+              { category_id: 10003131, name: "Lemon Lime", leaf: true },
+            ] },
+          ] },
+        ] },
+      ] },
+    ] },
+  }] };
+  for (const query of [
+    "Narangd Cider Zero 500 ml Minuman Berkarbonat 1 Botol",
+    "나랑드사이다 제로 500 ml 탄산음료 1병",
+    "Narangd Cider Zero Carbonated Soft Drink 500 ml Single Bottle",
+    "Minuman BerGas 500 ml",
+  ]) {
+    const suggestions = normalizeSuggestions("lazada", response, query);
+    assert.deepEqual(suggestions.slice(0, 2).map(item => item.id), ["10003131", "10003130"], query);
+    assert.ok(!suggestions.some(item => ["10100513", "10100514", "3755"].includes(item.id)));
+    assert.equal(suggestions[0]?.id, "10003131", "the provider recommendation wins over tree traversal order");
+    assert.ok(suggestions.every(item => item.leaf && /Carbonated Drinks/.test(item.path.join(" "))));
+  }
+  // The word cider alone does not reclassify a real alcoholic cider as soda.
+  const alcoholic = normalizeSuggestions("lazada", response, "Apple alcoholic cider");
+  assert.ok(alcoholic.some(item => item.id === "10100513"));
+  assert.ok(!alcoholic.some(item => item.id === "10003131"));
+});
+
 test("Lazada normalization excludes a matching parent and keeps the official nested leaf path", () => {
   const response = {
     ok: true,

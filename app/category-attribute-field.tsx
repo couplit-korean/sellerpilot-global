@@ -3,6 +3,7 @@
 import { useId } from "react";
 import {
   categoryAttributeValueValid,
+  smartstoreRangeValue,
   type CategoryAttribute,
   type CategoryAttributeValue,
 } from "./category-attribute-model";
@@ -54,6 +55,21 @@ export function CategoryAttributeField({
   if (attribute.inputKind === "multi_select") {
     const selected = new Set(list(value));
     return <label>{label}<select multiple value={[...selected]} aria-invalid={invalid || undefined} onChange={(event) => onChange([...event.currentTarget.selectedOptions].map((option) => option.value))}>{attribute.values.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select><small>여러 값을 선택할 수 있습니다.</small></label>;
+  }
+
+  if (attribute.inputKind === "smartstore_range") {
+    const current = smartstoreRangeValue(value) ?? { attributeValueSeq: "", attributeRealValue: "", attributeRealValueUnitCode: "" };
+    const selectedRange = attribute.smartstoreRange?.ranges.find(range => range.id === current.attributeValueSeq);
+    const change = (patch: Partial<typeof current>) => onChange(JSON.stringify({ ...current, ...patch }));
+    return <fieldset className="category-attribute-range"><legend>{label}</legend>
+      <label><span>{attribute.name} 공식 범위</span><select value={current.attributeValueSeq} aria-invalid={invalid || undefined} onChange={event => {
+        const range = attribute.smartstoreRange?.ranges.find(candidate => candidate.id === event.target.value);
+        change({ attributeValueSeq: event.target.value, attributeRealValueUnitCode: range?.unitCodes.length === 1 ? range.unitCodes[0] : "" });
+      }}><option value="">실제 값이 속하는 범위 선택</option>{attribute.values.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label>
+      <label><span>{attribute.name} 실제 값</span><input type="number" min="0" step="any" value={current.attributeRealValue} aria-invalid={invalid || undefined} onChange={event => change({ attributeRealValue: event.target.value })} /></label>
+      {attribute.smartstoreRange?.unitRequired && <label><span>{attribute.name} 공식 단위 코드</span><select value={current.attributeRealValueUnitCode} aria-invalid={invalid || undefined} onChange={event => change({ attributeRealValueUnitCode: event.target.value })}><option value="">단위 선택</option>{(selectedRange?.unitCodes ?? []).map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></label>}
+      {invalid && <small role="alert">선택한 공식 범위 안의 실제 값과 해당 단위를 입력해 주세요.</small>}
+    </fieldset>;
   }
 
   if (attribute.inputKind === "repeatable_text") {

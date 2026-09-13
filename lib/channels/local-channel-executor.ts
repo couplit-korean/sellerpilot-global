@@ -10,6 +10,7 @@ const digestPattern = /^[a-f0-9]{64}$/u;
 const workerVersionPattern = /^sellerpilot-cli-worker\/1\.61\+([a-f0-9]{40})\.([a-f0-9]{11})$/u;
 
 const readOnlyTuples = new Set([
+  "coupang:categories.suggest",
   "coupang:categories.attributes",
   "coupang:categories.validate",
   "coupang:inquiries.list",
@@ -22,9 +23,15 @@ const readOnlyTuples = new Set([
   "elevenst:inquiries.list",
   "elevenst:orders.list",
   "elevenst:diagnostic.test",
+  "elevenst:categories.suggest",
+  "elevenst:categories.attributes",
+  "elevenst:categories.validate",
   "temu:inquiries.list",
   "temu:orders.list",
   "temu:diagnostic.test",
+  "temu:categories.suggest",
+  "temu:categories.attributes",
+  "temu:categories.validate",
   "shopee:inquiries.list",
   "shopee:orders.list",
   "shopee:diagnostic.test",

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { CategoryAttributeField } from "../app/category-attribute-field";
 import {
   categoryConfirmationTargets,
   categoryStatesFromAssignments,
@@ -15,6 +18,63 @@ import {
   serializeCategoryAttributeValues,
   suggestedCategoryAttributeValues,
 } from "../app/category-attribute-model";
+
+test("SmartStore cider metadata uses official classifications and joins separate value IDs", () => {
+  // Official 50002253 response: gateway job b80e630f, 2026-09-13. No inferred choices.
+  const attributes = [
+    { attributeSeq: 10013910, attributeName: "용기타입", attributeType: "PRIMARY", attributeClassificationType: "SINGLE_SELECT", unitUsable: false },
+    { attributeSeq: 10013911, attributeName: "용량", attributeType: "PRIMARY", attributeClassificationType: "RANGE", unitUsable: true, representativeUnitCode: "A02112" },
+    { attributeSeq: 10035708, attributeName: "특징", attributeType: "PRIMARY", attributeClassificationType: "MULTI_SELECT", unitUsable: false, attributeValueMaxMatchingCount: 0 },
+    { attributeSeq: 10018618, attributeName: "개당열량", attributeType: "PRIMARY", attributeClassificationType: "RANGE", unitUsable: true, representativeUnitCode: "A02211" },
+    { attributeSeq: 10014420, attributeName: "보관방법", attributeType: "PRIMARY", attributeClassificationType: "SINGLE_SELECT", unitUsable: false },
+  ];
+  const values = [
+    { attributeSeq: 10013910, attributeValueSeq: 10760068, minAttributeValue: "페트병" },
+    { attributeSeq: 10013911, attributeValueSeq: 10760072, minAttributeValue: "350", maxAttributeValue: "500", minAttributeValueUnitCode: "A02112", maxAttributeValueUnitCode: "A02112" },
+    { attributeSeq: 10035708, attributeValueSeq: 10824637, minAttributeValue: "무설탕" },
+    { attributeSeq: 10035708, attributeValueSeq: 11369031, minAttributeValue: "제로칼로리" },
+    { attributeSeq: 10018618, attributeValueSeq: 10811008, maxAttributeValue: "50", maxAttributeValueUnitCode: "A02211" },
+    { attributeSeq: 10014420, attributeValueSeq: 10771836, minAttributeValue: "실온보관" },
+  ];
+  const metadata = normalizeCategoryMetadata("smartstore", [{ steps: [
+    { name: "attributes", ok: true, data: { items: attributes } },
+    { name: "attribute-values", ok: true, data: { items: values } },
+  ] }]);
+  assert.equal(metadata.descriptors.length, 5);
+  assert.deepEqual(metadata.unsupportedAttributeIds, []);
+  const byId = new Map(metadata.descriptors.map(attribute => [attribute.id, attribute]));
+  assert.equal(byId.get("10013910")?.inputKind, "single_select");
+  assert.deepEqual(byId.get("10013910")?.values, [{ id: "10760068", name: "페트병" }]);
+  assert.equal(byId.get("10013911")?.inputKind, "smartstore_range");
+  assert.equal(byId.get("10035708")?.inputKind, "multi_select");
+  const volume = { attributeValueSeq: 10760072, attributeRealValue: "500", attributeRealValueUnitCode: "A02112" };
+  const calories = { attributeValueSeq: 10811008, attributeRealValue: "0", attributeRealValueUnitCode: "A02211" };
+  const selected = { "10013910": "10760068", "10013911": JSON.stringify(volume), "10035708": ["10824637", "11369031"], "10018618": JSON.stringify(calories), "10014420": "10771836" };
+  assert.deepEqual(missingCategoryInputIssues(metadata.descriptors, selected), []);
+  assert.deepEqual(serializeCategoryAttributeValues("smartstore", metadata.descriptors, selected), { ...selected, "10013911": volume, "10018618": calories });
+  for (const patch of [{ attributeRealValue: "501" }, { attributeRealValue: "-1" }, { attributeRealValueUnitCode: "kg" }, { attributeValueSeq: 10811008 }]) {
+    assert.equal(categoryAttributeValueValid(byId.get("10013911")!, JSON.stringify({ ...volume, ...patch })), false);
+  }
+  assert.equal(categoryAttributeValueValid(byId.get("10035708")!, ["10824637", "10824637"]), false);
+  assert.equal(categoryAttributeValueValid({ ...byId.get("10035708")!, maxValueCount: 1 }, selected["10035708"]), false);
+  const restored = normalizeStoredCategoryAttribute(byId.get("10013911"))!;
+  assert.equal(categoryAttributeValueValid(restored, selected["10013911"]), true);
+  const markup = renderToStaticMarkup(createElement(CategoryAttributeField, { attribute: restored, value: selected["10013911"], onChange: () => {} }));
+  assert.match(markup, /용량 공식 범위/);
+  assert.match(markup, /value="500"/);
+  assert.match(markup, /A02112/);
+  assert.doesNotMatch(markup, /안전하게 편집할 수 없습니다/);
+  const storedState = categoryStatesFromAssignments([{
+    channel: "smartstore", environment: "production", market: "KR", category_id: "50002253",
+    category_path: ["식품", "음료", "청량/탄산음료", "사이다"], is_leaf: true, confidence: 1, status: "confirmed",
+    required_attributes: assignmentCategoryAttributeDescriptors(metadata.descriptors, selected),
+    provided_attributes: serializeCategoryAttributeValues("smartstore", metadata.descriptors, selected),
+  }]);
+  const restoredState = Object.values(storedState)[0];
+  assert.equal(restoredState?.values["10013911"], JSON.stringify(volume));
+  assert.equal(normalizeCategoryMetadata("smartstore", [{ items: attributes }]).descriptors.every(attribute => attribute.inputKind === "unsupported"), true);
+  assert.equal(normalizeCategoryMetadata("smartstore", [{ attributeSeq: 9, attributeName: "Unknown", attributeType: "PRIMARY" }]).descriptors[0]?.inputKind, "unsupported");
+});
 
 test("Coupang metadata preserves optional, grouped, numeric-unit, notice and certification contracts", () => {
   const metadata = normalizeCategoryMetadata("coupang", [{

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
 import { ChannelLinkBadge } from "./channel-link-badge";
+import { ShopeeTargetSync } from "./shopee-target-sync";
 import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
 import {
   elevenstProcessedFoodCategoryId,
@@ -20,6 +21,7 @@ import {
   normalizeCategoryMetadata,
   normalizeStoredCategoryAttribute,
   serializeCategoryAttributeValues,
+  categoryAttributeValueValid,
   suggestedCategoryAttributeValues,
   type CategoryAttribute,
   type CategoryAttributeValue,
@@ -313,6 +315,10 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
 }
 
 function storedCategoryValue(attribute: CategoryAttribute, value: unknown): CategoryAttributeValue | null {
+  if (attribute.inputKind === "smartstore_range" && value && typeof value === "object" && !Array.isArray(value)) {
+    const serialized = JSON.stringify(value);
+    return categoryAttributeValueValid(attribute, serialized) ? serialized : null;
+  }
   const supplied = (Array.isArray(value) ? value : [value]).flatMap((item) =>
     typeof item === "string" || typeof item === "number" ? [String(item).trim()] : []).filter(Boolean);
   if (!supplied.length) return null;
@@ -691,9 +697,17 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   return 0;
 }
 
+function lazadaSoftDrinkQuery(query: string) {
+  // Korean 사이다 is a soft drink; English cider alone is ambiguous.
+  // Require an explicit beverage kind instead of using the translated brand.
+  return /(?:탄산\s*음료|사이다|soft\s*drinks?|carbonated\s*(?:soft\s*)?(?:drinks?|beverages?)|minuman\s*(?:berkarbonat|bergas|ber\s*gas|ringan))/iu.test(query)
+    && !/(?:vinegar|식초|cuka|alcoholic|hard\s*cider|주류|사과주)/iu.test(query);
+}
+
 function lazadaSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
+  if (lazadaSoftDrinkQuery(query)) aliases.push("soft drinks carbonated drinks minuman bergas minuman berkarbonat");
   if (/(krim|cream|크림|moistur)/u.test(normalized)) aliases.push("facial moisturizers skin care cream");
   if (/(sabun|soap|cleanser|cleansing|비누|세정)/u.test(normalized)) aliases.push("soap facial cleansers bath body skin care");
   if (/(lipstik|lipstick|립스틱|gincu)/u.test(normalized)) aliases.push("lipstick lip color makeup lips");
@@ -722,6 +736,11 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const path = candidate.path.join(" ").toLocaleLowerCase();
+  if (lazadaSoftDrinkQuery(query)) {
+    const category = `${path} ${name}`;
+    return /(?:soft drinks?|carbonated drinks?|minuman ber\s*gas|minuman berkarbonat)/iu.test(category)
+      && !/(?:alcoholic|alcohol|beralkohol|\bcider\b|\brum\b|\bbeer\b|\bwine\b|\bspirits\b|주류)/iu.test(category);
+  }
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return /rice|beras|nasi/u.test(name);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return /pasta|penne|noodle/u.test(name) && !/rice|beras/u.test(name);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return /flour|tepung/u.test(name);
@@ -936,6 +955,14 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       confidence: Math.min(0.99, 0.45 + lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) * 0.54),
     }))
     : [];
+  // For explicit soft drinks, preserve the provider's recommendation order
+  // before equally matching tree leaves. A generic tree must not promote Cola
+  // over the provider's exact product recommendation merely by traversal order.
+  const lazadaSoftDrinkRecommendationIds = channel === "lazada" && lazadaSoftDrinkQuery(query)
+    ? [...new Set(records({ steps: (payload.steps ?? []).filter(item => item.name === "category-suggestion") })
+      .map(row => text(row, ["categoryId", "category_id"]))
+      .filter(Boolean))]
+    : [];
   const officialShopeeTree = channel === "shopee"
     ? (payload.steps ?? []).flatMap((item) => shopeeGlobalLeafCategoryPaths(item.data))
       .map((item) => ({
@@ -997,6 +1024,12 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       }
       if (channel === "lazada") {
+        const recommendationRank = (item: CategorySuggestion) => {
+          const rank = lazadaSoftDrinkRecommendationIds.indexOf(item.id);
+          return rank < 0 ? Number.POSITIVE_INFINITY : rank;
+        };
+        const leftRank = recommendationRank(left), rightRank = recommendationRank(right);
+        if (leftRank !== rightRank) return leftRank - rightRank;
         const leftPriority = lazadaPriorityScore(query, left);
         const rightPriority = lazadaPriorityScore(query, right);
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
@@ -1671,8 +1704,15 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         {!state.suggestions.length && !state.selected && <div className="category-empty">
           <Tags size={21} />
           <b>{!targetReady ? "등록 대상 동기화 필요" : credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b>
-          <small>{!targetReady ? "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small>
-          <button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "OAuth 재승인 필요" : "공식 API 추천"}</button>
+          <small>{!targetReady ? channel === "shopee" ? "기존 연결의 숍 ID로 국가·언어 정보를 동기화하세요." : "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small>
+          {channel === "shopee" && !targetReady && credential && <ShopeeTargetSync disabled={loadingCredentials} onSynced={(synced) => {
+            setCredentials((current) => current.map((item) => item.channel === "shopee" && item.environment === "production" && item.status === "active"
+              ? { ...item, id: synced.credentialId, last_check_status: null, last_checked_at: null } : item));
+            setTargets((current) => ({ ...current, shopee: [...(current.shopee ?? []).filter((item) => item.marketCode !== synced.marketCode), synced] }));
+            setSelectedMarkets((current) => ({ ...current, shopee: synced.marketCode }));
+            setTargetErrors((current) => ({ ...current, shopee: "" }));
+          }} />}
+          <button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? channel === "shopee" ? "숍 동기화 후 추천 가능" : "OAuth 재승인 필요" : "공식 API 추천"}</button>
           {credential && productId && targetReady && <div className="category-manual-fallback">
             <b>공식 ID 수동 검증</b>
             <small>추천 결과가 없을 때 판매자센터에서 확인한 실제 말단 카테고리를 입력합니다. 저장 전 공식 속성·유효성 API를 다시 통과해야 합니다.</small>
