@@ -1,4 +1,5 @@
 import { elevenstVerifiedSkuAbsence } from "../../channels/elevenst-create-preflight";
+import { scoreElevenstCategory } from "../elevenst/category-ranking";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import { stringArgument, pathSegment } from "../../channels/operation-values";
 import { createHash } from "node:crypto";
@@ -220,35 +221,7 @@ export function elevenstCategoryScore(
   query: string,
   category: ElevenstCategory,
 ) {
-  const normalizedQuery = query
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-  const candidate =
-    `${category.categoryPath} ${category.categoryName}`.toLocaleLowerCase();
-  const words = [
-    ...new Set(normalizedQuery.split(/\s+/).filter((word) => word.length > 1)),
-  ];
-  const matched = words.filter((word) => candidate.includes(word)).length;
-  const cableOrganizerBoost =
-    /(케이블|전선|cable|cord)/u.test(normalizedQuery) &&
-      /(정리|클립|홀더|organizer|clip)/u.test(normalizedQuery) &&
-      /(케이블|전선).*(정리|클립|홀더)|(?:정리|클립|홀더).*(?:케이블|전선)/u.test(
-        candidate,
-      )
-      ? 1_000
-      : 0;
-  const cableClipLeafBoost =
-    /(클립|clip|holder)/u.test(normalizedQuery) &&
-      /케이블\s*정리소품/u.test(category.categoryName)
-      ? 400
-      : 0;
-  const relevance =
-    cableOrganizerBoost +
-    cableClipLeafBoost +
-    matched * 100 +
-    (candidate.includes(normalizedQuery) ? 500 : 0);
-  return relevance > 0 ? relevance + category.depth : 0;
+  return scoreElevenstCategory(query, category);
 }
 
 export async function executeElevenst(input: ExecuteInput) {

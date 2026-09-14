@@ -337,7 +337,23 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
   if (input.job.channel === "shopee") {
     const shopId = String(input.job.request.shopId ?? "").trim();
     await input.hooks.assertLeaseHealthy();
-    const ensured = await ensureShopeeAccessToken(input.job.credential, input.job.environment, 10 * 60 * 1000, shopId, input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
+    let ensured = await ensureShopeeAccessToken(input.job.credential, input.job.environment, 10 * 60 * 1000, shopId, input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
+    if (input.job.environment === "production" && shopId === "1719148844"
+        && textValue(ensured.payload, "provider_account_subject") === "shopee:main:4940266") {
+      // This SG shop publishes global products through its existing merchant.
+      // Categories deliberately cannot refresh credentials, so preserve both
+      // target rotations in this same approved discovery job before returning.
+      await input.hooks.assertLeaseHealthy();
+      const merchantEnsured = await ensureShopeeMerchantAccessToken(ensured.payload,
+        input.job.environment, 10 * 60 * 1000, "5511564",
+        input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
+      await input.hooks.assertLeaseHealthy();
+      // Restore the shop's signing token while retaining the newly preserved
+      // merchant target. The fresh shop token needs no second exchange.
+      ensured = await ensureShopeeAccessToken(merchantEnsured.payload,
+        input.job.environment, 10 * 60 * 1000, shopId,
+        input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
+    }
     await input.hooks.assertLeaseHealthy();
     const remote = await shopeeRequest({
       payload: ensured.payload,

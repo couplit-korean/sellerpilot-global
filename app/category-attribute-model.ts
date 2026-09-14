@@ -56,8 +56,8 @@ export type CategoryInputIssue = {
 };
 
 const explicitFreeTextModes = new Set(["FREE_TEXT", "TEXT", "TEXTAREA", "STRING", "INPUT"]);
-const explicitSingleSelectModes = new Set(["SELECTION_ONLY", "SINGLE_SELECT", "SELECT", "DROPDOWN", "LIST"]);
-const explicitMultiSelectModes = new Set(["MULTI_SELECT", "MULTIPLE_SELECT", "CHECKBOX", "CHECKBOXES"]);
+const explicitSingleSelectModes = new Set(["SELECTION_ONLY", "SINGLE_SELECT", "SINGLESELECT", "SELECT", "DROPDOWN", "LIST"]);
+const explicitMultiSelectModes = new Set(["MULTI_SELECT", "MULTISELECT", "MULTIPLE_SELECT", "CHECKBOX", "CHECKBOXES"]);
 const explicitNumberModes = new Set(["NUMBER", "NUMERIC", "DECIMAL", "INTEGER"]);
 const explicitBooleanModes = new Set(["BOOLEAN", "BOOL"]);
 const shopeeCustomValueInputTypes = new Set([2, 3, 5]);

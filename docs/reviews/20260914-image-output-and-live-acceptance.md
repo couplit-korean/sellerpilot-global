@@ -155,3 +155,18 @@
 - Lazada 로컬 카테고리 읽기 3개를 기존 승인/판매자/IP/release 검사를 유지해 추가했다. 085500 migration 원문 해시 일치 적용 완료, 실제 route와 새 실행 코드 배포는 아래 배포 검증을 따른다.
 - eBay 실제 refresh/GetUser 응답을 개인 로컬 원장에 보존한 뒤 REST STORE가 8초 제한(실측 DB 약9초)으로 rollback되는 것을 확인했다. 같은 원래 providerVerifiedAt/HMAC 검증 응답으로 transaction-local20초의 동일 RPC STORE만 재개해 v210 credential 2ba31905-9879-44c4-88be-2204776fa303 저장 성공. 이전 문의 결과/감사시각 보존, 새 provider 작업 강제 시작0, 기존 queued credential 정상 rebind312. 이는 상품 등록 성공이 아니다.
 - 132500 공유 관리자 검증 및 133500 refresh flag/timestamp CHECK 일관성 forward 적용. 운영의17개 CHECK를 포함한 회귀 통과. Shopee SG+merchant 좁은 갱신 수정은 별도 진행 중이며 전체 신규 채널 등록은 여전히0/8.
+
+### bf6f304 운영 반영 확인
+
+- Vercel dpl_8uFC2HRPR6je8BYRytq4s6tBASup를승격. candidate6+production6 canary 통과, active runtime bf6f3044de3666747b341f878ba4d8467c888512. 최초 promotion 직후 구버전응답은승격전파지연으로활성화하지않고새SHA응답후활성화했다.
+- 기존 listing8+category9 route는owner/credential/approval/IP/expiry불변으로새SHA정렬. Lazada기존diagnostic동일계보승인에서category3 route추가. Mac게이트웨이도같은SHA ready확인(정상drain요청시active0; 추가종료시도는새프로세스확인가드로실행안됨).
+- 실제Aside기존상품화면에서 eBay정책4값/Qoo10배송806971입력. 11st공식사이다1009792, eBaySoft Drinks179188선택후속성검증중. SS50002253와Lazada재조회도같은jobGETpoll진행. 판매배송비승인질문대기이며 실제신규등록0/8.
+
+### 카테고리·SG 인증 후속 통합 검증
+
+- Coupang3종카테고리는기존cloud환경/DBpolicy/activeSHA검증시cloud접수가능하게수정. 실제claim의IP·권한검사는유지한다.
+- SmartStore3종카테고리를기존승인localreadlane/pulse에포함하여더늦게접수된일반조회에계속밀리는현상수정. 운영원문preimage를유지한14140000 rollback성공;3route승계는실제적용후진행.
+- 11st추천은제로→주제로,500→500GB오매칭제거. 기존등록50+추천3검사통과. 사이다1009792의고시/인증contract는기존비스켓1346631전용구현에없어공식규격확인대기;이를등록완료로보지않는다.
+- Shopee134000은실제5286계정소유자/768관리자관계,운영17CHECK와원래저장함수포함회귀를통과. SGshop→merchant→identity메타credential연속저장,다른계정불변,148과거불확정원장보존검증. 운영rollback에서exact4a45 eligible true/52.506ms,plan36.449ms를확인했다. 일반claim에서는다른Qoo10조회가선택되었으며모든진단변경rollback;SG실제인증성공증거는아직없다.
+- Lazada공식singleSelect/multiSelect철자지원추가. 옵션ID는기존정확옵션명으로직렬화하며잘못된값거절. brand선택은공식옵션조회가별도로필요하여진행중이다.
+- 이번통합전체TypeScript및관련94/94검사통과. 실제신규채널등록0/8,카테고리저장Qoo10+11st2/8. 11st브라우저로그인/판매배송비질문대기.

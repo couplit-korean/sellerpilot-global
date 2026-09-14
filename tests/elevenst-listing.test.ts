@@ -1076,7 +1076,10 @@ async function runElevenstShippingRouteBranch(input: {
   const start = route.indexOf("// ELEVENST_AUTHORITATIVE_SHIPPING_BEGIN");
   const end = route.indexOf("// ELEVENST_AUTHORITATIVE_SHIPPING_END");
   assert.ok(start > route.indexOf("credentialMetadata.channel !== channel"));
-  assert.ok(end > start && end < route.indexOf('const baseRequestFingerprint = createHash("sha256")'));
+  const fingerprintInputsStart = route.indexOf("const baseFingerprintArguments = structuredClone(fingerprintArguments)");
+  const fingerprintStart = route.indexOf('const requestFingerprint = createHash("sha256")', fingerprintInputsStart);
+  assert.ok(end > start && end < fingerprintInputsStart);
+  assert.ok(fingerprintStart > fingerprintInputsStart);
   assert.ok(end < route.indexOf('"sellerpilot_claim_channel_operation"'));
   const contentStart = route.indexOf('const contentBoundListingOperation = operation === "listing.create"');
   const contentEnd = route.indexOf("let verifiedPublishContext", contentStart);

@@ -19,6 +19,20 @@ import {
   suggestedCategoryAttributeValues,
 } from "../app/category-attribute-model";
 
+test("Lazada selection type spellings retain official options and serialize their names", () => {
+  const metadata = normalizeCategoryMetadata("lazada", [{ data: [
+    { name: "storage_type", label: "Jenis Simpanan", input_type: "singleSelect", is_mandatory: 1, options: [{ id: 1, name: "Room Temperature" }] },
+    { name: "hazmat", label: "Bahan Berbahaya", input_type: "multiSelect", is_mandatory: 0, options: [{ id: 2, name: "None" }, { id: 3, name: "Liquid" }] },
+  ] }]);
+  const [storage, hazmat] = ["storage_type", "hazmat"].map(id => metadata.descriptors.find(row => row.id === id)!);
+  assert.equal(storage.inputKind, "single_select");
+  assert.equal(hazmat.inputKind, "multi_select");
+  assert.equal(categoryAttributeValueValid(storage, "unlisted"), false);
+  assert.equal(categoryAttributeValueValid(hazmat, ["2", "unlisted"]), false);
+  assert.deepEqual(serializeCategoryAttributeValues("lazada", metadata.descriptors, { storage_type: "1", hazmat: ["2", "3"] }), { storage_type: "Room Temperature", hazmat: ["None", "Liquid"] });
+  assert.match(renderToStaticMarkup(createElement(CategoryAttributeField, { attribute: storage, value: "1", onChange() {} })), /<select/);
+});
+
 test("SmartStore cider metadata uses official classifications and joins separate value IDs", () => {
   // Official 50002253 response: gateway job b80e630f, 2026-09-13. No inferred choices.
   const attributes = [

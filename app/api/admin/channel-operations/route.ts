@@ -75,6 +75,7 @@ import { approvedProductDetailManifestFromPublishContext, bindMarketplaceArgumen
 import { configuredServerlessStaticEgressChannels, hasServerlessStaticEgressFor, SERVERLESS_STATIC_EGRESS_REQUIRED } from "../../../../lib/channels/serverless-static-egress";
 import { externalDetailApprovalBindingFromPublishContext, localChannelExecutorAccess, LOCAL_CHANNEL_EXECUTOR_READINESS_RPC, normalizeReleaseSha, parseLocalChannelExecutorReadiness } from "../../../../lib/channels/local-channel-executor";
 import { isSmartstoreLocalReadOperation, resolveLocalGatewayReadReady } from "../../../../lib/channels/smartstore-local-read-routing";
+import { coupangCategoryCloudReadReady, isCoupangCategoryRead } from "../../../../lib/channels/coupang-category-read-readiness";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import { bindTemuCreateAttemptIdentity, temuImmutableListingIdentityFromPublishContext } from "../../../../lib/channels/provider-temu-publication-readback";
@@ -1106,7 +1107,11 @@ export async function POST(request: NextRequest) {
 
   const localExecutorAccess = localChannelExecutorAccess(channel, operation);
   let localChannelExecutorReady = false;
-  if (localExecutorAccess) {
+  // SmartStore category reads retain the existing live Mac heartbeat gate
+  // below; the local claimant checks their explicit operation route binding.
+  const smartstoreCategoryRead = channel === "smartstore"
+    && ["categories.suggest", "categories.attributes", "categories.validate"].includes(operation);
+  if (localExecutorAccess && !smartstoreCategoryRead) {
     const runtimeRelease = resolveRuntimeReleaseIdentity();
     let approvalRevision: number | null = null;
     let contentSha256: string | null = null;
@@ -1152,7 +1157,19 @@ export async function POST(request: NextRequest) {
         },
       ));
     }
-    if (localExecutorAccess === "read" && !localChannelExecutorReady) {
+    let categoryCloudReadReady = false;
+    if (localExecutorAccess === "read" && !localChannelExecutorReady
+        && isCoupangCategoryRead(channel, operation) && runtimeRelease.status === "valid") {
+      const [staticEgress, runtime] = await Promise.all([
+        serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+        serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+      ]);
+      categoryCloudReadReady = coupangCategoryCloudReadReady({
+        channel, operation, configuredChannels: configuredServerlessStaticEgressChannels(),
+        releaseSha: runtimeRelease.release, staticEgress, runtime,
+      });
+    }
+    if (localExecutorAccess === "read" && !localChannelExecutorReady && !categoryCloudReadReady) {
       return NextResponse.json({
         ok: false,
         operatorActionRequired: true,

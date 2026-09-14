@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import {
   egressIpSha256,
   externalDetailApprovalBindingFromPublishContext,
@@ -15,6 +16,14 @@ import {
 const releaseSha = "8".repeat(40);
 const egressSha256 = "a".repeat(64);
 
+test("SmartStore category enqueue retains the existing Mac heartbeat gate after gaining a local claim tuple", async () => {
+  const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+  assert.match(route, /const smartstoreCategoryRead = channel === "smartstore"\s*&& \["categories.suggest", "categories.attributes", "categories.validate"\]\.includes\(operation\)/);
+  assert.match(route, /if \(localExecutorAccess && !smartstoreCategoryRead\)/);
+  assert.match(route, /channel === "smartstore" && isSmartstoreLocalReadOperation\(operation\)/);
+  assert.match(route, /resolveLocalGatewayReadReady\(localGatewayRuntime/);
+});
+
 test("the local executor has an exact read/write operation whitelist", () => {
   const createChannels = [
     "qoo10",
@@ -28,7 +37,7 @@ test("the local executor has an exact read/write operation whitelist", () => {
   ];
 
   assert.equal(localChannelExecutorAccess("coupang", "categories.attributes"), "read");
-  for (const channel of ["coupang", "elevenst", "temu", "lazada"]) {
+  for (const channel of ["coupang", "elevenst", "temu", "lazada", "smartstore"]) {
     for (const operation of ["categories.suggest", "categories.attributes", "categories.validate"]) {
       assert.equal(localChannelExecutorAccess(channel, operation), "read");
     }

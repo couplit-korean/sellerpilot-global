@@ -5,6 +5,8 @@ import {PGlite} from '@electric-sql/pglite';
 const before=JSON.parse(await readFile(new URL('./fixtures/local-category-read-before.json',import.meta.url),'utf8'));
 const migration=await readFile(new URL('../supabase/migrations/20260914081000_local_category_read_routes.sql',import.meta.url),'utf8');
 const lazadaMigration=await readFile(new URL('../supabase/migrations/20260914085500_lazada_local_category_reads.sql',import.meta.url),'utf8');
+const smartstoreMigration=await readFile(new URL('../supabase/migrations/20260914140000_smartstore_local_category_read_queue.sql',import.meta.url),'utf8');
+const pulseBefore=JSON.parse(await readFile(new URL('./fixtures/smartstore-category-pulse-before.json',import.meta.url),'utf8'));
 const u=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const release='a'.repeat(40),ip='b'.repeat(64),version=`sellerpilot-cli-worker/1.61+${release}.${ip.slice(0,11)}`;
 async function setup(){
@@ -105,5 +107,58 @@ test('Lazada forward migration fails closed on preimage drift and rolls back par
   const old=(await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h;
   await assert.rejects(db.exec(lazadaMigration),/LAZADA_LOCAL_CATEGORY_.*PREIMAGE_CHANGED/);await db.exec('rollback');
   assert.equal((await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h,old);
+ }finally{await db.close();}}
+});
+
+async function setupSmartstore(){
+ const db=await setup();await db.exec(migration);await db.exec(lazadaMigration);
+ await db.exec(`create function sellerpilot_private.worker_token_has_scope(text,text,boolean) returns boolean language sql as $$select $1='good' and $2='gateway'$$;
+ create function sellerpilot_private.serverless_gateway_job_allowed(text,text) returns boolean language sql as $$select $1='smartstore' and $2 like 'categories.%'$$;`);
+ await db.exec(pulseBefore.definition);
+ return db;
+}
+const pulse=async db=>(await db.query("select public.sellerpilot_gateway_queue_pulse('good') p")).rows[0].p;
+
+test('SmartStore pending categories precede newer periodic reads and remain visible to the queue pulse',async()=>{
+ for(const operation of ['categories.suggest','categories.attributes','categories.validate']){
+  const db=await setupSmartstore();try{
+   await seed(db,10,'smartstore','diagnostic.test');
+   await db.query("update sellerpilot_private.channel_gateway_jobs set operation=$1,created_at=now()-interval '10 minutes' where id=$2",[operation,u(210)]);
+   assert.equal((await pulse(db)).queued,0); // Actual old pulse incorrectly hides the only waiting job.
+   await seed(db,20,'coupang','orders.list');
+   await db.exec('begin');assert.equal((await claim(db)).id,u(220));await db.exec('rollback'); // Newer local work preempts fallback-only SmartStore.
+   await db.exec(smartstoreMigration);
+   assert.equal((await pulse(db)).queued,2);
+   await db.exec('begin');await db.query('update sellerpilot_private.local_channel_executor_routes set operation=$1 where id=$2',[operation,u(110)]);
+   assert.equal((await claim(db)).id,u(210));assert.equal((await claim(db)).id,u(220));await db.exec('rollback');
+   assert.equal((await db.query('select count(*)::int n from sellerpilot_private.channel_gateway_jobs where status=\'queued\'')).rows[0].n,2);
+   // With no exact category route, SmartStore is not claimable and does not block unrelated work.
+   assert.equal((await claim(db)).id,u(220));assert.equal((await db.query('select status from sellerpilot_private.channel_gateway_jobs where id=$1',[u(210)])).rows[0].status,'queued');
+   for(const blocked of ['categories.list','categories.update'])await assert.rejects(db.query('update sellerpilot_private.local_channel_executor_routes set operation=$1 where id=$2',[blocked,u(110)]),e=>e.code==='23514');
+  }finally{await db.close();}
+ }
+});
+
+test('invalid SmartStore route identity, approval, credential, IP or release never blocks a valid other-channel read',async()=>{
+ const db=await setupSmartstore();try{
+  await db.exec(smartstoreMigration);await seed(db,10,'smartstore','categories.attributes');await seed(db,20,'coupang','orders.list');
+  await db.query("update sellerpilot_private.channel_gateway_jobs set created_at=now()-interval '10 minutes' where id=$1",[u(210)]);
+  for(const update of ["enabled=false","approved_by=null","seller_account_key='wrong'","release_sha=repeat('c',40)","egress_ip_sha256=repeat('d',64)","worker_token_id=null","expires_at=now()-interval '1 second'"]){
+   await db.exec('begin');await db.exec(`update sellerpilot_private.local_channel_executor_routes set ${update} where channel='smartstore'`);
+   assert.equal((await claim(db)).id,u(220));assert.equal((await db.query('select attempt_count from sellerpilot_private.channel_gateway_jobs where id=$1',[u(210)])).rows[0].attempt_count,0);await db.exec('rollback');
+  }
+  await db.exec('begin');await db.query("update sellerpilot_private.channel_credentials set status='revoked' where id=$1",[u(10)]);assert.equal((await claim(db)).id,u(220));await db.exec('rollback');
+  assert.equal((await claim(db)).id,u(210));
+ }finally{await db.close();}
+});
+
+test('SmartStore forward migration checks actual preimages and rolls partial patches back on late drift',async()=>{
+ for(const target of ['function','constraint','pulse']){const db=await setupSmartstore();try{
+  if(target==='function')await db.exec('create or replace function sellerpilot_private.local_channel_executor_access(p_channel text,p_operation text) returns text language sql as $$select null::text$$');
+  if(target==='constraint')await db.exec('alter table sellerpilot_private.local_channel_executor_routes drop constraint local_channel_executor_routes_operation_check;alter table sellerpilot_private.local_channel_executor_routes add constraint local_channel_executor_routes_operation_check check(true)');
+  if(target==='pulse')await db.exec("create or replace function public.sellerpilot_gateway_queue_pulse(p_token_hash text) returns jsonb language sql as $$select '{}'::jsonb$$");
+  const before=(await db.query("select md5(prosrc) h from pg_proc where oid='sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure")).rows[0].h;
+  await assert.rejects(db.exec(smartstoreMigration),/SMARTSTORE_LOCAL_CATEGORY_.*PREIMAGE_CHANGED/);await db.exec('rollback');
+  assert.equal((await db.query("select md5(prosrc) h from pg_proc where oid='sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure")).rows[0].h,before);
  }finally{await db.close();}}
 });
