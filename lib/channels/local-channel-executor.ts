@@ -38,6 +38,8 @@ const readOnlyTuples = new Set([
   "shopee:inquiries.list",
   "shopee:orders.list",
   "shopee:diagnostic.test",
+  // SQL eligibility additionally binds this read to the existing approved SG shop.
+  "shopee:shops.get",
   "lazada:inquiries.list",
   "lazada:orders.list",
   "lazada:diagnostic.test",

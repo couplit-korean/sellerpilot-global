@@ -45,6 +45,9 @@ test("the local executor has an exact read/write operation whitelist", () => {
     assert.equal(localChannelExecutorAccess(channel, "categories.update"), null);
   }
   assert.equal(localChannelExecutorAccess("ebay", "categories.suggest"), null);
+  assert.equal(localChannelExecutorAccess("shopee", "shops.get"), "read");
+  assert.equal(localChannelExecutorAccess("ebay", "shops.get"), null);
+  assert.equal(localChannelExecutorAccess("shopee", "shops.update"), null);
   assert.equal(localChannelExecutorAccess("coupang", "categories.validate"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "inquiries.list"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "listing.publication.verify"), "read");
