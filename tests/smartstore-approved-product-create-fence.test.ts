@@ -344,18 +344,37 @@ test("approved new product keeps its revision and canonical SKU through SmartSto
     targetId: "",
   }), /SMARTSTORE_CREATE_SELLER_CODE_MISMATCH/u);
 
-  const notReady = structuredClone(context);
-  notReady.product.status = "draft";
-  assert.throws(() => bindSmartstoreListingCreateSourceIdentity({
+  // New products remain draft until publication. The approved revision and
+  // every identity/commerce binding must remain identical to the active case.
+  const approvedDraft = structuredClone(context);
+  approvedDraft.product.status = "draft";
+  const bindDraft = (publishContext: Record<string, unknown>, sourceSnapshot: unknown = createSourceSnapshot(context)) => bindSmartstoreListingCreateSourceIdentity({
     argumentsValue: draft,
-    publishContext: notReady as unknown as Record<string, unknown>,
-    sourceSnapshot: createSourceSnapshot(context),
+    publishContext,
+    sourceSnapshot,
     approvedDetail: approved.value,
     productId,
     credentialId,
     market: "KR",
     targetId: "",
-  }), /SMARTSTORE_CREATE_PRODUCT_NOT_READY/u);
+  });
+  assert.deepEqual(bindDraft(approvedDraft as unknown as Record<string, unknown>), bound);
+  for (const status of ["archived", "low_stock", "out_of_stock", "ready", "", "unknown"]) {
+    const notReady = structuredClone(approvedDraft);
+    notReady.product.status = status;
+    assert.throws(() => bindDraft(notReady as unknown as Record<string, unknown>), /SMARTSTORE_CREATE_PRODUCT_NOT_READY/u);
+  }
+  const wrongDraftOwner = { ...approvedDraft, ownerId: credentialId };
+  assert.throws(() => bindDraft(wrongDraftOwner as unknown as Record<string, unknown>), /SMARTSTORE_CREATE_PRODUCT_NOT_READY/u);
+  assert.throws(() => bindDraft(approvedDraft as unknown as Record<string, unknown>, {
+    ...createSourceSnapshot(context), approvedDetailPageVersion: 0,
+  }), /SMARTSTORE_CREATE_SOURCE_SNAPSHOT_INVALID/u);
+  assert.throws(() => bindDraft(approvedDraft as unknown as Record<string, unknown>, {
+    ...createSourceSnapshot(context), approvedManifestDigest: "0".repeat(64),
+  }), /SMARTSTORE_CREATE_SOURCE_REVISION_MISMATCH/u);
+  assert.throws(() => bindDraft(approvedDraft as unknown as Record<string, unknown>, {
+    ...createSourceSnapshot(context), sellerManagementCode: "ANOTHER-PRODUCT",
+  }), /SMARTSTORE_CREATE_SELLER_CODE_INVALID/u);
 
   const existing = structuredClone(context);
   existing.listings.push({

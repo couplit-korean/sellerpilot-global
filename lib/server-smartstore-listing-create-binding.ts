@@ -142,7 +142,7 @@ export function bindSmartstoreListingCreateSourceIdentity(input: {
       || text(input.publishContext?.ownerId).toLowerCase() !== snapshot.ownerId
       || snapshot.productId !== input.productId.toLowerCase()
       || snapshot.credentialId !== input.credentialId.toLowerCase()
-      || text(product.status) !== "active") {
+      || !["draft", "active"].includes(text(product.status))) {
     throw new Error("SMARTSTORE_CREATE_PRODUCT_NOT_READY");
   }
 
