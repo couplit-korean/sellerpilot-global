@@ -158,11 +158,11 @@ export function listingShippingRequirements(
   const shipping = record(at(draft, ["sellerpilotAssets", "shipping"]));
   if (operation !== "listing.create" || (channel !== "coupang" && !Object.keys(shipping).length)) return [];
   const requirements: ListingRequirement[] = [];
-  const add = (key: string, label: string, ready: boolean, manualPath?: string[], help?: string) => {
-    requirements.push({ key: `shipping-${key}`, label, source: "판매자 계정", status: ready ? "ready" : "manual", manualPath, help });
+  const add = (key: string, label: string, ready: boolean, manualPath?: string[], help?: string, input?: Pick<ListingRequirement, "inputType" | "options">) => {
+    requirements.push({ key: `shipping-${key}`, label, source: "판매자 계정", status: ready ? "ready" : "manual", manualPath, help, ...input });
   };
   const sourceFee = listingShippingAmount(shipping.shippingFeeKrw);
-  add("source-fee", "입력 배송비 KRW", sourceFee !== null, undefined, "상품 정보에서 기본 배송비를 확인해 저장하세요. 미입력 배송비를 무료로 처리하지 않습니다.");
+  add("source-fee", "입력 배송비 KRW", sourceFee !== null, ["sellerpilotAssets", "shipping", "shippingFeeKrw"], "이 채널에 적용할 원화 기준 배송비를 확인해 입력하세요. 전송 배송비도 별도로 일치시켜야 하며, 해외 배송 정책의 금액·통화는 변경하지 않습니다. 미입력을 무료로 처리하지 않습니다.", { inputType: "number" });
   for (const [field, label] of [["shippingRule", "배송 규칙"], ["packagingRule", "포장 규칙"]] as const) {
     if (!text(shipping[field])) continue;
     add(field, `${label} 적용 확인`, text(shipping[`${field}Review`]) === "확인", ["sellerpilotAssets", "shipping", `${field}Review`],
@@ -232,6 +232,14 @@ export function listingShippingRequirements(
     if (channel === "qoo10" && policy === "0") add("free-fee-match", "Qoo10 무료배송과 입력 배송비 일치", sourceFee === 0, undefined,
       "입력 배송비가 유료이면 무료배송 코드 0을 사용할 수 없습니다. 실제 배송그룹 번호를 확인하세요.");
     if (channel === "elevenst") {
+      const product = record(draft.product);
+      add("elevenst-fee-type", "11번가 배송비 유형 (01 무료 / 02 고정)", ["01", "02"].includes(text(product.dlvCstInstBasiCd)),
+        ["product", "dlvCstInstBasiCd"], "무료배송은 01, 고정 배송비는 02를 선택하세요. 입력 배송비와 실제 전송 금액을 함께 확인합니다.", { options: ["01", "02"] });
+      if (product.dlvCstInstBasiCd === "02") {
+        const amount = listingShippingAmount(product.dlvCst1);
+        add("elevenst-fixed-fee", "11번가 고정 배송비 KRW", amount !== null && amount >= 10 && amount <= 9_999_990 && amount % 10 === 0,
+          ["product", "dlvCst1"], "10원 단위 고정 배송비를 입력하세요. 입력 배송비와 같아야 하며 11번가 판매가별 배송비 상한 검증도 유지됩니다.");
+      }
       let verified = false;
       try { assertElevenstListingShippingSource(shipping, draft.product); verified = true; } catch { /* Display the unmet contract below. */ }
       add("supported-fee", "11번가 검증된 배송비 계약", verified, undefined,
