@@ -1,16 +1,19 @@
-## 2026-09-14 — 사용자 승인 8월24일 소스 복원 진행
+## 2026-09-14 17:58 KST — 8월24일 기준 복원 운영 전환 완료
 
-사용자가 Temu 제외 7개 채널의 8월24일 버전으로 실제 복원을 지시했다. 앱·라이브러리·테스트·실행기 소스를 `d5cfd0ad45758eae437ca1ee647dc93e1e95164d` 기준으로 같은 canonical checkout에 복원했고 workspace 검사 및 Next production build/TypeScript/45페이지 생성을 통과했다. 운영 전환 완료는 아니다.
+사용자 승인으로 `d5cfd0ad45758eae437ca1ee647dc93e1e95164d`의 앱·채널·이미지 소스를 복원했다. 운영 릴리스는 `8e139bf8e926f6ff8a2d21781aaa992fe2ed8028`, Vercel `dpl_HdnsGrBEKbcTQUVgt1wsHkmjHbJt`다. 대상은 Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 7개이며 Temu 실행은 제외했다. 아래 8개 채널/6e1f849/복원 미완료 기록은 이전 시점이다.
 
-- 복원 전 HEAD `c68c0813ba1f95640ef20c9dd94bee294abf664d`는 `codex/pre-aug24-rollback-20260914t080832z`에 보존했다. 미커밋30파일은 `.local/rollback-backups/20260914T080832Z/`에 tar·patch·SHA256 manifest와 untracked 원본을 보존했다.
-- AGENTS/운영 문서·기존 migration 이력·workspace 검사·운영 supervisor·현재 outputs/tmp 이력은 보존했다. 상품/계정/토큰/DB 데이터는 되돌리거나 삭제하지 않았다.
-- 현재 운영은 여전히 `6e1f8496c739e798d86ba003d908dcc6aad20744`다. 복원 후보를 현재 운영이라고 보고하지 않는다.
-- 실제 운영 DB를 읽기 조회한 결과 옛 `sellerpilot_enqueue_channel_gateway_job`의 최종 함수는 `listing.create`를 허용하지 않는다. 옛 worker complete의5인자 RPC는 현재 없으며6인자 claim_token이 필수다. 성공 저장 함수도 현재 remoteState/job 결속을 요구한다. 이3개 계약을 맞추기 전 후보를 운영 승격하거나 옛 worker로 교체하면 등록/결과 저장이 실패한다.
-- 이미 끝낸 Shopee IP/OAuth 원인 조사를 다시 시작하지 않는다. 옛 코드도6개 채널을 local worker로 보냈다. 남은 것은 DB/작업자 계약 호환이며 새 원인 조사나 새 채널 기능 개발이 아니다.
+- 운영 도메인 승격·HTTP200, 무인증 등록401, scoped gateway claim204 확인. Mac gateway `/readyz` 200, 위 SHA, active0/오류없음. AI 작업자도 같은 Git runtime의 복원 코드로 전환했고 AI claim204 및 프로세스 실행을 확인했다.
+- 현재 DB를 지우거나 옛 SQL 전체를 덮지 않았다. 등록 큐·수령 nonce·결과 저장의 옛 계약을 현재 DB에 연결하는 별도 호환 RPC를 적용했다. migration `20260914190000_restore_aug24_registration_contract`, 저장 원문 MD5 `d96703a00ed0620b034f909defbf299d` 일치. `aug24_runtime_control`은 위 SHA/active=true다.
+- 옛 어댑터를 유지하되 현재 DB의 작업 결속을 위해 eBay·Qoo10도 Mac gateway에서 실행한다. 따라서 DB와 설치 설정까지 8월24일과 바이트 단위로 동일한 복원은 아니다. 후속 serverless 일정은 inactive, 복원본에 없는 standalone CS draft worker와 `/tmp/sp-main` obsolete gateway는 중지/비활성화했다. 수동 상품/CS 흐름을 기준으로 한다.
+- 복원 전 HEAD는 `codex/pre-aug24-rollback-20260914t080832z`에, 미커밋30파일과 이전 LaunchAgent 설정은 `.local/rollback-backups/20260914T080832Z/`에 보존했다. 계정·토큰·상품·이미지·기존 외부 등록은 삭제하지 않았다. iCloud 개발 경로를 사용하지 않았다.
+- 검증: workspace/Next build/TypeScript/45페이지 통과, 수령 계약4검사 통과, DB 트랜잭션 후 ROLLBACK 시험5단계 통과(접수·잘못된 버전 거절·수령·잘못된 nonce 거절·실패 저장). 후보와 운영 각각 기본 확인 통과. 실제 상품 게시나 CS 답변 전송 시험은 수행하지 않았다.
+- 실제 새 상품 7/7 성공을 확인한 상태가 아니다. 나랑드 기존 SmartStore의 원시 reconciliation 작업은 중복 방지 인덱스에 남아 있어 같은 listing 재접수를 막을 수 있다. 옛 작업 기록을 삭제하거나 성공으로 바꾸지 않았다. 기존 eBay `800659240462`는 재등록 금지. Shopee IP/OAuth 원인 조사는 반복하지 않는다.
+
+상세 근거: `outputs/product-history/20260914-restoration-execution.md`. 새 작업에서 아래 과거 실패 숫자를 모두 재개하거나 후속 버전을 자동 복원하지 않는다.
 
 # 확인된 채널 오류와 재작업 금지 기준
 
-## 현재 실등록 — 2026-09-14 16:25 KST
+## 복원 전 실등록 기록 — 2026-09-14 16:25 KST
 
 나랑드 상품 `c0bdb493-6447-41bf-af0a-46a3da7a75a8` 실제 신규 게시 확인은 **1/8(eBay)**이다. 사용자는 이번 상품의 전 채널 출고 소요일을 **1일**로 승인했다. 국내 배송3000/반품3000/교환6000 승인, 가공 이미지8장·최종16자산·승인 상세는 유지한다. 상품 원장 배송 규칙은 07:14:19UTC에 `주문 후 1일 이내 출고`로 저장했다. Qoo10 초안 DeliveryTime=1, Coupang 출고일=1을 저장했다. 다른 필수 관측·원격 적용은 채널별로 구분한다.
 
