@@ -190,3 +190,15 @@
 - 운영 CUA에서 최초 카테고리 확정 이후, 이전 카테고리 없는 초안의 eBay 정책·SmartStore 수동값이 제거되고 검토 완료 후 v24에 빈 patch로 저장되는 실제 현상을 확인했다. 검토 버튼 자체가 아닌 category mismatch 복원 allowlist가 원인이다.
 - 동일 채널·계정·국가·target 안의 명시 배송/반품/창고/출고지 scalar 경로를 보존한다. 인증·단위가격·상품가격·브랜드·카테고리 속성은 새 분류 검토가 계속 필요하다. 집중 회귀와 기존 draft 스키마 검사 11/11 통과. 이미 사라진 값을 DB에서 만들어 복구하지 않았으며, 확인한 정책은 CUA로 다시 입력했다.
 - `462dfbc` 후보 빌드는 READY지만 이 후속 수정을 포함한 새 후보로 최종 검증하고 승격한다. `462dfbc`가 운영 승격됐다는 뜻은 아니다.
+
+### 후속 운영 적용 완료 (2026-09-14 10:48 KST)
+
+- 운영 코드 `192a2120da58d708ef596eadad27d51df9148f22`, deployment `dpl_GR3y8Ee1nLeyXRPv8WozDqK1EoV8`. 후보 6 + Production 6 no-op canary 통과. DB 활성 release, 등록 gate, 기존 route 23개와 Mac gateway 버전 일치/ready. AI runtime은 변경 없는 이전 버전을 유지했다.
+- 143000 source MD5 `d72401dca32dde4cfade918920a70cf7`, 145000 `3c318493f75b6c676ebcd723c0a2414d`로 실제 적용 이름·원문 대조. 기존 상품을 active로 바꾸거나 승인 이력을 덮어쓰지 않았다.
+- CUA 새로고침 후 SmartStore 수정 필드 22개·eBay 정책 4개 복원 확인. 11번가 공식 사이다 고시 10/10 저장. 주소록을 읽기만 했으며 출고지/반품지 변경이나 기존 템플릿 신규 등록은 하지 않았다.
+- SmartStore 공식 속성 수집이 draft 가드를 통과했으나 공식 값·단위 대조 오류가 별도 발생했다. 이 단계는 성공으로 세지 않는다. 실제 상품 신규 게시 완료는 여전히 0/8이다.
+
+### SmartStore 공식 RANGE 응답 호환 후속
+
+- 공식 조회 job `121f4854-f69a-4e05-a1ba-7b8ea61d6a72`의 category·attributes·values·units 요청 4개가 HTTP200으로 완료됐다. 입력 5개는 TS mapper에서 통과하지만 기존 SQL이 공식 표시 필드 3개와 단방향 열린 범위를 거절했다.
+- `20260914150000`은 private validator 2개만 변경한다. 정확히 관측한 표시 필드 타입과 한쪽 경계를 허용하고, 양끝 누락·잘못된 단위·외래 속성 ID·unknown 필드는 계속 거절한다. 웹·worker 코드는 변경하지 않는다. 실제 payload를 사용한 운영 rollback에서 payloadValid, 실제 append와 같은 sorted-records 비교, 원장 불변을 모두 확인했다(22ms).
