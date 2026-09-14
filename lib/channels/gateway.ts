@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelDiagnostic } from "../channel-diagnostics";
 import type { ChannelOperationName, ChannelOperationResult } from "./operations";
 
-export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "temu";
+export type ChannelGatewayChannel = "qoo10" | "ebay" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "temu";
 
 type GatewayJobSnapshot = {
   status?: unknown;
@@ -42,13 +42,14 @@ export async function executeViaChannelGateway(input: {
   operation: ChannelOperationName;
   arguments: Record<string, unknown>;
   timeoutMs?: number;
+  listingId?: string;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_aug24_enqueue_gateway_job", {
     p_credential_id: input.credentialId,
     p_attempt_id: input.attemptId,
     p_channel: input.channel,
     p_operation: input.operation,
-    p_request_payload: { arguments: input.arguments },
+    p_request_payload: { arguments: input.arguments, ...(input.listingId ? { sellerpilotRollbackListingId: input.listingId } : {}) },
   });
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
 
@@ -61,7 +62,7 @@ export async function executeDiagnosticViaChannelGateway(input: {
   channel: ChannelGatewayChannel;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_aug24_enqueue_gateway_job", {
     p_credential_id: input.credentialId,
     p_attempt_id: null,
     p_channel: input.channel,
@@ -86,7 +87,7 @@ export async function exchangeOAuthViaChannelGateway(input: {
   request: Record<string, unknown>;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_aug24_enqueue_gateway_job", {
     p_credential_id: input.credentialId,
     p_attempt_id: null,
     p_channel: input.channel,
@@ -104,7 +105,7 @@ export async function executeChannelTargetDiscovery(input: {
   request: Record<string, unknown>;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_aug24_enqueue_gateway_job", {
     p_credential_id: input.credentialId,
     p_attempt_id: null,
     p_channel: input.channel,

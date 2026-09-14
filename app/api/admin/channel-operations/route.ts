@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ message: "완료된 원격 작업을 상품 원장과 다시 연결하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 409 });
         }
         duplicateListingId = preparedListingId;
-        const { data: reconciled, error: reconcileError } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
+        const { data: reconciled, error: reconcileError } = await serviceClient.rpc("sellerpilot_aug24_complete_product_listing", {
           p_listing_id: duplicateListingId,
           p_attempt_id: attemptId,
           p_operation: operation,
@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
 
   const completeListing = async (input: { success: boolean; remoteId?: string; publicUrl?: string; safeMessage: string }) => {
     if (!listingId) return true;
-    const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
+    const { data, error } = await serviceClient.rpc("sellerpilot_aug24_complete_product_listing", {
       p_listing_id: listingId,
       p_attempt_id: attemptId,
       p_operation: operation,
@@ -243,7 +243,7 @@ export async function POST(request: NextRequest) {
     });
   };
 
-  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "elevenst" || channel === "smartstore" || channel === "temu") {
+  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "elevenst" || channel === "smartstore" || channel === "qoo10" || channel === "ebay" || channel === "temu") {
     try {
       const gatewayArguments = operation === "listing.create" || operation === "listing.update"
         ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
@@ -255,6 +255,7 @@ export async function POST(request: NextRequest) {
         channel,
         operation,
         arguments: gatewayArguments,
+        listingId: listingId || undefined,
       });
       const { result, remediation } = applyListingRemediation(rawResult);
       if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);

@@ -31,6 +31,10 @@ export async function POST(request: Request) {
   }
 
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+  const { data: completionAuthorized, error: authorizationError } = await serviceClient.rpc("sellerpilot_aug24_validate_completion", {
+    p_token_hash: tokenHash, p_job_id: parsed.data.jobId, p_claim_token: parsed.data.claimToken,
+  });
+  if (authorizationError || completionAuthorized !== true) return NextResponse.json({ message: "작업 수령 토큰이 일치하지 않습니다." }, { status: 409 });
   let storedResponse: Record<string, unknown> | null = null;
   let refreshedCredentialId = "";
   if (parsed.data.status === "succeeded") {
@@ -55,9 +59,10 @@ export async function POST(request: Request) {
         p_expires_at: credentialRefresh.expiresAt,
       });
       if (refreshError || typeof nextCredentialId !== "string") {
-        await serviceClient.rpc("sellerpilot_complete_channel_gateway_job", {
+        await serviceClient.rpc("sellerpilot_aug24_complete_gateway_job", {
           p_token_hash: tokenHash,
           p_job_id: parsed.data.jobId,
+          p_claim_token: parsed.data.claimToken,
           p_status: "failed",
           p_response_payload: null,
           p_error_message: "Refreshed channel credential could not be stored.",
@@ -152,9 +157,10 @@ export async function POST(request: Request) {
     });
   }
 
-  const { data, error } = await serviceClient.rpc("sellerpilot_complete_channel_gateway_job", {
+  const { data, error } = await serviceClient.rpc("sellerpilot_aug24_complete_gateway_job", {
     p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
+          p_claim_token: parsed.data.claimToken,
     p_status: parsed.data.status,
     p_response_payload: storedResponse,
     p_error_message: parsed.data.status === "failed" ? parsed.data.error : null,

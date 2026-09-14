@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   }
   const body = await request.json().catch(() => ({})) as { version?: unknown };
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data, error } = await serviceClient.rpc("sellerpilot_claim_channel_gateway_job", {
+  const { data, error } = await serviceClient.rpc("sellerpilot_aug24_claim_gateway_job", {
     p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
     p_worker_version: typeof body.version === "string" ? body.version.slice(0, 80) : "unknown",
   });

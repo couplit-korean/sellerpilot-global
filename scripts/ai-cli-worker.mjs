@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -47,14 +48,16 @@ import {
 } from "../lib/channels/protocols.ts";
 
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
+const gatewayOnly = process.argv.includes("--gateway-only");
+const aiOnly = process.argv.includes("--ai-only");
 function loadWorkerToken() {
-  const environmentToken = process.env.SELLERPILOT_AI_WORKER_TOKEN?.trim();
+  const environmentToken = (gatewayOnly ? process.env.SELLERPILOT_GATEWAY_WORKER_TOKEN : process.env.SELLERPILOT_AI_WORKER_TOKEN)?.trim();
   if (environmentToken) return environmentToken;
   if (process.platform !== "darwin") return "";
   try {
     return execFileSync("/usr/bin/security", [
       "find-generic-password",
-      "-s", "SellerPilot AI Worker",
+      "-s", gatewayOnly ? "SellerPilot Gateway Worker" : "SellerPilot AI Worker",
       "-a", sellerpilotUrl,
       "-w",
     ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -93,7 +96,8 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.16";
+const workerRelease = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000 }).trim();
+const workerVersion = `sellerpilot-cli-worker/1.16+${workerRelease}`;
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -1620,8 +1624,8 @@ async function processGatewayJob(job) {
     const response = await api("/api/channel-gateway/worker/complete", {
       method: "POST",
       body: JSON.stringify(completionStatus === "failed"
-        ? { jobId: job.id, status: "failed", error: result.safeMessage }
-        : { jobId: job.id, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
+        ? { jobId: job.id, claimToken: job.claimToken, status: "failed", error: result.safeMessage }
+        : { jobId: job.id, claimToken: job.claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
     });
     if (!response.ok) throw new Error(`채널 작업 결과 저장 실패 · HTTP ${response.status}`);
     if (result.ok) console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);
@@ -1630,7 +1634,7 @@ async function processGatewayJob(job) {
     const message = error instanceof Error ? error.message.slice(0, 500) : "채널 작업 처리 오류";
     await api("/api/channel-gateway/worker/complete", {
       method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "failed", error: message }),
+      body: JSON.stringify({ jobId: job.id, claimToken: job.claimToken, status: "failed", error: message }),
     }).catch(() => undefined);
     console.error(`[채널 실패] ${job.channel} · ${job.operation} · ${message}`);
   }
@@ -1644,9 +1648,19 @@ const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORK
 const maxGatewayConcurrency = Math.min(6, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 4));
 const activeAiJobs = new Set();
 const activeGatewayJobs = new Set();
+let lastGatewayClaimAt = 0;
+let lastGatewayError = null;
+const gatewayHealthServer = gatewayOnly && !once ? createServer((request, response) => {
+  const ready = !stopping && !lastGatewayError && Date.now() - lastGatewayClaimAt < 180000;
+  response.statusCode = request.url === "/healthz" || ready ? 200 : 503;
+  response.setHeader("content-type", "application/json");
+  response.end(JSON.stringify({ status: ready ? "ready" : "starting", version: workerVersion,
+    activeGatewayJobs: activeGatewayJobs.size, lastClaimError: lastGatewayError }));
+}).listen(Number(process.env.SELLERPILOT_GATEWAY_HEALTH_PORT ?? 8081), "127.0.0.1") : null;
+
 do {
   try {
-    if (!once && Date.now() >= nextPeriodicSyncAt) {
+    if (!gatewayOnly && !process.argv.includes("--no-scheduler") && !once && Date.now() >= nextPeriodicSyncAt) {
       nextPeriodicSyncAt = Date.now() + periodicSyncMs;
       try {
         const syncResponse = await api("/api/internal/channel-sync", {
@@ -1676,11 +1690,13 @@ do {
         console.error(syncError instanceof Error ? syncError.message : "주문·문의 자동 동기화 예약 실패");
       }
     }
-    if (activeGatewayJobs.size < maxGatewayConcurrency) {
+    if (!aiOnly && activeGatewayJobs.size < maxGatewayConcurrency) {
       const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
         method: "POST",
         body: JSON.stringify({ version: workerVersion }),
       });
+      if (gatewayResponse.ok) { lastGatewayClaimAt = Date.now(); lastGatewayError = null; }
+      else { lastGatewayError = `HTTP ${gatewayResponse.status}`; }
       if (gatewayResponse.ok && gatewayResponse.status !== 204) {
         markWorkerBusy();
         const gatewayJob = await gatewayResponse.json();
@@ -1699,6 +1715,11 @@ do {
     if (activeGatewayJobs.size >= maxGatewayConcurrency) {
       if (once) await Promise.allSettled([...activeGatewayJobs]);
       else await Promise.race([...activeGatewayJobs]);
+      continue;
+    }
+    if (gatewayOnly) {
+      if (once) break;
+      await waitForIdleWork();
       continue;
     }
     // 상세페이지 작업은 상품 단위로 최대 8건을 병렬 실행합니다. 각 상품의
@@ -1738,4 +1759,5 @@ do {
 
 if (activeGatewayJobs.size) await Promise.allSettled([...activeGatewayJobs]);
 if (activeAiJobs.size) await Promise.allSettled([...activeAiJobs]);
+gatewayHealthServer?.close();
 console.log("SellerPilot ChatGPT CLI worker 종료");

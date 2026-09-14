@@ -10,6 +10,7 @@ const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
 
 export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
+  claimToken: z.string().uuid(),
   credential_id: z.string().uuid(),
   channel: gatewayChannelSchema,
   operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.enum(channelOperationNames)]),
@@ -55,6 +56,7 @@ const diagnosticResultSchema = z.object({
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.union([
       operationResultSchema,
@@ -84,6 +86,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
   }),
