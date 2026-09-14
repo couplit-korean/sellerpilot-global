@@ -27,6 +27,7 @@ import { inspectListingDraft, listingDraftValue, setListingDraftValue, isSmartst
 import { coupangShippingFeeDraft, listingShippingDraftSource, listingShippingRequirements, listingShippingSourceChanged, shippingRequirementDependsOnSource, smartstoreShippingDraft, type ListingShippingSource } from "../lib/channels/listing-shipping";
 import { resolveCoupangShippingLeadTime } from "../lib/channels/coupang-shipping-lead-time";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
+import { ebayCategoryAspects } from "../lib/channels/ebay-material-aspect";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLocalizedRichDetail, buildLocalizedSectionBulletPoints, detailAssetOrderForChannel, galleryAssetOrderForChannel, localizedImageSeo, localizedSeoKeywords, normalizedLocalizedDetailSections, type LocalizedCreativeListing, type LocalizedDetailSection, type LocalizedProductClassification } from "../lib/marketplace-localized-content";
 import { createClient } from "../lib/supabase/client";
@@ -400,25 +401,6 @@ export function normalizeManualFields(context: PublishContext): ManualFields {
 }
 function uniqueUrls(values: Array<string | null | undefined>) {
   return [...new Set(values.map((value) => value?.trim() ?? "").filter((value) => value.startsWith("https://")))];
-}
-function englishEbayMaterial(value: string) {
-  const normalized = value.trim();
-  const translations: Record<string, string> = {
-    "도자기": "Ceramic",
-    "세라믹": "Ceramic",
-    "유리": "Glass",
-    "스테인리스": "Stainless Steel",
-    "스테인리스 스틸": "Stainless Steel",
-    "플라스틱": "Plastic",
-    "실리콘": "Silicone",
-    "나무": "Wood",
-    "목재": "Wood",
-    "가죽": "Leather",
-    "합성가죽": "Faux Leather",
-    "면": "Cotton",
-    "폴리에스터": "Polyester",
-  };
-  return translations[normalized] ?? normalized;
 }
 export function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number, lazadaMyrRate?: LazadaKrwMyrRateEvidence | null, listingHandoff?: StoredListingHandoff | null) {
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -840,7 +822,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     // eBay Inventory Items and Offers must reference the exact same SKU.
     // Keep it market-specific so a later country listing cannot collide with US.
     sku: marketSku,
-    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: englishEbayMaterial(categoryScalar(assignment?.providedAttributes.Material) || manual.material), "Country/Region of Manufacture": manual.countryOfOrigin }) } },
+    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...ebayCategoryAspects(assignment?.categoryId ?? "", assignment?.providedAttributes ?? {}, manual.material), "Country/Region of Manufacture": manual.countryOfOrigin }) } },
     offer: { sku: marketSku, marketplaceId: ebayMarketHandoff?.marketplaceId ?? target?.targetId ?? "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: richDescription, listingPolicies: { fulfillmentPolicyId: ebayMarketHandoff?.fulfillmentPolicyId ?? "SERVER_MANAGED", paymentPolicyId: ebayMarketHandoff?.paymentPolicyId ?? "SERVER_MANAGED", returnPolicyId: ebayMarketHandoff?.returnPolicyId ?? "SERVER_MANAGED" }, merchantLocationKey: ebayMarketHandoff?.merchantLocationKey ?? "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: target?.currency ?? "USD" } } },
     publish: true,
   };
@@ -1776,6 +1758,160 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       registrationSaveInFlightRef.current = false;
     }
   }, [productId, registrationData, registrationSignature, registrationSourceChanged, registrationTargetLoading, load]);
+  const prepareCoupangCreateReadiness = useCallback(async (signal: AbortSignal) => {
+    if (!productId || !context || !registrationData) {
+      throw new Error("쿠팡 공식 조건을 확인할 상품 초안을 읽지 못했습니다.");
+    }
+    if (!(await saveRegistrationDraft())) {
+      throw new Error("현재 입력을 서버 초안에 저장하고 변경 충돌을 확인한 뒤 다시 시도해 주세요.");
+    }
+    const requestedProductId = productId;
+    const savedData = registrationData;
+    const savedSignature = registrationSignature;
+    const bounded = createBoundedRequestSignal(signal, 20000, "쿠팡 공식 조건용 상품 source 갱신이 지연되고 있습니다. 다시 시도해 주세요.");
+    let reboundWriteStarted = false;
+    try {
+      const accessToken = (await waitForAbortablePromise(createClient().auth.getSession(), bounded.signal)).data.session?.access_token;
+      if (!accessToken) throw new Error("쿠팡 공식 조건을 확인하려면 로그인 상태를 확인해 주세요.");
+      const [contextResponse, detailData] = await Promise.all([
+        waitForAbortablePromise(fetch(`/api/admin/products/${requestedProductId}/publish-context?mode=draft`, {
+          headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: bounded.signal,
+        }), bounded.signal),
+        waitForAbortablePromise(fetchProductDetailData(requestedProductId, accessToken).catch(() => null), bounded.signal),
+      ]);
+      const payload = await waitForAbortablePromise(contextResponse.json().catch(() => ({
+        message: "현재 상품 source 응답을 읽지 못했습니다.",
+      })), bounded.signal) as PublishContext & { message?: string; code?: string };
+      if (!contextResponse.ok) {
+        throw new Error(`${payload.message ?? "현재 상품 source를 다시 불러오지 못했습니다."}${payload.code ? ` (${payload.code})` : ""}`);
+      }
+      const refreshedContext = {
+        ...payload,
+        detailData: publishContextDesignedDetailData({ ...payload, detailData }),
+        manualFields: normalizeManualFields(payload),
+        imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [],
+      };
+      if (refreshedContext.product.id !== requestedProductId) {
+        throw new Error("현재 상품과 새로 읽은 등록 source가 일치하지 않습니다.");
+      }
+      if (registrationCurrentSignatureRef.current !== savedSignature) {
+        throw new Error("상품 source를 갱신하는 동안 화면 입력이 변경되었습니다. 현재 입력을 저장한 뒤 다시 확인해 주세요.");
+      }
+      const sourceFingerprint = productRegistrationSourceFingerprint(refreshedContext);
+      const nextContext = {
+        ...refreshedContext,
+        manualFields: {
+          ...refreshedContext.manualFields,
+          ...savedData.common.fields,
+        },
+      };
+      const nextBaseDrafts = buildDraftMap(nextContext, savedData.common.price,
+        savedData.common.quantity, selectedTargets, savedData.common.packageFields,
+        savedData.common.globalBaseUsdPrice, lazadaMyrRateRef.current,
+        { ebay: listingHandoffRef.current });
+      const nextDrafts = preserveChannelRegistrationEdits(
+        registrationBaseDraftsRef.current,
+        drafts,
+        nextBaseDrafts,
+      );
+      const channels = { ...savedData.channels };
+      for (const channel of activeChannelKeys) {
+        const target = selectedTargets[channel];
+        const credential = activeCredentials.get(channel);
+        const assignment = nextContext.assignments.find((item) => item.channel === channel
+          && (!target || item.market === target.marketCode));
+        const base = parseDraft(nextBaseDrafts[channel]);
+        const current = parseDraft(nextDrafts[channel]);
+        if (!base || !current) continue;
+        const key = publishRegistrationIdentity(channel,
+          target?.marketCode ?? fallbackChannelMarkets[channel], target?.targetId ?? "",
+          credential?.id ?? "");
+        channels[key] = {
+          categoryId: assignment?.categoryId ?? "",
+          patches: channel === "shopee"
+            ? serializeShopeeSgChannelPatches(base, current)
+            : registrationPatches(base, current),
+        };
+      }
+      const reboundData: PublishRegistrationData = {
+        ...savedData,
+        sourceFingerprint,
+        channels,
+      };
+      const reboundSignature = JSON.stringify(reboundData);
+      if (registrationSavedRef.current !== reboundSignature) {
+        reboundWriteStarted = true;
+        const saved = await putProductRegistrationDraft((input, init) => fetch(input, {
+          ...init,
+          headers: { ...init?.headers, authorization: `Bearer ${accessToken}` },
+        }), {
+          draftId: requestedProductId,
+          kind: "publish",
+          productId: requestedProductId,
+          expectedVersion: registrationVersionRef.current,
+          data: reboundData,
+          signal: bounded.signal,
+        });
+        registrationVersionRef.current = saved.version;
+      }
+      const readback = await getProductRegistrationDraft<PublishRegistrationData>((input, init) => fetch(input, {
+        ...init,
+        headers: { ...init?.headers, authorization: `Bearer ${accessToken}` },
+      }), { draftId: requestedProductId, kind: "publish", signal: bounded.signal });
+      if (!readback || readback.productId !== requestedProductId
+        || readback.version !== registrationVersionRef.current
+        || JSON.stringify(readback.data) !== reboundSignature) {
+        throw new Error("갱신된 상품 source와 서버 초안의 readback이 일치하지 않습니다.");
+      }
+      if (!mountedRef.current || sessionProductIdRef.current !== requestedProductId
+        || registrationCurrentSignatureRef.current !== savedSignature) {
+        throw new Error("상품 source를 갱신하는 동안 등록 대상 또는 화면 입력이 변경되었습니다.");
+      }
+      const coupangDraft = parseDraft(nextDrafts.coupang);
+      const credential = activeCredentials.get("coupang");
+      const assignment = nextContext.assignments.find((item) => item.channel === "coupang"
+        && item.status === "confirmed");
+      if (!coupangDraft || !credential || !assignment?.categoryId) {
+        throw new Error("갱신된 쿠팡 credential·확정 카테고리·초안을 확인하지 못했습니다.");
+      }
+      registrationBaseDraftsRef.current = nextBaseDrafts;
+      registrationChannelBankRef.current = readback.data.channels;
+      registrationSavedRef.current = reboundSignature;
+      registrationCurrentSignatureRef.current = reboundSignature;
+      setContext(nextContext);
+      setRegistrationBaseDrafts(nextBaseDrafts);
+      setRegistrationChannelBank(readback.data.channels);
+      setDrafts(nextDrafts);
+      setRegistrationSourceFingerprint(sourceFingerprint);
+      setRegistrationSavedSignature(reboundSignature);
+      setRegistrationSourceChanged(false);
+      setRegistrationSaveStatus("saved");
+      setRegistrationSaveMessage("현재 상품 source와 서버 초안 readback을 확인했습니다.");
+      return {
+        tuple: {
+          productId: requestedProductId,
+          credentialId: credential.id,
+          credentialVersion: credential.version,
+          categoryId: assignment.categoryId,
+          sourceFingerprint,
+        },
+        draft: coupangDraft,
+      };
+    } catch (error) {
+      if (reboundWriteStarted && mountedRef.current
+        && sessionProductIdRef.current === requestedProductId) {
+        registrationLoadedRef.current = false;
+        setRegistrationLoaded(false);
+        setRegistrationSaveStatus(error instanceof ProductRegistrationDraftClientError
+          && error.status === 409 ? "conflict" : "error");
+        setRegistrationSaveMessage("상품 source를 갱신한 초안은 서버 readback 후 다시 확인해 주세요.");
+      }
+      throw error;
+    } finally {
+      bounded.dispose();
+    }
+  }, [activeCredentials, context, drafts, productId, registrationData, registrationSignature,
+    saveRegistrationDraft, selectedTargets]);
   useEffect(() => {
     if (loading || registrationTargetLoading || !registrationData || !registrationLoadedRef.current || registrationSourceChanged || registrationSavedRef.current === registrationSignature) return;
     const timer = window.setTimeout(() => { void saveRegistrationDraft(); }, 1000);
@@ -2892,6 +3028,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
                 categoryId={assignment?.categoryId ?? ""}
                 sourceFingerprint={registrationSourceFingerprint}
                 draft={draftObject}
+                onPrepareRefresh={prepareCoupangCreateReadiness}
                 onValidationChange={(validation) => {
                   setCoupangCreateValidation(validation);
                   setCoupangValidatedDraft(validation.canBindCreateSourceRevision

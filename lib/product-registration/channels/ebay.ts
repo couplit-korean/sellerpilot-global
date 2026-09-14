@@ -8,7 +8,8 @@ import {
 import { readEbayTaxonomyPolicyGetOnly } from "../../channels/ebay-taxonomy-policy-get-only";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import { objectValue, stringArgument, integerArgument, pathSegment } from "../../channels/operation-values";
-import { ebayRequest, textValue, type RemoteResponse } from "../../channels/protocols";
+import { ebayRequest, fetchEbayTradingUserIdentity, runWithProviderReadOnlyTransport, textValue, type RemoteResponse } from "../../channels/protocols";
+import { assertProviderAccountIdentity } from "../../channels/provider-account-identity";
 import { ebayAsqMarketplaceId } from "../../channels/ebay-asq";
 import { assertEbayListingCreateConfiguration } from "../../channels/ebay-listing-configuration";
 
@@ -262,6 +263,20 @@ export async function executeEbay(input: ExecuteInput) {
       },
     };
     assertEbayCreateRequiredFields(createReadbackInput.arguments);
+    const savedOfferId = typeof input.arguments.offerId === "string"
+      ? input.arguments.offerId.trim()
+      : "";
+    if (savedOfferId) {
+      // A persisted Offer belongs to the stored seller, not merely whichever
+      // account the current access token happens to expose. Verify it before
+      // selecting a resume branch or allowing any Inventory/Offer mutation.
+      const providerAccount = await runWithProviderReadOnlyTransport(() =>
+        fetchEbayTradingUserIdentity({
+          environment: input.environment,
+          accessToken: textValue(input.payload, "access_token"),
+        }));
+      assertProviderAccountIdentity(input.payload, providerAccount.identity);
+    }
     const steps: ChannelOperationStep[] = [];
     let providerMutationStarted = false;
     const beginProviderMutation = async () => {
@@ -365,6 +380,14 @@ export async function executeEbay(input: ExecuteInput) {
       marketplaceId,
       format: String(offer.format ?? "FIXED_PRICE"),
     });
+    if (savedOfferId && (lineage.action !== "resume_offer" || lineage.offerId !== savedOfferId)) {
+      return result(input, [...steps, {
+        name: "saved-offer-identity-preflight",
+        ok: false,
+        status: 409,
+        data: { code: "EBAY_SAVED_OFFER_ID_MISMATCH" },
+      }]);
+    }
     const inventoryPreflight: ChannelOperationStep = {
       name: "inventory-create-lineage-preflight",
       ok: lineage.action !== "blocked",

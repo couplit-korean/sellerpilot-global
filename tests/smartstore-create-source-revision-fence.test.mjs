@@ -6,6 +6,9 @@ import { PGlite } from "@electric-sql/pglite";
 const { bindSmartstoreListingCreateSourceIdentity } = await import(
   "../lib/server-smartstore-listing-create-binding.ts"
 );
+const { smartstoreCreateBodyBindingSha256 } = await import(
+  "../lib/channels/smartstore-create-transport.ts"
+);
 
 const migration = await readFile(new URL(
   "../supabase/migrations/20260910010000_fence_smartstore_create_source_revision.sql",
@@ -312,6 +315,22 @@ test("snapshot to TypeScript binding preserves microseconds and one microsecond 
           name: "스마트스토어 현재 소스",
           salePrice: 10_000,
           stockQuantity: 1,
+          deliveryInfo: {
+            deliveryType: "DELIVERY",
+            deliveryCompany: "CJGLS",
+            deliveryFee: {
+              deliveryFeeType: "PAID",
+              baseFee: "3000",
+              deliveryFeePayType: "PREPAID",
+            },
+            claimDeliveryInfo: {
+              returnDeliveryCompanyPriorityType: "PRIMARY",
+              returnDeliveryFee: "3000",
+              exchangeDeliveryFee: "6000",
+              shippingAddressId: "200141418",
+              returnAddressId: "200141419",
+            },
+          },
           detailAttribute: {
             sellerCodeInfo: { sellerManagementCode: "SMART-CURRENT-001" },
           },
@@ -348,6 +367,16 @@ test("snapshot to TypeScript binding preserves microseconds and one microsecond 
   assert.equal(
     bound.sellerpilotSmartstoreCreateSource.productUpdatedAt,
     "2026-09-10T00:00:00.123456+00:00",
+  );
+  const deliveryInfo = bound.body.originProduct.deliveryInfo;
+  assert.equal(deliveryInfo.deliveryFee.baseFee, 3000);
+  assert.equal(deliveryInfo.claimDeliveryInfo.returnDeliveryFee, 3000);
+  assert.equal(deliveryInfo.claimDeliveryInfo.exchangeDeliveryFee, 6000);
+  assert.equal(deliveryInfo.claimDeliveryInfo.shippingAddressId, 200141418);
+  assert.equal(deliveryInfo.claimDeliveryInfo.returnAddressId, 200141419);
+  assert.equal(
+    bound.sellerpilotSmartstoreCreateSource.bodyBindingSha256,
+    smartstoreCreateBodyBindingSha256(bound.body),
   );
   await db.query(
     `update sellerpilot_private.channel_gateway_jobs

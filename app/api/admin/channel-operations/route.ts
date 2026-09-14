@@ -1126,12 +1126,41 @@ export async function POST(request: NextRequest) {
   const smartstoreApprovedAiLocalCreate = channel === "smartstore"
     && operation === "listing.create"
     && verifiedProductContentMode === "ai_generated";
+  // The ordinary Mac claimant already accepts processed-food Elevenst CREATE.
+  // Its server source is prepared below before claim, independently binding
+  // approval, credential revision, shipping and final provider image bytes.
+  // An AI product has no external-import revision for the legacy readiness RPC.
+  const elevenstApprovedAiLocalCreate = channel === "elevenst"
+    && operation === "listing.create"
+    && environment === "production"
+    && verifiedProductContentMode === "ai_generated"
+    && elevenstCreateUsesApprovedServerSource
+    && Array.isArray(verifiedPublishContext?.assignments)
+    && verifiedPublishContext.assignments.some((assignment) => isRecord(assignment)
+      && assignment.channel === "elevenst"
+      && assignment.environment === "production"
+      // Legacy domestic requests omit market; only the official KR assignment
+      // may satisfy that omission. Do not rewrite the request or other markets.
+      && assignment.market === "KR"
+      && (parsed.data.market === "" || parsed.data.market === "KR")
+      && assignment.status === "confirmed"
+      && isElevenstProcessedFoodCategory(assignment.categoryId)
+      && isRecord(parsed.data.arguments.product)
+      && assignment.categoryId === parsed.data.arguments.product.dispCtgrNo);
+  // The Temu AI local claimant independently rechecks the current source and
+  // collector attestation. Source production below still precedes enqueue;
+  // normalized final-body CAS and the provider fence still precede CREATE.
+  const temuApprovedAiLocalCreate = channel === "temu"
+    && operation === "listing.create"
+    && environment === "production"
+    && verifiedProductContentMode === "ai_generated";
   let localChannelExecutorReady = false;
   // SmartStore category reads retain the existing live Mac heartbeat gate
   // below; the local claimant checks their explicit operation route binding.
   const smartstoreCategoryRead = channel === "smartstore"
     && ["categories.suggest", "categories.attributes", "categories.validate"].includes(operation);
-  if (localExecutorAccess && !smartstoreCategoryRead && !smartstoreApprovedAiLocalCreate) {
+  if (localExecutorAccess && !smartstoreCategoryRead && !smartstoreApprovedAiLocalCreate
+      && !elevenstApprovedAiLocalCreate && !temuApprovedAiLocalCreate) {
     const runtimeRelease = resolveRuntimeReleaseIdentity();
     let approvalRevision: number | null = null;
     let contentSha256: string | null = null;
@@ -1205,7 +1234,8 @@ export async function POST(request: NextRequest) {
     && (channel === "coupang" || channel === "elevenst")
     ? channel
     : null;
-  if (providerMutationStaticEgressChannel && !localChannelExecutorReady) {
+  if (providerMutationStaticEgressChannel && !localChannelExecutorReady
+      && !elevenstApprovedAiLocalCreate) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -1347,7 +1377,7 @@ export async function POST(request: NextRequest) {
   ].includes(operation)
     ? "temu"
     : null;
-  if (staticEgressChannel) {
+  if (staticEgressChannel && !localChannelExecutorReady && !temuApprovedAiLocalCreate) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -2024,7 +2054,8 @@ export async function POST(request: NextRequest) {
   const elevenstProcessedFoodAssignment = elevenstCreateAssignments.find((assignment) =>
     assignment.channel === "elevenst"
       && assignment.environment === "production"
-      && assignment.market === parsed.data.market
+      && assignment.market === "KR"
+      && (parsed.data.market === "" || parsed.data.market === "KR")
       && isElevenstProcessedFoodCategory(assignment.categoryId)
       && assignment.status === "confirmed");
   const elevenstServerOwnerId = typeof verifiedPublishContext?.ownerId === "string"

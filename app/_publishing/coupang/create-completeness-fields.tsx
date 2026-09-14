@@ -18,6 +18,10 @@ export type { CoupangCreateCompletenessValidation } from
 
 export type CoupangCreateCompletenessFieldsProps = CoupangCreateExpectedTuple & {
   draft: Record<string, unknown>;
+  onPrepareRefresh: (signal: AbortSignal) => Promise<{
+    tuple: CoupangCreateExpectedTuple;
+    draft: Record<string, unknown>;
+  }>;
   onChange: (path: string[], value: RegistrationValue) => void;
   onValidationChange: (validation: CoupangCreateCompletenessValidation) => void;
 };
@@ -43,6 +47,7 @@ export function CoupangCreateCompletenessFields({
   categoryId,
   sourceFingerprint,
   draft,
+  onPrepareRefresh,
   onChange,
   onValidationChange,
 }: CoupangCreateCompletenessFieldsProps) {
@@ -88,10 +93,16 @@ export function CoupangCreateCompletenessFields({
   const refresh = async () => {
     request.current?.controller.abort();
     const controller = new AbortController();
-    const identityAtRequest = requestIdentity;
+    let identityAtRequest = requestIdentity;
     request.current = { identity: identityAtRequest, controller };
     setRequestState({ state: "loading", identity: identityAtRequest });
     try {
+      const prepared = await onPrepareRefresh(controller.signal);
+      if (controller.signal.aborted) return;
+      identityAtRequest = coupangCreateReadinessRequestIdentity(prepared);
+      latestIdentity.current = identityAtRequest;
+      request.current = { identity: identityAtRequest, controller };
+      setRequestState({ state: "loading", identity: identityAtRequest });
       const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
       const response = await fetch("/api/admin/coupang-create-readiness", {
@@ -103,12 +114,14 @@ export function CoupangCreateCompletenessFields({
         cache: "no-store",
         signal: controller.signal,
         body: JSON.stringify({
-          productId,
-          credentialId,
-          ...(credentialVersion === undefined ? {} : { credentialVersion }),
-          categoryId,
-          sourceFingerprint,
-          draft,
+          productId: prepared.tuple.productId,
+          credentialId: prepared.tuple.credentialId,
+          ...(prepared.tuple.credentialVersion === undefined
+            ? {}
+            : { credentialVersion: prepared.tuple.credentialVersion }),
+          categoryId: prepared.tuple.categoryId,
+          sourceFingerprint: prepared.tuple.sourceFingerprint,
+          draft: prepared.draft,
         }),
       });
       const payload: unknown = await response.json().catch(() => null);
@@ -125,7 +138,7 @@ export function CoupangCreateCompletenessFields({
         setRequestState({ state: "blocked", identity: identityAtRequest, message });
         return;
       }
-      const view = mapCoupangCreateCompletenessView(payload, expectedTuple);
+      const view = mapCoupangCreateCompletenessView(payload, prepared.tuple);
       if (!view) {
         setRequestState({
           state: "blocked",

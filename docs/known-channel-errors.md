@@ -1,20 +1,23 @@
 # 확인된 채널 오류와 재작업 금지 기준
 
-## 현재 실등록 재시도 — 2026-09-14 15:16 KST
+## 현재 실등록 — 2026-09-14 16:08 KST
 
-나랑드 상품 c0bdb493-6447-41bf-af0a-46a3da7a75a8을 Aside에서 실제 등록 실행했다. 신규 게시 확인은 아직0/8이다. 아래 수정은 로컬 검사 통과·운영 반영 준비 상태이며 배포 후 원격 상품번호와 조회 결과를 확인한다.
+나랑드 상품 `c0bdb493-6447-41bf-af0a-46a3da7a75a8` 실제 신규 게시 확인은 **1/8(eBay)**이다. 사용자는 이번 상품의 전 채널 출고 소요일을 **1일**로 승인했다. 국내 배송3000/반품3000/교환6000 승인, 가공 이미지8장·최종16자산·승인 상세는 유지한다. 전 채널 1일 조건 저장은 진행 중이며 승인과 적용을 구분한다.
 
-| 채널 | 이번 실제 차단 | 수정 또는 다음 실행 |
+운영 웹·DB active release·Mac은 `4221646`. 후속 코드의 통합 타입 검사와 집중 회귀는 통과했고 다음 배포 준비 중이다. DB173000·174000·175000·180000은 실제 운영 rollback 검증 후 적용·저장 SQL 해시 일치 확인 완료다.
+
+| 채널 | 현재 실제 결과 | 다음 실행 / 반복 금지 |
 |---|---|---|
-| 11번가 | 상품 편집 원장의 배송 사실 검사에서 전송 전 차단 | 가공식품 CREATE는 기존 승인된 서버 배송 source를 사용하도록 수정. 승인 검사 유지 |
-| SmartStore | 승인된 AI CREATE에 외부 상세 전용 readiness 검사를 적용해 클라우드 IP 안내 발생 | 기존 Mac claimant의 source/승인 검사를 사용하도록 수정. cloud 차단 유지 |
-| eBay | 상위 시도 d87b18df-2e82-40fc-a029-2116113ebdb5, failed422/pre_gateway_retryable, 원격 전송 없음 | Inventory에서 생성된 질문·출처 주석만 제외해 실제 본문3087자. Offer11169자와 상품 본문·이미지는 유지 |
-| Temu | mall/region 불일치 안내, 전송 전 차단 | 운영 credential의 mall/region 결속은 정상. UI 요청의 빈 market을 KR로 수정 |
-| Shopee | 기존 성공 숍 조회가10분 뒤 만료되면 UI가 영구 대기 처리 | 성공 증거와 정확한 이전 job ID가 있는 명시적 재조회만 허용. IP/OAuth/토큰 재조사 금지 |
-| Qoo10 | 기존 QSM 배송·반품 capture 결속 불일치, 전송 전 차단 | 정확한 만료/상품 revision 원인 확인 중. capture 증거 위조·TTL 연장 금지 |
-| Coupang | 공식 조건 조회 source revision 불일치, 출고 확인 필드 미완료 | 저장과 조회 revision 경로 및 기존 WING 근거 확인 중 |
-| Lazada | 정확한 브랜드와 필수 카테고리 미확정 | 기존 공식 브랜드 조회 및 선택 입력 경로 확인 중 |
+| eBay | 상품 `800659240462` PUBLISHED/ACTIVE 공식 GET 및 Aside 판매중 페이지 확인. US$2.25/재고10. 180000 receipt 승계로 중앙 listing도 published/live와 정확한 상품 ID 저장 | 기존 Offer `265437447011`, job81f/attempt51ccc 원문 보존. 신규 CREATE/Offer 생성/재publish 금지. 기존 출고 정책 1일 여부 GET 확인 중 |
+| SmartStore | job `50a1e9e3-8c15-4a21-b2f3-7b00490c6408`: 이미지 업로드 성공 후 5개 배송 숫자 형식 차이로 `SMARTSTORE_CREATE_BODY_BINDING_CHANGED`. 상품 생성 `/v2/products` 미호출. reaper로 reconciliation_required/manual_required 보존 | source hash 이전 숫자 정규화와 실패 완료 저장 수정, 집중28검사 통과·다음 배포. 공식 Seller SKU 전체0건 조회 증거 확보 후 좁은 재접수 해제 필요. source06:42UTC 만료: TTL/원문 변경 금지 |
+| 11번가 | 승인 배송 source 검사 통과 이후 legacy 외부상세/클라우드 gate에서 전송 전 차단 | 서버 승인 AI 가공식품 + 공식KR assignment와 실제 요청 blank/KR 호환 수정. 다음 배포 후 실제 재시도. 기존 v3 couplit 키/승인 재조사 금지 |
+| Temu | 실제 요청 market KR 수정 후 legacy cloud gate 차단. current credential/mall/region 정상, app observation/attestation0 | 174000 AI local claim 적용, TS 경로 다음 배포. 실제 Partner app/운영자 관측 수집 필요. Aside를 Chrome으로 위장하거나 승인 증거 생성 금지 |
+| Shopee | 기존 c802d438-1d20-4d97-a057-0ff91ceff182 shops.get 대기. 동일 채널 inquiries.list b01dc891 실행 중으로 직렬 수령 | 기존 두 job의 현재 진행 확인. shops POST 중복·IP/OAuth/토큰 원인 재조사 금지 |
+| Qoo10 | whole capture ledger0. shared-admin·blank target·draft 계약173000 DB 수정 완료, TS 다음 배포 | 기존 QSM 실제 dispatch/return master ID capture 필요. ShippingNo806971은 해당 master ID가 아님. 관측/collector 증거 위조 금지 |
+| Coupang | 저장 후 공식 조건 조회가 stale revision으로 차단 | fresh save/readback/fingerprint 후 조회 수정 및 React DOM 포함6검사 통과. 다음 배포 뒤 승인된 출고1일 적용·공식 조회/등록 |
+| Lazada | MY category10003131, 공식 허용 목록에 정확한 Narangd 브랜드 미확정. 기존 Aside 탭은 실제 로그인 화면 | 기존 탭 로그인 사용자 응답 대기. NoBrand/Otsuka/DONG-A 대체 금지. 742페이지 브랜드 재수집 반복 금지 |
 
+180000 저장 SQL MD5 `cccc1780dde5033f96048ac5117a6cd4`; eBay private receipt canonical digest `2267faf785338ba10317e11565076cbe347cebb324d44ceb3cde272de5421fb8`. 원본 CREATE 이력은 failed/manual로 보존하고 별도 검증된 게시 결과만 중앙 원장에 승계했다.
 
 > **2026-09-14 14:42 KST 상태 확인:** 기존 Shopee SG 숍 조회 `39c870a8-2ab1-4c73-b859-a2d0b7f2a107`은14:11:18 KST에 succeeded 완료됐다. 저장된 response_payload의 ok=true, shop-info 단계 ok=true/HTTP200/provider error 빈 문자열을 운영 DB에서 확인했다. 이 조회는 더 이상 대기/재요청 대상이 아니다. 현재 Mac gateway는 가격 계산 배포 `eeee61d`로 ready/HTTP200이며, 앞선 IP·오류 로깅 수정도 포함한다. 다음은 저장된 숍 정보를 사용한 카테고리·등록 필수조건 및 상품 등록 진행이다. 이 확인은 상품 게시 완료 근거가 아니다.
 

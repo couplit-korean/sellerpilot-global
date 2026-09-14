@@ -302,13 +302,9 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     });
   }
 
-  if (job.channel === "smartstore" && job.operation === "listing.create") {
-    if (parsed.data.status !== "succeeded" || !parsed.data.result) {
-      return NextResponse.json(
-        { message: "스마트스토어 등록 완료는 전용 경로만 사용할 수 있습니다." },
-        { status: 409 },
-      );
-    }
+  if (job.channel === "smartstore"
+    && job.operation === "listing.create"
+    && parsed.data.status === "succeeded") {
     let receipt;
     try {
       receipt = smartstoreListingCreateCompletionReceiptFromWorkerResult(

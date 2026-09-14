@@ -272,9 +272,34 @@ test("eBay create resume publishes the matching stored offer without recreating 
     assert.equal(result.ok, true);
     assert.deepEqual(provider.state.writes, [`POST /sell/inventory/v1/offer/${offerId}/publish`]);
     assert.equal(provider.state.published, true);
+    assert.equal(provider.state.calls[0], "POST /ws/api.dll");
+    assert.equal(provider.state.calls.filter(call => call === "POST /ws/api.dll").length, 1);
   } finally {
     provider.restore();
   }
+});
+
+test("eBay saved offer absence cannot become a new Offer even when Inventory still exists", async () => {
+  const provider = installProvider({ remoteOfferId: "", inventoryInitiallyPresent: true });
+  try {
+    const result = await execute(createArguments(offerId));
+    assert.equal(result.ok, false);
+    assert.match(JSON.stringify(result), /EBAY_SAVED_OFFER_ID_MISMATCH/u);
+    assert.deepEqual(provider.state.writes, []);
+  } finally { provider.restore(); }
+});
+
+test("eBay saved offer resume requires a stored provider identity and never adopts the current token owner", async () => {
+  const provider = installProvider({ remoteOfferId: offerId });
+  try {
+    await assert.rejects(() => executeChannelOperation({
+      channel: "ebay", operation: "listing.create", environment: "sandbox",
+      arguments: createArguments(offerId),
+      payload: { access_token: "fixture-only", marketplace_id: "EBAY_US" },
+    }), /PROVIDER_ACCOUNT_IDENTITY_MISSING/u);
+    assert.deepEqual(provider.state.writes, []);
+    assert.deepEqual(provider.state.calls, ["POST /ws/api.dll"]);
+  } finally { provider.restore(); }
 });
 
 test("eBay create resume cannot recreate a saved offer that is now absent", async () => {

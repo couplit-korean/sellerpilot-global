@@ -396,13 +396,13 @@ test("owned SmartStore CREATE completion route does not call generic gateway com
   assert.doesNotMatch(route, /sellerpilot_service_complete_gateway_transaction/u);
 });
 
-test("shared commerce worker completion sends SmartStore listing.create to the dedicated RPC", async () => {
+test("shared commerce worker completion sends only successful SmartStore listing.create to the dedicated RPC", async () => {
   const source = await readFile(new URL(
     "../lib/channels/commerce-worker-completion.ts",
     import.meta.url,
   ), "utf8");
   const branch = source.indexOf(
-    'job.channel === "smartstore" && job.operation === "listing.create"',
+    'if (job.channel === "smartstore"',
   );
   const dedicated = source.indexOf("completeSmartstoreListingCreate", branch);
   const generic = source.indexOf(
@@ -413,6 +413,10 @@ test("shared commerce worker completion sends SmartStore listing.create to the d
   assert.match(
     source.slice(branch, generic),
     /smartstoreListingCreateCompletionReceiptFromWorkerResult/u,
+  );
+  assert.match(
+    source.slice(branch, dedicated),
+    /job\.operation === "listing\.create"[\s\S]*parsed\.data\.status === "succeeded"/u,
   );
   assert.match(source.slice(branch, generic), /return NextResponse\.json/u);
   assert.doesNotMatch(

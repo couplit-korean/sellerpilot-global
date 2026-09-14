@@ -24,7 +24,7 @@ const sellerId = "seller-fixture";
 const targetId = "Japan · QAPI";
 const observedAt = "2026-09-10T03:59:59.000Z";
 
-function source() {
+function source(overrides: { targetId?: string } = {}) {
   const capture = sealQoo10QsmCreateFulfillmentCapture({
     contract: qoo10QsmCreateFulfillmentCaptureContract,
     collector: qoo10QsmCreateFulfillmentCollector,
@@ -47,7 +47,7 @@ function source() {
     envelope: {
       contract: "sellerpilot_qoo10_durable_create_fulfillment_source_v1",
       sourceId, ownerId, productId, credentialId, credentialVersion: 7,
-      sellerId, market: "JP", targetId,
+      sellerId, market: "JP", targetId: overrides.targetId ?? targetId,
       testItemCode: "1234567890", testItemSellerCode: "seller-item-fixture",
       dispatchPlaceId: "dispatch-1", returnPolicyId: "return-1",
       sourceRevision: capture.sourceRevision, captureDigest: capture.captureDigest,
@@ -78,6 +78,21 @@ test("service RPC read is exact-bound to owner/product/credential/JP/target and 
   assert.equal(evidence.testItemCode, "1234567890");
   assert.equal(evidence.dispatchPlaceId, "dispatch-1");
   assert.equal(evidence.returnPolicyId, "return-1");
+});
+
+test("blank Qoo10 target remains exact-bound by credential version and seller source", async () => {
+  const { envelope } = source({ targetId: "" });
+  const evidence = await buildQoo10ListingCreateFulfillmentEvidenceFromDurableSource({
+    rpc: async (_name, parameters) => {
+      assert.equal(parameters.p_credential_id, credentialId);
+      assert.equal(parameters.p_credential_version, 7);
+      assert.equal(parameters.p_target_id, "");
+      return { data: envelope, error: null };
+    },
+    ownerId, productId, credentialId, credentialVersion: 7,
+    market: "JP", targetId: "", now,
+  });
+  assert.equal(evidence.testItemCode, "1234567890");
 });
 
 test("absent and cross-product rows fail closed before any downstream mutation", async () => {

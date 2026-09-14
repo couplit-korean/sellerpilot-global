@@ -88,7 +88,7 @@ export function qoo10DurableCreateFulfillmentBinding(
       || !Number.isSafeInteger(Number(row.credentialVersion))
       || Number(row.credentialVersion) < 1
       || !text(row.sellerId) || text(row.sellerId).length > 160
-      || row.market !== "JP" || !text(row.targetId) || text(row.targetId).length > 160
+      || row.market !== "JP" || text(row.targetId).length > 160
       || !/^sha256:[a-f0-9]{64}$/u.test(text(row.sourceRevision))
       || !/^[a-f0-9]{64}$/u.test(text(row.captureDigest))
       || !/^[a-f0-9]{64}$/u.test(text(row.fulfillmentEvidenceDigest))
@@ -543,7 +543,7 @@ function normalizedInput(input: {
   const nowMs = (input.now ?? new Date()).getTime();
   if (!uuidPattern.test(ownerId) || !uuidPattern.test(productId)
       || !uuidPattern.test(credentialId) || market !== "JP"
-      || !targetId || targetId.length > 160
+      || targetId.length > 160
       || !Number.isSafeInteger(credentialVersion) || credentialVersion < 1
       || typeof input.rpc !== "function" || !Number.isFinite(nowMs)) {
     throw new Qoo10DurableCreateFulfillmentSourceError(

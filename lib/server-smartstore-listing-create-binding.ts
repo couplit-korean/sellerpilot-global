@@ -3,6 +3,7 @@ import {
   smartstoreCreateBodyBindingSha256,
   smartstoreCreateTransportArgument,
 } from "./channels/smartstore-create-transport";
+import { validatedSmartstoreShippingInfo } from "./channels/listing-shipping";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -229,6 +230,11 @@ export function bindSmartstoreListingCreateSourceIdentity(input: {
   const argumentsValue = structuredClone(input.argumentsValue);
   const boundBody = record(argumentsValue.body)!;
   const boundOriginProduct = record(boundBody.originProduct)!;
+  if (Object.hasOwn(boundOriginProduct, "deliveryInfo")) {
+    boundOriginProduct.deliveryInfo = validatedSmartstoreShippingInfo(
+      boundOriginProduct.deliveryInfo,
+    );
+  }
   const boundDetailAttribute = record(boundOriginProduct.detailAttribute)!;
   const boundSellerCodeInfo = record(boundDetailAttribute.sellerCodeInfo)!;
   boundSellerCodeInfo.sellerManagementCode = canonicalSellerCode;

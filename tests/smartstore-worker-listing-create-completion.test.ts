@@ -187,25 +187,37 @@ test("same snapshot with a different title/price/stock body never uses generic c
   );
 });
 
-test("failed SmartStore listing.create does not fall through to generic completion", async () => {
-  const calls: Array<{ name: string }> = [];
-  const client = {
-    rpc: async (name: string) => {
-      calls.push({ name });
-      throw new Error(`unexpected RPC ${name}`);
-    },
-  } as unknown as SupabaseClient;
-  const reply = await completeCommerceWorker({
-    serviceClient: client,
-    tokenHash: "token-hash",
-    job: { channel: "smartstore", operation: "listing.create" },
-    completion: {
-      jobId,
-      claimToken,
-      status: "failed",
-      error: "NAVER_CREATE_FAILED",
-    } as GatewayWorkerCompletion,
-  });
-  assert.equal(reply.status, 409);
-  assert.deepEqual(calls, []);
+test("failed and reconciliation-required SmartStore creates use durable generic completion", async () => {
+  for (const [status, error] of [
+    ["failed", "NAVER_CREATE_PREWRITE_FAILED"],
+    ["reconciliation_required", "SMARTSTORE_CREATE_BODY_BINDING_CHANGED"],
+  ] as const) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const client = {
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        calls.push({ name, args });
+        if (name !== "sellerpilot_service_complete_gateway_transaction") {
+          throw new Error(`unexpected RPC ${name}`);
+        }
+        return { data: { status: "completed" }, error: null };
+      },
+    } as unknown as SupabaseClient;
+    const reply = await completeCommerceWorker({
+      serviceClient: client,
+      tokenHash: "token-hash",
+      job: { channel: "smartstore", operation: "listing.create" },
+      completion: {
+        jobId,
+        claimToken,
+        status,
+        error,
+      } as GatewayWorkerCompletion,
+    });
+    assert.equal(reply.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.name, "sellerpilot_service_complete_gateway_transaction");
+    assert.equal(calls[0]?.args.p_status, status);
+    assert.equal(calls[0]?.args.p_response_payload, null);
+    assert.equal(calls[0]?.args.p_error_message, error);
+  }
 });
