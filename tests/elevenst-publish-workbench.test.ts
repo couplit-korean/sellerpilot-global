@@ -136,7 +136,7 @@ test("11st processed-food leaf maps the official 891031 notice fields without ch
     "176317774", "23756754", "23757245", "42155152", "23757000",
   ]);
   assert.equal(notification.item.find((item) => item.code === "176317774")?.name, "부착형 케이블 정리 클립 6개 세트");
-  assert.equal(inspectListingDraft("elevenst", draft).filter((item) => item.status === "manual").length, 0);
+  assert.deepEqual(inspectListingDraft("elevenst", draft).filter((item) => item.status === "manual").map(item => item.key), ["elevenst-addrSeqOut", "elevenst-addrSeqIn"]);
   assert.doesNotThrow(() => validateElevenstListingProduct(draft.product));
 
   const cableDraft = elevenstDraft(publishContext());
@@ -259,4 +259,28 @@ test("11st missing brand stays empty and is blocked by local preflight instead o
   assert.equal(draft.product.brand, "");
   assert.equal(inspectListingDraft("elevenst", draft).find((item) => item.key === "brand")?.status, "manual");
   assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CONTRACT_FIELD_INVALID:brand/);
+});
+
+
+test("11st food approval exposes missing address IDs and preserves entered IDs in saved patches", () => {
+  const draft = { product: { dispCtgrNo: "1009792" } };
+  const requirements = inspectListingDraft("elevenst", draft);
+  const fields = channelRegistrationFields("elevenst", draft, requirements);
+  for (const name of ["addrSeqOut", "addrSeqIn"]) {
+    const field = fields.find(item => item.path.join(".") === `product.${name}`);
+    assert.ok(field?.required);
+    assert.equal(field.value, null);
+    assert.equal(requirements.find(item => item.key === `elevenst-${name}`)?.status, "manual");
+  }
+  const restored = applyRegistrationPatches(draft, [
+    { path: ["product", "addrSeqOut"], value: "2" },
+    { path: ["product", "addrSeqIn"], value: "3" },
+  ]);
+  const checked = inspectListingDraft("elevenst", restored);
+  assert.equal(checked.find(item => item.key === "elevenst-addrSeqOut")?.status, "ready");
+  assert.equal(checked.find(item => item.key === "elevenst-addrSeqIn")?.status, "ready");
+  for (const invalid of ["0", "-1", "2.5", "주소 참조"]) {
+    const changed = applyRegistrationPatches(draft, [{ path: ["product", "addrSeqOut"], value: invalid }]);
+    assert.equal(inspectListingDraft("elevenst", changed).find(item => item.key === "elevenst-addrSeqOut")?.status, "manual");
+  }
 });

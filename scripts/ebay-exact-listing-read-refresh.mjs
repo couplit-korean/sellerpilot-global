@@ -15,19 +15,35 @@ import { pathToFileURL } from "node:url";
 export const sourceCredentialId = "8e43e9e0-2674-41a2-8a62-905afad415c0";
 const project = "sqaoqucxakebqkiygdxb";
 const evidenceDirectory=join(homedir(),"Library/Application Support/SellerPilot/private-evidence");
-const evidenceName="ebay-v209-confirmed-refresh.json";
+// Registered incidents only: callers cannot supply arbitrary credential IDs or RPC names.
+const incidents=Object.freeze({
+  v209:Object.freeze({sourceCredentialId,sourceVersion:209,resultVersion:210,
+    evidenceName:"ebay-v209-confirmed-refresh.json",evidenceNamespace:"ebay-v209",temporaryPrefix:".ebay-v209",
+    storeRpc:"sellerpilot_service_store_ebay_exact_listing_refresh",storeTimeoutMs:45000}),
+  v210:Object.freeze({sourceCredentialId:"2ba31905-9879-44c4-88be-2204776fa303",sourceVersion:210,resultVersion:211,
+    incidentJobId:"c9d6431c-5418-4649-9542-f30137309bf4",
+    evidenceName:"ebay-v210-c9d6431c-confirmed-refresh.json",evidenceNamespace:"ebay-v210-c9d6431c",temporaryPrefix:".ebay-v210-c9d6431c",
+    storeRpc:"sellerpilot_service_store_ebay_v210_confirmed_refresh",storeTimeoutMs:30000}),
+});
+function incidentConfig(key="v209") {
+  if(!Object.hasOwn(incidents,key))throw new Error("EBAY_EXACT_READ_REFRESH_INCIDENT_INVALID");
+  return incidents[key];
+}
 const maxEvidenceBytes=64*1024;
+// Available only after this operator reads the exact v210 STORE audit and its
+// active same-seller successor. Never accepted by execute or evidence creation.
+const confirmedV210StoreReplay=Symbol("confirmed-v210-store-replay");
 const evidenceFailure=()=>{throw new Error("EBAY_EXACT_READ_REFRESH_EVIDENCE_INVALID");};
 const hash=value=>createHash("sha256").update(value).digest("hex");
 const canonical=value=>JSON.stringify(value,(_key,item)=>item && typeof item==="object" && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
-const mac=(key,body,digest)=>createHmac("sha256",key).update(`sellerpilot/ebay-v209-confirmed-refresh/v1\n${digest}\n${body}`).digest("hex");
+const mac=(key,body,digest,incident)=>createHmac("sha256",key).update(`sellerpilot/${incident.evidenceNamespace}-confirmed-refresh/v1\n${digest}\n${body}`).digest("hex");
 const sameInode=(a,b)=>a.dev===b.dev && a.ino===b.ino;
 const owned=stat=>typeof process.getuid!=="function" || stat.uid===process.getuid();
 const privateFile=stat=>stat.isFile() && stat.nlink===1 && owned(stat) && (stat.mode&0o777)===0o600 && stat.size<=maxEvidenceBytes;
-function evidenceKey(serviceKey) {
+function evidenceKey(serviceKey,incident) {
   if(typeof serviceKey!=="string" || serviceKey.length<16)return evidenceFailure();
-  return createHash("sha256").update(`sellerpilot/ebay-v209/evidence-key\n${serviceKey}`).digest();
+  return createHash("sha256").update(`sellerpilot/${incident.evidenceNamespace}/evidence-key\n${serviceKey}`).digest();
 }
 async function privateDirectory(directory,create) {
   const absolute=resolve(directory);
@@ -44,11 +60,13 @@ async function privateDirectory(directory,create) {
   if(!owned(stat) || (stat.mode&0o777)!==0o700 || await realpath(absolute)!==absolute)return evidenceFailure();
   return stat;
 }
-export function validateConfirmedRefresh(source,record,now=Date.now()) {
-  const oldPayload=validateSource(source,now);
+export function validateConfirmedRefresh(source,record,now=Date.now(),incidentKey="v209",resumeContext) {
+  const incident=incidentConfig(incidentKey);
+  const oldPayload=validateSource(source,now,incidentKey,resumeContext);
   const next=record?.payload;
   const immutable=payload=>Object.fromEntries(Object.entries(payload).filter(([key])=>!["access_token","access_token_expires_at","ebay_user_id"].includes(key)));
-  if(record?.version!==1 || record.sourceCredentialId!==sourceCredentialId || record.sourceVersion!==209
+  if(record?.version!==1 || record.sourceCredentialId!==incident.sourceCredentialId || record.sourceVersion!==incident.sourceVersion
+      || (incident.incidentJobId && record.incidentJobId!==incident.incidentJobId)
       || record.sourcePayloadDigest!==hash(canonical(oldPayload)) || !next || typeof next!=="object" || Array.isArray(next)
       || canonical(immutable(next))!==canonical(immutable(oldPayload))
       || typeof next.access_token!=="string" || next.access_token.length<8 || next.access_token===oldPayload.access_token
@@ -59,12 +77,14 @@ export function validateConfirmedRefresh(source,record,now=Date.now()) {
   if(Date.parse(record.verifiedAt)<now-600000)throw new Error("EBAY_EXACT_READ_REFRESH_EVIDENCE_PROOF_EXPIRED");
   return record;
 }
-export async function writeConfirmedRefreshEvidence({source,payload,verifiedAt,serviceKey,directory=evidenceDirectory}) {
-  const record=validateConfirmedRefresh(source,{version:1,sourceCredentialId,sourceVersion:209,sourcePayloadDigest:hash(canonical(source.payload)),payload,verifiedAt});
+export async function writeConfirmedRefreshEvidence({source,payload,verifiedAt,serviceKey,directory=evidenceDirectory,incidentKey="v209"}) {
+  const incident=incidentConfig(incidentKey);
+  const record=validateConfirmedRefresh(source,{version:1,sourceCredentialId:incident.sourceCredentialId,sourceVersion:incident.sourceVersion,
+    ...(incident.incidentJobId?{incidentJobId:incident.incidentJobId}:{}),sourcePayloadDigest:hash(canonical(source.payload)),payload,verifiedAt},Date.now(),incidentKey);
   const body=JSON.stringify(record),digest=hash(body);
-  const bytes=Buffer.from(JSON.stringify({body,digest,mac:mac(evidenceKey(serviceKey),body,digest)}));
+  const bytes=Buffer.from(JSON.stringify({body,digest,mac:mac(evidenceKey(serviceKey,incident),body,digest,incident)}));
   if(bytes.length>maxEvidenceBytes)return evidenceFailure();
-  const dirStat=await privateDirectory(directory,true),path=join(directory,evidenceName),temporary=join(directory,`.ebay-v209-${randomUUID()}.tmp`);
+  const dirStat=await privateDirectory(directory,true),path=join(directory,incident.evidenceName),temporary=join(directory,`${incident.temporaryPrefix}-${randomUUID()}.tmp`);
   let file;
   try {
     file=await open(temporary,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);
@@ -80,10 +100,11 @@ export async function writeConfirmedRefreshEvidence({source,payload,verifiedAt,s
     return {path,digest};
   }finally{await file?.close().catch(()=>{});await unlink(temporary).catch(()=>{});}
 }
-export async function readConfirmedRefreshEvidence({source,serviceKey,directory=evidenceDirectory}) {
+export async function readConfirmedRefreshEvidence({source,serviceKey,directory=evidenceDirectory,incidentKey="v209",resumeContext}) {
+  const incident=incidentConfig(incidentKey);
   const dirStat=await privateDirectory(directory,false);
   if(!dirStat)return null;
-  const path=join(directory,evidenceName);
+  const path=join(directory,incident.evidenceName);
   const before=await lstat(path).catch(error=>{if(error.code==="ENOENT")return null;throw error;});
   if(!before)return null;
   if(!privateFile(before) || before.size===0)return evidenceFailure();
@@ -99,9 +120,9 @@ export async function readConfirmedRefreshEvidence({source,serviceKey,directory=
     let envelope;try{envelope=JSON.parse(bytes.subarray(0,offset).toString("utf8"));}catch{return evidenceFailure();}
     if(typeof envelope?.body!=="string" || !/^[a-f0-9]{64}$/.test(envelope?.digest??"")
         || !/^[a-f0-9]{64}$/.test(envelope?.mac??"") || hash(envelope.body)!==envelope.digest
-        || !timingSafeEqual(Buffer.from(envelope.mac,"hex"),Buffer.from(mac(evidenceKey(serviceKey),envelope.body,envelope.digest),"hex")))return evidenceFailure();
+        || !timingSafeEqual(Buffer.from(envelope.mac,"hex"),Buffer.from(mac(evidenceKey(serviceKey,incident),envelope.body,envelope.digest,incident),"hex")))return evidenceFailure();
     let record;try{record=JSON.parse(envelope.body);}catch{return evidenceFailure();}
-    return validateConfirmedRefresh(source,record);
+    return validateConfirmedRefresh(source,record,Date.now(),incidentKey,resumeContext);
   }finally{await file.close();}
 }
 export function safeStoreError(status,data) {
@@ -117,14 +138,16 @@ async function boundedStoreError(response) {
     let data;try{data=JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch{data=null;}return safeStoreError(response.status,data);
   }finally{reader.releaseLock();}
 }
-const sourceSql = `select c.id,c.version,c.status,c.created_by,c.channel,c.environment,
+function sourceSql(incident) { return `select c.id,c.version,c.status,c.created_by,c.channel,c.environment,
  c.seller_account_key_source,c.seller_account_verified_at is not null as identity_verified,
  d.decrypted_secret::jsonb as payload
  from sellerpilot_private.channel_credentials c join vault.decrypted_secrets d on d.id=c.vault_secret_id
- where c.id='${sourceCredentialId}'`;
+ where c.id='${incident.sourceCredentialId}'`; }
 
-export function validateSource(source, now = Date.now()) {
-  if (!source || source.id !== sourceCredentialId || source.version !== 209 || source.status !== "active"
+export function validateSource(source, now = Date.now(), incidentKey="v209",resumeContext) {
+  const incident=incidentConfig(incidentKey);
+  const confirmedRevokedSource=incidentKey==="v210" && resumeContext===confirmedV210StoreReplay && source?.status==="revoked";
+  if (!source || source.id !== incident.sourceCredentialId || source.version !== incident.sourceVersion || (source.status !== "active" && !confirmedRevokedSource)
       || source.created_by !== "21eb1892-0894-4f9f-b414-4c9464182dd6"
       || source.channel !== "ebay" || source.environment !== "production"
       || source.seller_account_key_source !== "provider_certified_v1" || source.identity_verified !== true) {
@@ -140,14 +163,30 @@ export function validateSource(source, now = Date.now()) {
   return p;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+// Optional dependencies allow focused offline tests; both CLI entrypoints use real
+// Keychain/management, provider proof and STORE transports by default.
+function storeResult(result,incident) {
+  if(!incident.incidentJobId)return result; // Preserve the historical v209 output.
+  if(result.sourceCredentialId!==incident.sourceCredentialId || result.preservedIncidentJobId!==incident.incidentJobId
+    || result.incidentPreserved!==true || !Number.isInteger(result.inheritedLocalRoutes) || result.inheritedLocalRoutes<0
+    || result.automaticQueuedCredentialRebinds<0)throw new Error("EBAY_EXACT_READ_REFRESH_STORE_READBACK_INVALID");
+  const {credentialId,version,sourceCredentialId,preservedIncidentJobId,automaticQueuedCredentialRebinds,inheritedLocalRoutes,forcedProviderJobsStarted,incidentPreserved}=result;
+  return {credentialId,version,sourceCredentialId,preservedIncidentJobId,automaticQueuedCredentialRebinds,inheritedLocalRoutes,forcedProviderJobsStarted,incidentPreserved};
+}
+
+export async function main(argv = process.argv.slice(2), options = {}) {
+  const incidentKey=options.incidentKey??"v209",incident=incidentConfig(incidentKey);
+  const sourceCredentialId=incident.sourceCredentialId;
+  const output=options.output??console.log;
+  const directory=options.directory??evidenceDirectory;
   if (argv.some(a => !["--execute","--resume-store","--resume-store-management"].includes(a)) || argv.length > 1) throw new Error("EBAY_EXACT_READ_REFRESH_ARGUMENTS_INVALID");
   const managementStore=argv.includes("--resume-store-management");
   const resumeStore=argv.includes("--resume-store") || managementStore;
   const execute = argv.includes("--execute") || resumeStore;
+  const query = options.query ?? await (async()=>{
   let managementToken = execFileSync("security", ["find-generic-password", "-s", "Supabase CLI", "-a", "supabase", "-w"], {encoding:"utf8", stdio:["ignore","pipe","pipe"]}).trim();
   if (managementToken.startsWith("go-keyring-base64:")) managementToken = Buffer.from(managementToken.slice(18), "base64").toString("utf8");
-  const query = async sql => {
+  return async sql => {
     const response = await fetch(`https://api.supabase.com/v1/projects/${project}/database/query`, {
       method:"POST", headers:{authorization:`Bearer ${managementToken}`,"content-type":"application/json"},
       body:JSON.stringify({query:sql}), signal:AbortSignal.timeout(30_000),
@@ -155,19 +194,39 @@ export async function main(argv = process.argv.slice(2)) {
     if (!response.ok) { await response.body?.cancel(); throw new Error(`EBAY_EXACT_MANAGEMENT_HTTP_${response.status}`); }
     return response.json();
   };
+  })();
   const preflight = (await query(`select
-    exists(select 1 from sellerpilot_private.channel_credentials where id='${sourceCredentialId}' and version=209 and status='active') as source_current,
-    to_regprocedure('public.sellerpilot_service_store_ebay_exact_listing_refresh(uuid,jsonb,timestamptz)') is not null as rpc_installed,
+    exists(select 1 from sellerpilot_private.channel_credentials where id='${sourceCredentialId}' and version=${incident.sourceVersion} and status='active') as source_current,
+    ${incidentKey==="v210" && resumeStore?`exists(select 1 from sellerpilot_private.channel_credentials source
+      join sellerpilot_private.credential_audit audit on audit.channel='ebay' and audit.environment='production'
+        and audit.safe_detail->>'source'='v210_confirmed_access_store_v1'
+        and audit.safe_detail->>'sourceCredentialId'=source.id::text
+        and audit.safe_detail->>'preservedIncidentJobId'='${incident.incidentJobId}'
+      join sellerpilot_private.channel_credentials successor on successor.id=audit.credential_id
+      where source.id='${sourceCredentialId}' and source.version=210 and source.status='revoked'
+        and source.channel='ebay' and source.environment='production'
+        and successor.version=211 and successor.status='active'
+        and successor.channel=source.channel and successor.environment=source.environment
+        and successor.created_by=source.created_by and successor.seller_account_key=source.seller_account_key
+        and successor.seller_account_key_source='provider_certified_v1'
+        and successor.seller_account_verified_at is not null) as source_replay_ready,`:""}
+    to_regprocedure('public.${incident.storeRpc}(uuid,jsonb,timestamptz)') is not null as rpc_installed,
     (select count(*) from sellerpilot_private.channel_gateway_jobs where channel='ebay' and environment='production' and status='running') as running,
-    (select count(*) from sellerpilot_private.channel_gateway_jobs where id in ('d49fcf37-32b6-41f5-a822-0f9bc99b51de','1654d17e-2ef7-421d-b90f-6bf0e536e626') and status='queued' and attempt_count=0 and credential_id='${sourceCredentialId}') as exact_queued`))[0];
-  if (preflight?.source_current !== true || Number(preflight.running) !== 0 || Number(preflight.exact_queued) !== 2) throw new Error("EBAY_EXACT_READ_REFRESH_PREFLIGHT_DRIFT");
-  if (!execute) { console.log(JSON.stringify({mode:"read-only",...preflight})); return; }
+    ${incidentKey==="v209"?`(select count(*) from sellerpilot_private.channel_gateway_jobs where id in ('d49fcf37-32b6-41f5-a822-0f9bc99b51de','1654d17e-2ef7-421d-b90f-6bf0e536e626') and status='queued' and attempt_count=0 and credential_id='${sourceCredentialId}') as exact_queued`:
+      `exists(select 1 from sellerpilot_private.channel_gateway_jobs where id='${incident.incidentJobId}'
+        and credential_id='${sourceCredentialId}' and channel='ebay' and environment='production'
+        and status='reconciliation_required' and credential_refresh_in_flight
+        and credential_refresh_recovery_vault_id is null and prepared_credential_id is null
+        and credential_refresh_prepared_at is null and credential_refresh_recovery_staged_at is null) as incident_current`}`))[0];
+  const resumeContext=incidentKey==="v210" && resumeStore && preflight?.source_replay_ready===true?confirmedV210StoreReplay:undefined;
+  if ((preflight?.source_current !== true && !resumeContext) || Number(preflight.running) !== 0 || (incidentKey==="v209"?Number(preflight.exact_queued)!==2:preflight.incident_current!==true)) throw new Error("EBAY_EXACT_READ_REFRESH_PREFLIGHT_DRIFT");
+  if (!execute) { output(JSON.stringify({mode:"read-only",...preflight})); return; }
   if (preflight.rpc_installed !== true) throw new Error("EBAY_EXACT_READ_REFRESH_RPC_NOT_INSTALLED");
-  const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceKey = options.serviceKey??(process.env.SUPABASE_SECRET_KEY?.trim() || process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!serviceKey?.trim()) throw new Error("EBAY_EXACT_READ_REFRESH_SERVICE_KEY_REQUIRED");
-  const source = (await query(sourceSql))[0];
-  const payload = validateSource(source);
-  let evidence=await readConfirmedRefreshEvidence({source,serviceKey});
+  const source = (await query(sourceSql(incident)))[0];
+  const payload = validateSource(source,Date.now(),incidentKey,resumeContext);
+  let evidence=await readConfirmedRefreshEvidence({source,serviceKey,directory,incidentKey,resumeContext});
   if(resumeStore && !evidence)throw new Error("EBAY_EXACT_READ_REFRESH_EVIDENCE_MISSING");
   if(!resumeStore && evidence)throw new Error("EBAY_EXACT_READ_REFRESH_EVIDENCE_EXISTS_USE_RESUME_STORE");
   if(!resumeStore) {
@@ -177,37 +236,37 @@ export async function main(argv = process.argv.slice(2)) {
   if (ebayOAuthScopes(payload).some(scope => !granted.has(scope))) throw new Error("EBAY_EXACT_READ_REFRESH_SCOPE_EXPANSION_BLOCKED");
   // Official eBay refresh tokens remain reusable. This is NOT a new consent or
   // authorization-code exchange. ensure requires GetUser to match stored EIAS.
-  const refreshed = await ensureEbayAccessToken(payload,"production",undefined,undefined,undefined,true);
+  const refreshed = await (options.refresh??ensureEbayAccessToken)(payload,"production",undefined,undefined,undefined,true);
   if (!refreshed.refreshed || refreshed.payload.refresh_token !== payload.refresh_token
       || refreshed.payload.provider_account_subject !== payload.provider_account_subject) throw new Error("EBAY_EXACT_READ_REFRESH_PROVIDER_PROOF_INVALID");
   const verifiedAt = new Date().toISOString();
-  await writeConfirmedRefreshEvidence({source,payload:refreshed.payload,verifiedAt,serviceKey});
+  await writeConfirmedRefreshEvidence({source,payload:refreshed.payload,verifiedAt,serviceKey,directory,incidentKey});
   // Verify the durable evidence before sending STORE. A later --resume-store
   // enters below without importing/calling the eBay refresh/GetUser helpers.
-  evidence=await readConfirmedRefreshEvidence({source,serviceKey});
+  evidence=await readConfirmedRefreshEvidence({source,serviceKey,directory,incidentKey});
   }
   if(!evidence)throw new Error("EBAY_EXACT_READ_REFRESH_EVIDENCE_MISSING");
   if (managementStore) {
     // Same checked RPC and durable provider proof; transaction-local budget only.
     // Serialize SQL literals without logging the query or credential payload.
     const literal = value => "'" + value.replace(/'/g, "''") + "'";
-    const resultRows = await query("begin; set local statement_timeout='20s'; set local lock_timeout='3s'; select public.sellerpilot_service_store_ebay_exact_listing_refresh(" + literal(sourceCredentialId) + "::uuid," + literal(JSON.stringify(evidence.payload)) + "::jsonb," + literal(evidence.verifiedAt) + "::timestamptz) as result; commit;");
+    const resultRows = await query("begin; set local statement_timeout='20s'; set local lock_timeout='3s'; select public." + incident.storeRpc + "(" + literal(sourceCredentialId) + "::uuid," + literal(JSON.stringify(evidence.payload)) + "::jsonb," + literal(evidence.verifiedAt) + "::timestamptz) as result; commit;");
     const result = resultRows.find(row => row.result)?.result;
-    if (result?.version !== 210 || result?.forcedProviderJobsStarted !== 0 || !Number.isInteger(result?.automaticQueuedCredentialRebinds) || !/^[0-9a-f-]{36}$/.test(result?.credentialId ?? "")) throw new Error("EBAY_EXACT_READ_REFRESH_STORE_READBACK_INVALID");
-    console.log(JSON.stringify({mode:"store-resumed-management",...result}));
+    if (result?.version !== incident.resultVersion || result?.forcedProviderJobsStarted !== 0 || !Number.isInteger(result?.automaticQueuedCredentialRebinds) || !/^[0-9a-f-]{36}$/.test(result?.credentialId ?? "")) throw new Error("EBAY_EXACT_READ_REFRESH_STORE_READBACK_INVALID");
+    output(JSON.stringify({mode:"store-resumed-management",...storeResult(result,incident)}));
     return;
   }
-  const response = await fetch(`https://${project}.supabase.co/rest/v1/rpc/sellerpilot_service_store_ebay_exact_listing_refresh`, {
+  const response = await fetch(`https://${project}.supabase.co/rest/v1/rpc/${incident.storeRpc}`, {
     method:"POST", headers:{apikey:serviceKey,authorization:`Bearer ${serviceKey}`,"content-type":"application/json"},
     body:JSON.stringify({p_source_credential_id:sourceCredentialId,p_secret_payload:evidence.payload,p_provider_verified_at:evidence.verifiedAt}),
-    signal:AbortSignal.timeout(45_000),
+    signal:AbortSignal.timeout(incident.storeTimeoutMs),
   });
   if (!response.ok) throw new Error(await boundedStoreError(response));
   const result = await response.json();
-  if (result?.version !== 210 || result?.forcedProviderJobsStarted !== 0
+  if (result?.version !== incident.resultVersion || result?.forcedProviderJobsStarted !== 0
       || !Number.isInteger(result?.automaticQueuedCredentialRebinds)
       || !/^[0-9a-f-]{36}$/.test(result?.credentialId ?? "")) throw new Error("EBAY_EXACT_READ_REFRESH_STORE_READBACK_INVALID");
-  console.log(JSON.stringify({mode:resumeStore?"store-resumed":"executed",...result}));
+  output(JSON.stringify({mode:resumeStore?"store-resumed":"executed",...storeResult(result,incident)}));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

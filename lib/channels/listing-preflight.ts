@@ -514,6 +514,13 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "sale-period", label: "판매 시작·종료일", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["product", "aplBgnDy"])) && meaningful(valueAt(draft, ["product", "aplEndDy"])) },
     { key: "notice", label: "상품정보제공고시", source: "카테고리", path: ["product", "ProductNotification", "type"] },
     ...elevenstProcessedFoodRequirements,
+    ...([['addrSeqOut', '출고지 번호'], ['addrSeqIn', '반품지 번호']] as const).map(([field, label]): RequirementSpec => ({
+      key: `elevenst-${field}`, label, source: '판매자 계정',
+      applies: (draft) => isElevenstProcessedFoodCategory(valueAt(draft, ['product', 'dispCtgrNo'])),
+      manualPath: ['product', field],
+      test: (draft) => /^[1-9]\d*$/.test(String(valueAt(draft, ['product', field]) ?? '')),
+      help: '11번가 공식 출고지·반품지 조회에서 확인한 주소 번호를 입력하세요. 다른 채널의 주소 번호는 사용할 수 없습니다.',
+    })),
     { key: "certification", label: "인증·허가 정보", source: "카테고리", path: ["product", "ProductCertGroup"], help: "카테고리에 맞는 인증 대상 여부와 인증 정보를 확인해 주세요." },
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },
   ],

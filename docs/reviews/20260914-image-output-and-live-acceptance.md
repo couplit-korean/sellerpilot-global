@@ -211,3 +211,16 @@
 - 151000은 정확한 공개 RPC 한 개의 statement_timeout만25s로 설정. 운영 원문 MD5 `13332292450e5caaf52903b4b5d275e1`, 함수 본문 MD5 `2c91ae65ec286c65e84bfde805c3c0d5`, postgres/service_role ACL 보존을 독립 실조회했다. 기존 authenticator8s와 worker/서버 fetch30s 사이에 맞춘 변경이다. PostgREST 공식 hoisted-function setting 계약을 따르며 전체 DB 기본 제한은 유지한다. 과거 실패 job 종료 뒤 적용되어 그 토큰을 회수한 것은 아니다.
 - eBay 수정 영문 본문2개는 old credential 키에 보존되어 있었고 현 credential 키에 CUA로 다시 입력했다. draft41은 기존 정책4+수정 본문2=6개 patch를 보존한다. 다른 해외 마켓 본문은 유지됐다.
 - 실제 신규 등록0/8. 11번가 로그인 및 고시10/10은 완료됐지만 출고지/반품지 숫자 ID와 라벨 근거 승인은 미완료다. 판매 배송·반품비 답변을 기다리며 무료 배송을 임의 확정하지 않았다. 웹·worker 코드가 바뀌지 않은 DB 후속 때문에 별도 재배포·재시작하지 않았다.
+
+### 11번가 주소 입력 및 eBay 현재 사건 처리 준비
+
+- Aside의 기존 공식 문서 categoryNo43에서 출고지/반품지 조회 API를 확인했다. 현재 11번가 credential v2의 로컬 GET `/rest/areaservice/outboundarea`와 `/rest/areaservice/inboundarea` 모두 HTTP200, 주소 순번은 각각2와3이었다. 주소·연락처 원문은 출력/저장하지 않았다.
+- 실등록 UI의 전체 항목에도 addrSeqOut/addrSeqIn 입력칸이 없었다. 가공식품 승인에 이미 필요한 두 주소 번호를 필수 입력으로 노출하고 양의 정수만 허용했다. 공식 계정 조회값을 초안 patch로 저장·복원하는 집중 회귀와 기존 preflight/승인 UI 총29/29, 타입검사 통과. 실제 UI 입력은 새 배포 후 수행한다.
+- eBay 현재 v210/c9d 전용 operator와153000 STORE RPC를 추가했다. 기존 v209 도구의 기본 계약을 유지하며 계정·scope·GetUser 신원 확인 후 원본 응답을 private0600 파일에 먼저 보존한다. 이미 저장됐으나 응답 유실된 경우에도 동일 증거 STORE만 재개한다. 이는 구현 기록이며 실제 갱신 성공은 후속 결과를 따른다.
+
+### eBay 실제 갱신 저장과 DB 병목 수정
+
+- 기존 Qoo10 source-lock 트리거가 eBay 대기 작업의 credential 갱신마다 넓은 후보를 matcher로 반복 검사했다.154000은 matcher가 이미 요구하는 정확한 listing/channel/operation 조건3개를 조회에 명시한다. 기존 active-listing 인덱스 사용을 확인했고, 나머지 잠금·중복방지·권한 계약은 유지한다.
+- 153000+154000 운영 rollback에서 실제 Vault/credential/queue 트리거를 포함한 STORE 및 같은 응답 replay가3,066ms에 통과했다. c9d 전체행보존, queued307/307 연결, 예상 밖 변경0 확인. 이후두migration을한트랜잭션으로적용: 원문MD5 각각109236c1645723d10d8cefed617aed72 / 7eb8740dc1e6acd9cdeb05c67f998e81.
+- 실제 eBay refresh/GetUser는 한 번 수행했다. 첫 REST STORE는 신규 RPC 스키마 캐시 미반영(PGRST202)이었으며, 이미 private0600에 보존한 같은 응답과 원래 확인시각으로 management STORE만 재개했다. v211 credential `0aca8183-7440-4076-ba0f-679c20259a81` 저장 성공. c9d 미확정 전체원장보존, queued307개연결, 강제 provider 작업시작0. 신규 상품 게시 성공은 아니다.
+- 관련 등록29개+eBay통합25개+Qoo10보호4개=58개 통과, 타입/작업공간/공백 검사 통과. UI 입력칸 변경은 아래 신규 배포 결과를 따른다.
