@@ -202,3 +202,12 @@
 
 - 공식 조회 job `121f4854-f69a-4e05-a1ba-7b8ea61d6a72`의 category·attributes·values·units 요청 4개가 HTTP200으로 완료됐다. 입력 5개는 TS mapper에서 통과하지만 기존 SQL이 공식 표시 필드 3개와 단방향 열린 범위를 거절했다.
 - `20260914150000`은 private validator 2개만 변경한다. 정확히 관측한 표시 필드 타입과 한쪽 경계를 허용하고, 양끝 누락·잘못된 단위·외래 속성 ID·unknown 필드는 계속 거절한다. 웹·worker 코드는 변경하지 않는다. 실제 payload를 사용한 운영 rollback에서 payloadValid, 실제 append와 같은 sorted-records 비교, 원장 불변을 모두 확인했다(22ms).
+
+### SmartStore 실제 원본 저장 완료 및 eBay timeout 경계 (11:16 KST)
+
+- 150000 원문 MD5 `ab0131e6d38af749e81d45e1e06a51f3` 적용 확인. 이전 공식 조회 d354는 02:09:47 UTC 성공했지만 브라우저 3분 대기 이후라 source 미저장. eBay 갱신 저장 재시도가 Mac 단일 슬롯을 점유했고 경로 승인 만료가 원인은 아니었다.
+- Mac 슬롯이 비워진 뒤 Aside에서 공식 속성 저장을 다시 실행했다. 새 read-only job `7ab5de8b-44a1-4892-a6a3-6eba31d8b183`는 02:15:09 수령, 02:15:14 UTC 성공. UI 저장됨 및 상품 source 원장1건 확인. 새로고침 이후 저장 상태와 입력값도 보존됐다.
+- eBay 자동 문의 job `c9d6431c-5418-4649-9542-f30137309bf4`의 credential staging에서 SQLSTATE57014/HTTP503이 반복됐다. provider refresh 재전송이 아니라 메모리의 같은 결과 저장 재시도였으며 02:06:52 UTC reconciliation_required 종료. prepared credential/recovery vault 없음, 기존 v210은 만료됐다. 해당 결과를 성공으로 바꾸거나 fence를 초기화하지 않았다.
+- 151000은 정확한 공개 RPC 한 개의 statement_timeout만25s로 설정. 운영 원문 MD5 `13332292450e5caaf52903b4b5d275e1`, 함수 본문 MD5 `2c91ae65ec286c65e84bfde805c3c0d5`, postgres/service_role ACL 보존을 독립 실조회했다. 기존 authenticator8s와 worker/서버 fetch30s 사이에 맞춘 변경이다. PostgREST 공식 hoisted-function setting 계약을 따르며 전체 DB 기본 제한은 유지한다. 과거 실패 job 종료 뒤 적용되어 그 토큰을 회수한 것은 아니다.
+- eBay 수정 영문 본문2개는 old credential 키에 보존되어 있었고 현 credential 키에 CUA로 다시 입력했다. draft41은 기존 정책4+수정 본문2=6개 patch를 보존한다. 다른 해외 마켓 본문은 유지됐다.
+- 실제 신규 등록0/8. 11번가 로그인 및 고시10/10은 완료됐지만 출고지/반품지 숫자 ID와 라벨 근거 승인은 미완료다. 판매 배송·반품비 답변을 기다리며 무료 배송을 임의 확정하지 않았다. 웹·worker 코드가 바뀌지 않은 DB 후속 때문에 별도 재배포·재시작하지 않았다.
