@@ -30,8 +30,9 @@ export function restoreChannelRegistrationPatches(base:Record<string,unknown>,pa
   return applyRegistrationPatches(base,patches as RegistrationPatch[]);
 }
 
-// Exact core-copy paths only. Category attributes, identities, price, logistics
-// and brand IDs are rebuilt from the new official category, never carried over.
+// Core copy and the separately enumerated seller policies can survive category
+// selection. Category attributes, identities, product price, certification and
+// brand IDs are rebuilt from the new official category.
 const categoryIndependentCopyPaths: Record<ActiveChannelKey, string[][]> = {
   qoo10: [["params", "ItemTitle"], ["params", "PromotionName"], ["params", "ItemDescription"]],
   shopee: [["body", "global_item_name"], ["body", "description"], ["publish", "item", "item_name"], ["publish", "item", "description"]],
@@ -42,6 +43,24 @@ const categoryIndependentCopyPaths: Record<ActiveChannelKey, string[][]> = {
   temu: [["body", "goodsBasic", "goodsName"], ["body", "goodsBasic", "goodsDesc"]],
   ebay: [["inventoryItem", "product", "title"], ["inventoryItem", "product", "description"], ["offer", "listingDescription"]],
 };
+const categoryIndependentPolicyPaths: Partial<Record<ActiveChannelKey, string[][]>> = {
+  qoo10: [["params", "ShippingNo"]],
+  ebay: [
+    ...["fulfillmentPolicyId", "paymentPolicyId", "returnPolicyId"].map(key => ["offer", "listingPolicies", key]),
+    ["offer", "merchantLocationKey"],
+  ],
+  smartstore: [
+    ...["deliveryType", "deliveryAttributeType", "deliveryCompany"].map(key => ["body", "originProduct", "deliveryInfo", key]),
+    ...["deliveryFeeType", "baseFee", "deliveryFeePayType"].map(key => ["body", "originProduct", "deliveryInfo", "deliveryFee", key]),
+    ...["returnDeliveryCompanyPriorityType", "returnDeliveryFee", "exchangeDeliveryFee", "shippingAddressId", "returnAddressId"].map(key => ["body", "originProduct", "deliveryInfo", "claimDeliveryInfo", key]),
+  ],
+  coupang: ["deliveryMethod", "deliveryCompanyCode", "deliveryChargeType", "deliveryCharge", "freeShipOverAmount", "deliveryChargeOnReturn", "returnCharge", "outboundShippingPlaceCode", "returnCenterCode", "returnChargeName", "companyContactNumber", "returnZipCode", "returnAddress", "returnAddressDetail"].map(key => ["body", key]),
+  elevenst: ["dlvCnAreaCd", "dlvWyCd", "dlvCstInstBasiCd", "dlvCst1", "dlvCstPayTypCd", "bndlDlvCnYn", "addrSeqOut", "addrSeqIn", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail"].map(key => ["product", key]),
+};
+function policyScalar(value: unknown): value is string | number | boolean | null {
+  return value === null || typeof value === "string" || typeof value === "boolean"
+    || (typeof value === "number" && Number.isFinite(value));
+}
 
 export function restoreChannelRegistrationForCategory(
   channel: ActiveChannelKey,
@@ -60,6 +79,17 @@ export function restoreChannelRegistrationForCategory(
       // leaf out of that patch; never replay its sibling attributes or prices.
       const value = registrationValueAt(patch.value, path.slice(patch.path.length));
       if (typeof value === "string") copyPatches.push({ path, value });
+    }
+  }
+  // Callers select stored by the exact channel/market/target/credential bank key.
+  // Carry only existing, explicit policy leaves; never replace a whole object or
+  // project sibling category/credential fields from an ancestor patch.
+  for (const path of categoryIndependentPolicyPaths[channel] ?? []) {
+    if (!policyScalar(registrationValueAt(base, path))) continue;
+    for (const patch of stored.patches) {
+      if (patch.path.length > path.length || !patch.path.every((part, index) => part === path[index])) continue;
+      const value = registrationValueAt(patch.value, path.slice(patch.path.length));
+      if (policyScalar(value)) copyPatches.push({ path, value });
     }
   }
   return applyRegistrationPatches(base, copyPatches);
