@@ -1,5 +1,7 @@
 # 확인된 채널 오류와 재작업 금지 기준
 
+> **2026-09-14 14:42 KST 상태 확인:** 기존 Shopee SG 숍 조회 `39c870a8-2ab1-4c73-b859-a2d0b7f2a107`은14:11:18 KST에 succeeded 완료됐다. 저장된 response_payload의 ok=true, shop-info 단계 ok=true/HTTP200/provider error 빈 문자열을 운영 DB에서 확인했다. 이 조회는 더 이상 대기/재요청 대상이 아니다. 현재 Mac gateway는 가격 계산 배포 `eeee61d`로 ready/HTTP200이며, 앞선 IP·오류 로깅 수정도 포함한다. 다음은 저장된 숍 정보를 사용한 카테고리·등록 필수조건 및 상품 등록 진행이다. 이 확인은 상품 게시 완료 근거가 아니다.
+
 > **2026-09-14 14:11 KST 최신 적용:** 운영 웹·Supabase 활성 release·기존 Mac gateway는 `ac7a8a5559daa32a86d5edf06e027e61bf5f754d`로 일치한다. Vercel `dpl_5Xen7CUU6GjRznwBS957ikV66zBZ`, 후보6/운영6 무실행 canary 및 gateway ready 확인. 아래 표의164000 대응 API/UI·완료 오류 로깅·165000 대응 eBay 저장 코드의 “배포 전” 문구는 이 적용으로 완료됐다.170000/171000/172000도 원자 적용 완료했다.
 
 SmartStore540d는 source 만료·attempt0·미수령·미전송·완료receipt0 근거로 cancelled 처리했다. 원문/source 불변·감사보존·remote ID null·listing failed/retryable을 readback 확인했다. 새 공식 source로 정상 재접수할 수 있으며, 기존 요청/TTL 변조나 상품 전체 영구중지를 사용하지 않았다.172 첫 rollback 실패는 최초 등록 전 listing.seller_account_key의 정상 NULL 비교 문제였고 조건별 조회로 확인해 수정했다. 같은 원인 재조사 금지. 저장 SQL 원문MD5:170000 `ef5cee45c9d28e3332406fd3977a4871`,171000 `7d70b12681aeee9dcc4c79d3d115c80e`,172000 `b552358a86136f2b80f4842934b3f401`. 실제 신규 게시 완료는 여전히0/8이다.
@@ -8,11 +10,11 @@ SmartStore540d는 source 만료·attempt0·미수령·미전송·완료receipt0 
 
 | 오류 | 이미 확인한 원인·결정 | 현재 남은 조치 | 반복하지 않을 작업 |
 | --- | --- | --- | --- |
-| Shopee `source_ip_undeclared` | Vercel 동적 송신 IP 제한. 기존 승인된 Mac 경로 사용 | 160000 운영 적용 완료. `shops.get`은 승인된 Mac 경로로 변경, Vercel 실행 차단. 다음은 현재 SG 숍 조회·카테고리 확인 | 새 원인 조사, Vercel 재시도, 바뀌는 Vercel IP 추가, 새 로그인/OAuth |
+| Shopee `source_ip_undeclared` | Vercel 동적 송신 IP 제한. 기존 승인된 Mac 경로 사용 | 160000 운영 적용 완료. `shops.get`은 승인된 Mac 경로로 변경, Vercel 실행 차단. 기존 SG 숍 조회39c870a8 성공 확인 완료. 다음은 저장된 숍 정보의 카테고리·등록 필수조건 확인 | 새 원인 조사, Vercel 재시도, 바뀌는 Vercel IP 추가, 새 로그인/OAuth |
 | Shopee SG 갱신4a45f463 | 공식 API 로그 요청e3e3e7f35b66e2a3e590809314fc7700, 2026-09-14 00:55:07 UTC, HTTP403, 송신16.184.44.4. 해당 요청 발급 전 거절 확인 | 160000에서 원본 job/target claim과 거절 증거 보존·표시 정리 완료. 기존 정상 v91 SG 토큰 재사용 | 증거 없는 토큰 갱신 재실행, 다른 미확정 기록 일괄 해제 |
 | eBay c9d6431c 갱신 표시가 신규 요청 차단 | 현재 v211 동일 판매자 GetUser 검증·저장 audit586은 이미 완료. 과거 표시만 남음 | 161000 운영 적용·원문MD5검증, rollback 확인 후 audit588로 해소 완료. 004aff8e의 claim 응답 오류도162000/a1fa712로 수정 완료. 이후 실제 Inventory API 설명 길이 거절은 별도 오류로 기록 | 신규 CREATE 중복 전송, 과거 CS를 성공 처리, 표준 AI 상품을 외부 상세 전용 local 경로로 강제 이동 |
 | 국내 배송비0과 채널 요금 불일치 | 사용자가 배송3000/반품3000/교환6000 승인. 원본 배송비 편집 경로와11번가 유료 배송 필드 누락 | f2d75c6 운영 반영·Aside 화면 저장 완료. 국내 3채널 배송3000 및 확인된 반품/교환 조건 저장; 아래 최신 실행 기록 참고 | 비용 승인 재질문, 0원을 무료배송 승인으로 처리 |
-| Shopee 숍 조회 대기·완료 HTTP400 | SG 작업 `39c870a8`의 Mac 조회 결과 대기. 과거 IP403과 별개. 구형 완료 로그에는 작업ID/시각/필드가 없어 어느 문의의 오류인지 단정 불가 | 동일 SG 결과를 재사용하는164000 DB 및 API/UI 대기 처리, 안전한 오류 코드·필드·작업ID 로깅 모두 ac7a8a5 운영 적용 완료. 다음은 기존 조회 결과 확인 | 숍 조회 POST 중복, 로그에 없는 원인 추측, 문의 실패를 IP 오류로 재분류 |
+| Shopee 숍 조회 대기·완료 HTTP400 | SG 작업 `39c870a8`은 Mac 조회 성공 완료. 과거 IP403과 별개. 구형 완료 로그에는 작업ID/시각/필드가 없어 어느 문의의 오류인지 단정 불가 | 동일 SG 결과를 재사용하는164000 DB 및 API/UI 대기 처리, 안전한 오류 코드·필드·작업ID 로깅 모두 ac7a8a5 운영 적용 완료. 기존 조회 결과도 succeeded/ok=true/HTTP200 확인 완료. 다음은 저장된 숍 정보를 이용한 등록 진행 | 숍 조회 POST 중복, 로그에 없는 원인 추측, 문의 실패를 IP 오류로 재분류 |
 | eBay Inventory 설명 거절·잘못된 원격ID 표시 | 실제 Inventory PUT400/25718, offer/publish 미전송. 설명 길이 수정은 a071 운영 포함 | 165000으로 정확한 거절 증거를 보존하며 잘못 저장된 SKU remote_id 정정 완료. 같은 오류 저장 방지도 ac7a8a5 운영 적용 완료. 정상 새 시도는 아직 안 함 | 이전 job 재전송, 실패를 게시 성공 처리, 정책·계정 재진단 |
 | SmartStore 승인된 AI 등록 Mac 수령·공유 관리자 저장 | 승인 draft 검사, Mac 일반 AI 상품 수령, 공유 관리자 source/stage/complete 소유자 조건 모두 운영 수정 완료. 클라우드 차단 유지 | 170000/171000/172000 원자 적용 완료. source가 만료된540d는 미전송·원문 보존 후 cancelled, listing failed/retryable. 다음은 새 공식 source로 정상 재접수 | 클라우드 재허용, TTL 연장, 외부 상세로 위장, 중복 신규등록 |
 | 11번가 sample 판매자 메타데이터 | 기존 키 유지·공식 couplit 확인·163000 v3 승계 완료 | v3 정규 ProductSearch 진단·활성화 및 현재 상품 등록 정보 승인 완료. 실제 CREATE는 아직 안 함 | 새 키 발급, 새 로그인, sample 원인 재조사, 읽기 진단을 CS 답변/상품 게시 성공으로 처리 |
