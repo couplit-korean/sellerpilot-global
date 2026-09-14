@@ -51,4 +51,14 @@
 - CUA 실제 React 컴포넌트 검증: MY600g가격63.54/선택30%82.60, 적용 후 USD2.24·재고10·배송비4.9 보존, 입력 변경 뒤 이전 적용 메시지 제거, BSC10.01kg차단, PH A/D운임 구분, SG오적용 버튼 차단.390px에서 문서너비390px로 가로넘침 없음, 브라우저 오류 로그0.
 - 원본·59탭 목록·국가별 상세 검토·독립 대조 결과는 Git 제외 경로 `outputs/reference-data/shopee-price-tables/20260914/`에 보존한다. 테스트 화면은 `outputs/qa/shopee-price-tool/`이며 실제 API를 호출하지 않는다.
 
-코드와 문서 검증 완료. 배포 결과는 아래에 실제 확인 후 추가한다. 이 작업에서 DB 스키마 변경이나 실제 신규 상품 게시는 하지 않았다.
+이 작업에서 DB 스키마 변경이나 실제 신규 상품 게시는 하지 않았다. 아래 버전 정렬은 기존 승인 경로를 보존하는 배포 조치다.
+
+## 운영 배포 확인 (2026-09-14 14:39 KST)
+
+- 코드 `eeee61db4d55d8a5ec93ad903f739ec7b8fa0323`를 두 Git remote의 `integration-aside`에 푸시했다. 다른 작업의 미커밋 UI 변경은 포함하지 않았다.
+- Vercel `dpl_A61tcvhhNR8dYycD8PbvHZM5C5mi` 원격 빌드 READY 및 운영 alias `sellerpilot-global.vercel.app`의 해당 deployment 연결·HTTP200 확인.
+- 후보6개·운영6개 무실행 canary 통과. Supabase 활성 런타임·기존25개 로컬 경로·8개 등록 어댑터·등록 gate를 같은 SHA로 정렬했고 기존 신원/승인 필드 보존을 트랜잭션 내 대조했다.
+- 진행 중 등록0/unsafe pending mutation0 확인 후 Mac gateway 정상 종료·재시작.14:39:26 KST 마지막 접촉HTTP200, ready=true, release=`eeee61d`, activeGatewayJobs=0 확인.
+- 원본문서 재작성, 새로운 Shopee 로그인/IP 재진단, 상품 생성/고객 답변 전송 없음. 테스트용 서버/탭은 종료했다.
+
+사용 위치: 상품 등록의 **Shopee → 쇼피 국가별 운임·판매가 계산**. 대상 국가 요율이 있는 경우 현지 기준금액과 포장 중량을 확인하고, 계산된 가격의 초안 적용 버튼을 사용한다. 현재 SG 대상은 제공된7개국 비교 계산까지만 가능하며 SG 요율을 받은 뒤 별도로 추가해야 한다.
