@@ -66,6 +66,11 @@ export const gatewayClaimSchema = z.object({
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
   attempt_count: z.number().int().min(1).max(6),
+  // Preserve the DB-owned incarnation through API parsing; the local eBay
+  // executor uses it to bind every CREATE stage to this exact attempt.
+  attempt_id: z.string().uuid().nullable().optional(),
+  credential_version: z.number().int().positive().optional(),
+  credential_fingerprint: z.string().regex(/^[A-Fa-f0-9]{12,64}$/u).optional(),
   ebay_publication_reconciliation:
     ebayPublicationReconciliationBindingSchema.optional(),
   // The worker needs the credential's certified seller account key to verify
@@ -74,6 +79,13 @@ export const gatewayClaimSchema = z.object({
   credential_binding_context: gatewayCsCredentialBindingContextSchema.optional(),
   temu_buyer_chat_readiness_context: temuBuyerChatRuntimeEvidenceSchema.nullable().optional(),
 }).superRefine((value, context) => {
+  if (value.channel === "ebay" && value.operation === "listing.create") {
+    for (const field of ["attempt_id", "credential_version", "credential_fingerprint"] as const) {
+      if (value[field] == null) {
+        context.addIssue({ code: "custom", path: [field], message: "eBay CREATE requires its DB-owned claim incarnation" });
+      }
+    }
+  }
   const binding = value.credential_binding_context;
   if (binding && (value.channel !== "temu" || value.operation !== "inquiries.list"
     || (binding.status === "verified" && binding.credentialId !== value.credential_id))) {
@@ -86,6 +98,7 @@ export const gatewayClaimSchema = z.object({
     || value.environment !== "production"
     || ebayRecovery.sourceJobId !== value.id
     || ebayRecovery.credentialId !== value.credential_id
+    || ebayRecovery.attemptId !== value.attempt_id
   )) {
     context.addIssue({
       code: "custom",
