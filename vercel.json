@@ -1,14 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": [
-    "icn1"
-  ],
   "buildCommand": "pnpm run build:vercel",
-  "git": {
-    "deploymentEnabled": {
-      "integration-aside": false,
-      "codex/channel-domain-separation": false
+  "crons": [
+    {
+      "path": "/api/internal/maintenance",
+      "schedule": "17 18 * * *"
     }
-  }
+  ]
 }

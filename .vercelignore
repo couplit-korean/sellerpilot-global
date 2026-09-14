@@ -15,9 +15,7 @@ node_modules
 output
 outputs
 prompts
-scripts/*
-!scripts/check-local-workspace.mjs
-!scripts/workspace-paths.mjs
+scripts
 /supabase
 tests
 tmp

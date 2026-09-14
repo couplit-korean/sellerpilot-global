@@ -21,15 +21,9 @@ import {
   lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests } from "../lib/channels/sync-arguments";
-import { orderSyncRequests } from "../lib/shipping/sync-arguments";
-import {
-  buildShipmentAcknowledgeArguments,
-  buildShipmentArguments,
-  buildShipmentPreflightArguments,
-  buildShipmentReadbackArguments,
-} from "../lib/channels/shipment-draft";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ProductionPlaceFields, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
+import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
+import { buildShipmentArguments } from "../lib/channels/shipment-draft";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
   const now = new Date("2026-08-16T03:04:05.000Z");
@@ -84,35 +78,6 @@ test("Naver self-store token uses SELF without account_id", async () => {
     globalThis.fetch = originalFetch;
   }
 });
-
-for (const tokenFailure of [
-  { status: 403, body: { code: "GW.IP_NOT_ALLOWED", message: "private provider detail" }, expected: "NAVER_IP_NOT_ALLOWED" },
-  { status: 401, body: { code: "GW.AUTHN", message: "private provider detail" }, expected: "NAVER_AUTH_FAILED" },
-  { status: 503, body: { code: "GW.BLOCK.02", message: "private provider detail" }, expected: "NAVER_PROVIDER_UNAVAILABLE" },
-  { status: 400, body: { code: "PRIVATE_PROVIDER_CODE", message: "private provider detail" }, expected: "NAVER_TOKEN_EXCHANGE_FAILED" },
-] as const) {
-  test(`Naver token failure ${tokenFailure.status} is reduced to ${tokenFailure.expected}`, async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => Response.json(tokenFailure.body, { status: tokenFailure.status });
-    try {
-      await assert.rejects(
-        fetchNaverAccessToken({
-          client_id: "client",
-          client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
-          token_type: "SELF",
-        }),
-        (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.equal(error.message, tokenFailure.expected);
-          assert.doesNotMatch(error.message, /private provider detail|PRIVATE_PROVIDER_CODE/);
-          return true;
-        },
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-}
 
 test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
   const url = buildQoo10Url({
@@ -179,109 +144,22 @@ test("Coupang cancellation sync uses the documented minute range with the Korean
   });
 });
 
-test("11st periodic windows keep stable dedupe keys while advancing provider dates", () => {
-  const first = orderSyncRequests("elevenst", new Date("2026-08-20T07:00:00.000Z"));
-  const second = orderSyncRequests("elevenst", new Date("2026-08-20T07:05:00.000Z"));
-  assert.deepEqual(first.map((request) => request.periodicKey), ["orders:older-window", "orders:recent-window"]);
-  assert.deepEqual(second.map((request) => request.periodicKey), ["orders:older-window", "orders:recent-window"]);
-  assert.notDeepEqual(first.map((request) => request.arguments), second.map((request) => request.arguments));
+test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
+  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
+    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
+  }]);
 });
 
-test("Qoo10 inquiry sync covers unanswered, in-progress, and completed CSCenter statuses", () => {
-  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [
-    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" } },
-    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S2" } },
-    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S3" } },
-    { kind: "claim", params: { search_Sdate: "20260814160000", search_Edate: "20260820160000", search_condition: "2" } },
-  ]);
-});
-
-test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {
-  const requests = inquirySyncRequests("smartstore", new Date("2026-08-20T07:00:00.000Z"));
-  assert.deepEqual(requests.map((request) => request.periodicKey), [
-    "inquiries:product",
-    "inquiries:customer",
-  ]);
-});
-
-test("Coupang inquiry sync separates product, unanswered call-center, and transferred call-center queues", () => {
-  const requests = inquirySyncRequests("coupang", new Date("2026-08-20T07:00:00.000Z"));
-  assert.deepEqual(requests.map((request) => request.periodicKey), [
-    "inquiries:product:noanswer",
-    "inquiries:call-center:no_answer",
-    "inquiries:call-center:transfer",
-  ]);
-  assert.deepEqual(requests.map((request) => request.arguments), [
-    {
-      kind: "product",
-      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 },
-    },
-    {
-      kind: "call-center",
-      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 },
-    },
-    {
-      kind: "call-center",
-      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 },
-    },
-  ]);
-});
-
-test("periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight", () => {
-  const beforeUtcMidnight = new Date("2026-08-19T16:30:00.000Z");
-  const coupang = inquirySyncArguments("coupang", beforeUtcMidnight);
-  assert.equal((coupang[0]?.query as Record<string, unknown>).inquiryStartAt, "2026-08-14");
-  assert.equal((coupang[0]?.query as Record<string, unknown>).inquiryEndAt, "2026-08-20");
-
-  const smartstore = inquirySyncArguments("smartstore", beforeUtcMidnight);
-  const customer = smartstore.find((request) => request.kind === "customer");
-  assert.equal((customer?.query as Record<string, unknown>).startSearchDate, "2026-08-14");
-  assert.equal((customer?.query as Record<string, unknown>).endSearchDate, "2026-08-20");
-});
-
-test("Korean inquiry history refresh is bounded to official windows and never invents an 11st API", () => {
-  const now = new Date("2026-08-20T07:00:00.000Z");
-  const coupang = inquiryHistorySyncRequests("coupang", now, 30);
-  assert.equal(coupang.length, 25);
-  assert.equal(coupang[0]?.periodicKey, "inquiries:history:2026-07-22:2026-07-28:product:all");
-  assert.equal(coupang.at(-1)?.periodicKey, "inquiries:history:2026-08-19:2026-08-20:call-center:transfer");
-  for (const request of coupang) {
-    const query = request.arguments.query as Record<string, unknown>;
-    const inclusiveDays = Math.round(
-      (Date.parse(`${String(query.inquiryEndAt)}T00:00:00.000Z`) - Date.parse(`${String(query.inquiryStartAt)}T00:00:00.000Z`))
-        / 86_400_000,
-    ) + 1;
-    assert.ok(inclusiveDays >= 1 && inclusiveDays <= 7);
-  }
-
-  assert.deepEqual(inquiryHistorySyncRequests("smartstore", now, 30), [{
-    periodicKey: "inquiries:history:2026-07-22:2026-08-20:product:all",
-    arguments: {
-      kind: "product",
-      query: {
-        fromDate: "2026-07-22T00:00:00.000+09:00",
-        toDate: "2026-08-20T07:00:00.000Z",
-        page: 1,
-        size: 100,
-      },
-    },
-  }, {
-    periodicKey: "inquiries:history:2026-07-22:2026-08-20:customer:all",
-    arguments: {
-      kind: "customer",
-      query: {
-        startSearchDate: "2026-07-22",
-        endSearchDate: "2026-08-20",
-        page: 1,
-        size: 200,
-      },
+test("Smartstore inquiry sync sends the required W3C date range and unanswered filter", () => {
+  assert.deepEqual(inquirySyncArguments("smartstore", new Date("2026-08-20T07:00:00.000Z")), [{
+    query: {
+      fromDate: "2026-08-14T07:00:00.000Z",
+      toDate: "2026-08-20T07:00:00.000Z",
+      answered: false,
+      page: 1,
+      size: 100,
     },
   }]);
-  assert.deepEqual(inquiryHistorySyncRequests("elevenst", now, 30), []);
-  assert.throws(() => inquiryHistorySyncRequests("coupang", now, 31), /INQUIRY_HISTORY_RANGE_INVALID/);
-
-  const beforeUtcMidnight = inquiryHistorySyncRequests("coupang", new Date("2026-08-19T16:30:00.000Z"), 7);
-  assert.equal(beforeUtcMidnight[0]?.periodicKey, "inquiries:history:2026-08-14:2026-08-20:product:all");
 });
 
 test("Temu order and after-sales sync use the documented update checkpoints", () => {
@@ -321,7 +199,6 @@ test("shipment drafts map carrier and tracking fields without changing internal 
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
     shippedAt,
-    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
   }), {
     body: {
       orderSheetInvoiceApplyDtoList: [{
@@ -337,7 +214,6 @@ test("shipment drafts map carrier and tracking fields without changing internal 
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
     shippedAt,
-    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
   }), {
     body: {
       dispatchProductOrders: [{
@@ -382,107 +258,13 @@ test("shipment drafts map carrier and tracking fields without changing internal 
   });
 });
 
-test("shipment acknowledgement and readback use the same provider-specific order identity", () => {
-  assert.deepEqual(buildShipmentAcknowledgeArguments({
-    channel: "qoo10",
-    externalOrderId: "123456789",
-    carrierCode: "CJ",
-    trackingNumber: "123456789012",
-  }), { params: { OrderNo: "123456789" } });
-  assert.deepEqual(buildShipmentAcknowledgeArguments({
-    channel: "coupang",
-    externalOrderId: "987654321",
-    carrierCode: "CJGLS",
-    trackingNumber: "111222333444",
-    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
-  }), { shipmentBoxIds: [987654321] });
-  assert.deepEqual(buildShipmentReadbackArguments({
-    channel: "coupang",
-    externalOrderId: "987654321",
-    carrierCode: "CJGLS",
-    trackingNumber: "111222333444",
-    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
-  }), { shipmentBoxId: "987654321" });
-  assert.deepEqual(buildShipmentAcknowledgeArguments({
-    channel: "smartstore",
-    externalOrderId: "PROD-ORDER-1",
-    carrierCode: "CJGLS",
-    trackingNumber: "111222333444",
-    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
-  }), { body: { productOrderIds: ["PROD-ORDER-1"] } });
-});
-
-test("Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode", () => {
-  const draft = {
-    channel: "shopee" as const,
-    externalOrderId: "260821ABC123",
-    carrierCode: "OTHER_LOGISTICS",
-    trackingNumber: "111222333444",
-    providerContext: { orderSn: "260821ABC123", shopId: "1719148844" },
-  };
-  assert.deepEqual(buildShipmentPreflightArguments(draft), {
-    shopId: "1719148844",
-    query: { order_sn: "260821ABC123" },
-  });
-  assert.deepEqual(buildShipmentArguments({
-    ...draft,
-    shippingParameter: {
-      ok: true,
-      steps: [{
-        name: "shipping-parameter",
-        ok: true,
-        data: { response: { info_needed: { non_integrated: ["tracking_number"], pickup: ["address_id", "pickup_time_id"] } } },
-      }],
-    },
-  }), {
-    shopId: "1719148844",
-    body: { order_sn: "260821ABC123", non_integrated: { tracking_number: "111222333444" } },
-  });
-  assert.throws(() => buildShipmentArguments({
-    ...draft,
-    shippingParameter: {
-      ok: true,
-      steps: [{ name: "shipping-parameter", ok: true, data: { response: { info_needed: { pickup: ["address_id", "pickup_time_id"] } } } }],
-    },
-  }), /SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED/);
-  assert.throws(() => buildShipmentArguments({
-    ...draft,
-    shippingParameter: {
-      ok: true,
-      steps: [{ name: "shipping-parameter", ok: true, data: { response: { info_needed: { non_integrated: ["tracking_number", "unverified_value"] } } } }],
-    },
-  }), /SHOPEE_SHIPPING_PARAMETER_UNSUPPORTED_REQUIREMENTS/);
-});
-
 test("shipment drafts fail closed for incomplete marketplace-specific data", () => {
   assert.throws(() => buildShipmentArguments({
     channel: "coupang",
     externalOrderId: "not-a-shipment-box-id",
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
-    providerContext: { shipmentBoxId: "not-a-shipment-box-id", orderId: "123456789" },
   }), /SHIPMENT_FIELD_INVALID:shipmentBoxId/);
-  assert.throws(() => buildShipmentArguments({
-    channel: "coupang",
-    externalOrderId: "123456789",
-    carrierCode: "CJGLS",
-    trackingNumber: "111222333444",
-    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
-  }), /SHIPMENT_REMOTE_ID_MISMATCH:coupang.shipmentBoxId/);
-  assert.throws(() => buildShipmentArguments({
-    channel: "smartstore",
-    externalOrderId: "ORDER-1",
-    carrierCode: "CJGLS",
-    trackingNumber: "111222333444",
-    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
-  }), /SHIPMENT_REMOTE_ID_MISMATCH:smartstore.productOrderId/);
-  assert.throws(() => buildShipmentPreflightArguments({
-    channel: "shopee",
-    externalOrderId: "260821ABC123",
-    carrierCode: "OTHER_LOGISTICS",
-    trackingNumber: "111222333444",
-    providerContext: { orderSn: "260821ABC123" },
-  }), /SHIPMENT_FIELD_INVALID:shopee.shopId/);
   assert.throws(() => buildShipmentArguments({
     channel: "lazada",
     externalOrderId: "ORDER-1",
@@ -495,70 +277,6 @@ test("shipment drafts fail closed for incomplete marketplace-specific data", () 
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
   }), /SHIPMENT_CHANNEL_UNAVAILABLE:elevenst/);
-});
-
-test("Qoo10 category inspection requires one exact Japanese leaf before DB confirmation", async () => {
-  const originalFetch = globalThis.fetch;
-  const bodies: Array<Record<string, string>> = [];
-  globalThis.fetch = async (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, string>);
-    return Response.json({
-      ResultCode: 0,
-      ResultMsg: "Success",
-      ResultObject: [
-        {
-          CATE_L_CD: "100000019",
-          CATE_L_NM: "文具",
-          CATE_M_CD: "200000146",
-          CATE_M_NM: "文房具",
-          CATE_S_CD: "320000542",
-          CATE_S_NM: "クリップ・結束用品",
-        },
-        {
-          CATE_L_CD: "100000018",
-          CATE_L_NM: "日用品雑貨",
-          CATE_M_CD: "200000135",
-          CATE_M_NM: "生活雑貨",
-          CATE_S_CD: "300000482",
-          CATE_S_NM: "収納用品",
-        },
-      ],
-    });
-  };
-  try {
-    const verified = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "categories.validate",
-      payload: { api_key: "test-key" },
-      arguments: { categoryId: "320000542" },
-      environment: "production",
-    });
-    assert.equal(verified.ok, true);
-    assert.equal(bodies[0]?.lang_cd, "JA");
-    assert.equal(verified.steps[0]?.data.sellerpilotVerification, "QOO10_EXACT_JA_LEAF_CATEGORY_VERIFIED");
-    assert.deepEqual(verified.steps[0]?.data.ResultObject, [{
-      CATE_L_CD: "100000019",
-      CATE_L_NM: "文具",
-      CATE_M_CD: "200000146",
-      CATE_M_NM: "文房具",
-      CATE_S_CD: "320000542",
-      CATE_S_NM: "クリップ・結束用品",
-    }]);
-
-    const rejected = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "categories.attributes",
-      payload: { api_key: "test-key" },
-      arguments: { categoryId: "320002604" },
-      environment: "production",
-    });
-    assert.equal(rejected.ok, false);
-    assert.equal(bodies[1]?.lang_cd, "JA");
-    assert.equal(rejected.steps[0]?.data.sellerpilotVerification, "QOO10_EXACT_JA_LEAF_CATEGORY_UNVERIFIED");
-    assert.equal(rejected.steps[0]?.data.exactLeafMatchCount, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
 });
 
 test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
@@ -582,7 +300,7 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     if (fetchCount > 2) {
       return new Response(JSON.stringify({
         ResultCode: 0,
-        ResultObject: { ItemDetail: `<div>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}</div>` },
+        ResultObject: { ItemDetail: '<div><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg"></div>' },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({ ResultCode: 0, ResultMsg: "SUCCESS", ResultObject: { GdNo: "1234567890" } }), {
@@ -595,7 +313,7 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
       channel: "qoo10",
       operation: "listing.create",
       payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: `<p>Test</p>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}`, RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: '<p>Test</p><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg">', RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
       environment: "production",
     });
     const url = new URL(createUrl);
@@ -606,54 +324,18 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     assert.equal(new Headers(createInit?.headers).get("QAPIVersion"), "1.1");
     assert.equal(new Headers(createInit?.headers).get("GiosisCertificationKey"), "test-key");
     const body = JSON.parse(String(createInit?.body)) as Record<string, string>;
-    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 8);
+    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 4);
     const detailRequestUrl = new URL(detailUrl);
     assert.equal(detailRequestUrl.pathname.endsWith("/ItemsContents.EditGoodsContents"), true);
     assert.equal(detailInit?.method, "POST");
     assert.equal(new Headers(detailInit?.headers).get("QAPIVersion"), "1.0");
     const detailBody = JSON.parse(String(detailInit?.body)) as Record<string, string>;
     assert.equal(detailBody.ItemCode, "1234567890");
-    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 8);
+    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 4);
     assert.equal(result.steps.at(-2)?.name, "EditGoodsContents");
     assert.equal(result.steps.at(-2)?.ok, true);
     assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
     assert.equal(result.steps.at(-1)?.ok, true);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("listing create never succeeds when the provider omits the remote identity", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-  try {
-    const operation = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: {
-        params: {
-          SecondSubCat: "320002604",
-          ItemTitle: "Test",
-          StandardImage: "https://example.test/item.jpg",
-          ItemDescription: "<p>Test</p>",
-          RetailPrice: "0",
-          ItemPrice: "2500",
-          ItemQty: "1",
-          ExpireDate: "2027-12-31",
-          ShippingNo: "0",
-          AvailableDateType: "0",
-          AvailableDateValue: "3",
-          AudultYN: "N",
-        },
-      },
-      environment: "production",
-    });
-    assert.equal(operation.ok, false);
-    assert.equal(operation.remoteId, undefined);
-    assert.equal(operation.steps[0]?.name, "SetNewGoods");
-    assert.equal(operation.steps[0]?.ok, true);
-    assert.match(operation.safeMessage, /원격 상품 식별값/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -703,14 +385,12 @@ test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year
   assert.equal(qoo10CatalogCode("12345678901"), "");
   assert.equal(qoo10ExpiryDate(new Date("2026-08-17T12:00:00.000Z")), "2027-08-17");
   assert.equal(qoo10SellerCode("PROGRAM-20260818-003"), "PROGRAM-20260818-003");
-  assert.equal(qoo10SellerCode("PROGRAM-20260818-003", "1216221951"), "PROGRAM-20260818-003-R21951");
-  assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 100);
+  assert.equal(qoo10SellerCode("PROGRAM-20260818-003", "1216221951"), "PROGRAM-20260-R21951");
+  assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 20);
   assert.deepEqual(qoo10PauseParams("1216221951"), { ItemCode: "1216221951", Status: "1" });
   assert.throws(() => qoo10PauseParams("invalid"), /QOO10_ITEM_CODE_INVALID/);
-  assert.equal(qoo10ProductionPlace("대한민국"), "KR");
-  assert.equal(qoo10ProductionPlace("Japan"), "JP");
-  assert.deepEqual(qoo10ProductionPlaceFields("대한민국"), { ProductionPlaceType: "2", ProductionPlace: "KR" });
-  assert.deepEqual(qoo10ProductionPlaceFields("Japan"), { ProductionPlaceType: "3", ProductionPlace: "JAPAN" });
+  assert.equal(qoo10ProductionPlace("대한민국"), "South Korea");
+  assert.equal(qoo10ProductionPlace("Japan"), "Japan");
 });
 
 test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {
@@ -940,54 +620,6 @@ test("Shopee merchant token and GlobalProduct category request use the merchant 
   }
 });
 
-test("Shopee global category validation requires one exact provider leaf and returns its full ancestry", async () => {
-  const originalFetch = globalThis.fetch;
-  const paths: string[] = [];
-  globalThis.fetch = async (input) => {
-    const url = new URL(String(input));
-    paths.push(url.pathname);
-    if (url.pathname.endsWith("/global_product/get_category")) {
-      assert.equal(url.searchParams.get("language"), "en");
-      return Response.json({ error: "", response: { category_list: [
-        { category_id: 100013, parent_category_id: 0, display_category_name: "Mobile & Gadgets", has_children: true },
-        { category_id: 100075, parent_category_id: 100013, display_category_name: "Accessories", has_children: true },
-        { category_id: 100284, parent_category_id: 100075, display_category_name: "Cables, Chargers & Converters", has_children: true },
-        { category_id: 100479, parent_category_id: 100284, display_category_name: "Cable Cases, Protectors, & Winders", has_children: false },
-      ] } });
-    }
-    assert.equal(url.searchParams.get("category_id_list"), "100479");
-    return Response.json({ error: "", response: { list: [{ category_id: 100479, attribute_tree: [] }] } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "shopee",
-      operation: "categories.validate",
-      payload: {
-        partner_id: "2031489",
-        partner_key: "partner-secret",
-        merchant_id: "5511564",
-        access_token: "merchant-access",
-      },
-      arguments: { globalProduct: true, categoryId: "100479", language: "en" },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.deepEqual(paths.sort(), [
-      "/api/v2/global_product/get_attribute_tree",
-      "/api/v2/global_product/get_category",
-    ]);
-    assert.equal(result.steps[0]?.name, "global-category-exact-leaf");
-    assert.equal(result.steps[0]?.data.sellerpilotVerification, "SHOPEE_EXACT_GLOBAL_LEAF_CATEGORY_VERIFIED");
-    assert.deepEqual(result.steps[0]?.data.categoryPathIds, ["100013", "100075", "100284", "100479"]);
-    assert.deepEqual(result.steps[0]?.data.categoryPath, [
-      "Mobile & Gadgets", "Accessories", "Cables, Chargers & Converters",
-      "Cable Cases, Protectors, & Winders",
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 test("Lazada product create serializes the structured request as official XML and reads the item back", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: string }> = [];
@@ -1093,32 +725,6 @@ test("Lazada order sync enriches actionable orders with official order item deta
     assert.equal(result.ok, true);
     assert.deepEqual(result.steps.map((item) => item.name), ["orders", "order-items:9001"]);
     assert.equal(new URL(calls[1]).searchParams.get("order_id"), "9001");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Lazada order sync also enriches ready-to-ship orders needed by fulfillment", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = async (input) => {
-    const url = String(input);
-    calls.push(url);
-    if (url.includes("/order/items/get")) {
-      return Response.json({ code: "0", data: [{ order_id: "9002", order_item_id: "9102", shipping_type: "Dropshipping" }] });
-    }
-    return Response.json({ code: "0", data: { orders: [{ order_id: "9002", statuses: ["ready_to_ship"] }] } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "lazada",
-      operation: "orders.list",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
-      arguments: { queryParams: { created_after: "2026-08-23T00:00:00+09:00" } },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(calls.some((url) => url.includes("/order/items/get")), true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1423,13 +1029,19 @@ test("Coupang listing resume waits for SAVED before requesting approval without 
   }
 });
 
-test("Coupang product update reads first, preserves remote policy fields, and verifies requested content", async () => {
+test("Coupang product update reuses the requested seller product ID and verifies approval state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   let readbackCount = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
+    if (url.endsWith("/approvals") && init?.method === "PUT") {
+      return new Response(JSON.stringify({ code: "ERROR", message: "already requested" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (init?.method === "PUT") {
       return new Response(JSON.stringify({ code: "SUCCESS", data: null }), {
         status: 200,
@@ -1439,22 +1051,9 @@ test("Coupang product update reads first, preserves remote policy fields, and ve
     readbackCount += 1;
     return new Response(JSON.stringify({
       code: "SUCCESS",
-      data: {
-        sellerProductId: 987654321,
-        sellerProductName: readbackCount === 1 ? "기존 상품" : "수정 상품",
-        deliveryChargeType: "CONDITIONAL_FREE",
-        outboundShippingPlaceCode: 7788,
-        returnCenterCode: "return-1",
-        requested: true,
-        items: [{
-          vendorItemId: 4444,
-          externalVendorSku: "SKU-1",
-          itemName: readbackCount === 1 ? "기존 옵션" : "수정 옵션",
-          salePrice: 55_550,
-          maximumBuyCount: 3,
-          outboundShippingTimeDay: 5,
-        }],
-      },
+      data: readbackCount === 1
+        ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_TEMP_SAVED" }
+        : { sellerProductId: 987654321, requested: true, mdId: "NLUP_APPROVAL_REQUESTED" },
     }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -1465,33 +1064,17 @@ test("Coupang product update reads first, preserves remote policy fields, and ve
       channel: "coupang",
       operation: "listing.update",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
-      arguments: {
-        body: {
-          sellerProductId: 987654321,
-          sellerProductName: "수정 상품",
-          deliveryChargeType: "FREE",
-          outboundShippingPlaceCode: 9999,
-          returnCenterCode: "create-default",
-          items: [{ externalVendorSku: "SKU-1", itemName: "수정 옵션", salePrice: 1000, maximumBuyCount: 999 }],
-        },
-      },
+      arguments: { body: { sellerProductId: 987654321, sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
-    assert.deepEqual(result.steps.map((item) => item.name), ["listing-update-preflight", "listing.update", "listing-readback"]);
-    assert.equal(calls[0].init?.method, "GET");
-    assert.equal(new URL(calls[0].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
-    assert.equal(calls[1].init?.method, "PUT");
-    assert.equal(calls[2].init?.method, "GET");
-    assert.equal(calls.some((call) => call.url.endsWith("/approvals")), false);
-    const updateBody = JSON.parse(String(calls[1].init?.body));
-    assert.equal(updateBody.deliveryChargeType, "CONDITIONAL_FREE");
-    assert.equal(updateBody.outboundShippingPlaceCode, 7788);
-    assert.equal(updateBody.returnCenterCode, "return-1");
-    assert.equal(updateBody.items[0].salePrice, 55_550);
-    assert.equal(updateBody.items[0].maximumBuyCount, 3);
-    assert.equal(updateBody.items[0].itemName, "수정 옵션");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.update", "listing-readback", "listing-approval-request", "listing-approval-readback"]);
+    assert.equal(calls[0].init?.method, "PUT");
+    assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
+    assert.equal(new URL(calls[2].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321/approvals");
+    assert.equal(calls[2].init?.method, "PUT");
+    assert.equal(calls[3].init?.method, "GET");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1765,114 +1348,95 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
   }
 });
 
-test("eBay listing rejects server-managed policies before any provider request", async () => {
+test("eBay listing auto-selects non-vehicle policies and an enabled inventory location", async () => {
   const originalFetch = globalThis.fetch;
-  let providerCalls = 0;
-  globalThis.fetch = async () => {
-    providerCalls += 1;
-    throw new Error("provider request must not run");
-  };
-  try {
-    await assert.rejects(
-      executeChannelOperation({
-        channel: "ebay",
-        operation: "listing.create",
-        payload: { access_token: "token", marketplace_id: "EBAY_US" },
-        arguments: {
-          sku: "SELLERPILOT-AUTO",
-          inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
-          offer: {
-            sku: "SELLERPILOT-AUTO",
-            marketplaceId: "EBAY_US",
-            listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
-            merchantLocationKey: "warehouse-operator",
-          },
-          publish: false,
-        },
-        environment: "production",
-      }),
-      /EBAY_LISTING_CONFIGURATION_REQUIRED/,
-    );
-    assert.equal(providerCalls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("eBay listing rejects a server-managed inventory location instead of creating one", async () => {
-  const originalFetch = globalThis.fetch;
-  let providerCalls = 0;
-  globalThis.fetch = async () => {
-    providerCalls += 1;
-    throw new Error("provider request must not run");
-  };
-  try {
-    await assert.rejects(
-      executeChannelOperation({
-        channel: "ebay",
-        operation: "listing.create",
-        payload: { access_token: "token", marketplace_id: "EBAY_US" },
-        arguments: {
-          sku: "SELLERPILOT-LOCATION",
-          inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
-          offer: {
-            sku: "SELLERPILOT-LOCATION",
-            marketplaceId: "EBAY_US",
-            listingPolicies: { fulfillmentPolicyId: "f-1", paymentPolicyId: "p-1", returnPolicyId: "r-1" },
-            merchantLocationKey: "SERVER_MANAGED",
-          },
-          publish: false,
-        },
-        environment: "production",
-      }),
-      /EBAY_LISTING_CONFIGURATION_REQUIRED/,
-    );
-    assert.equal(providerCalls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("eBay preserves an accepted offer marker when create omits offerId and reconciliation misses", async () => {
-  const originalFetch = globalThis.fetch;
-  const imageUrls = ["https://cdn.example.com/item.jpg"];
+  const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
-    const method = init?.method ?? "GET";
-    if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls } });
-    }
-    if (url.endsWith("/offer") && method === "POST") {
-      return Response.json({}, { status: 201 });
-    }
-    if (url.includes("/offer?sku=") && method === "GET") {
-      return Response.json({ offers: [] });
-    }
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, body });
+    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "fulfillment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "payment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "return-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/location?")) return Response.json({ locations: [{ merchantLocationKey: "warehouse-auto", location: { merchantLocationStatus: "ENABLED" } }] });
+    if (url.includes("/inventory_item/") && init?.method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
+    if (url.endsWith("/offer") && init?.method === "POST") return Response.json({ offerId: "offer-auto" }, { status: 201 });
+    if (url.endsWith("/offer/offer-auto") && init?.method === "GET") return Response.json({ offerId: "offer-auto" });
     return new Response(null, { status: 204 });
   };
   try {
-    const operation = await executeChannelOperation({
+    const result = await executeChannelOperation({
       channel: "ebay",
       operation: "listing.create",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
-        sku: "SELLERPILOT-NO-OFFER-ID",
-        inventoryItem: { product: { title: "Test", imageUrls } },
+        sku: "SELLERPILOT-AUTO",
+        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
         offer: {
-          sku: "SELLERPILOT-NO-OFFER-ID",
+          sku: "SELLERPILOT-AUTO",
           marketplaceId: "EBAY_US",
-          format: "FIXED_PRICE",
-          listingPolicies: { fulfillmentPolicyId: "f-1", paymentPolicyId: "p-1", returnPolicyId: "r-1" },
-          merchantLocationKey: "warehouse-1",
+          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
+          merchantLocationKey: "SERVER_MANAGED",
         },
         publish: false,
       },
       environment: "production",
     });
-    assert.equal(operation.ok, false);
-    assert.equal(operation.remoteId, undefined);
-    assert.equal(operation.steps.find((item) => item.name === "offer")?.ok, true);
-    assert.equal(operation.steps.find((item) => item.name === "offer-reconcile")?.ok, false);
+    assert.equal(result.ok, true);
+    const offerCall = calls.find((call) => call.url.endsWith("/offer"));
+    assert.deepEqual(offerCall?.body?.listingPolicies, {
+      fulfillmentPolicyId: "fulfillment-auto",
+      paymentPolicyId: "payment-auto",
+      returnPolicyId: "return-auto",
+    });
+    assert.equal(offerCall?.body?.merchantLocationKey, "warehouse-auto");
+    assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "inventory-image-readback", "offer", "offer-readback"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay listing provisions and verifies a reusable inventory location when the account has none", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "f-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "p-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "r-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/location?") && method === "GET") return Response.json({ locations: [] });
+    if (url.endsWith("/location/sellerpilot-seoul") && method === "POST") return new Response(null, { status: 204 });
+    if (url.endsWith("/location/sellerpilot-seoul") && method === "GET") return Response.json({ merchantLocationKey: "sellerpilot-seoul", merchantLocationStatus: "ENABLED" });
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
+    if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-new-location" }, { status: 201 });
+    if (url.endsWith("/offer/offer-new-location") && method === "GET") return Response.json({ offerId: "offer-new-location" });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-LOCATION",
+        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
+        offer: {
+          sku: "SELLERPILOT-LOCATION",
+          marketplaceId: "EBAY_US",
+          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
+          merchantLocationKey: "SERVER_MANAGED",
+        },
+        publish: false,
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.find((call) => call.url.endsWith("/location/sellerpilot-seoul") && call.method === "POST")?.body?.merchantLocationStatus, "ENABLED");
+    assert.equal(calls.find((call) => call.url.endsWith("/offer"))?.body?.merchantLocationKey, "sellerpilot-seoul");
+    assert.equal(result.steps.some((item) => item.name === "inventory-location-readback" && item.ok), true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2131,7 +1695,6 @@ test("Temu shipment confirmation resolves warehouse and carrier then verifies tr
 test("Temu V3 product creation requires an external-id readback match", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
-  let listReads = 0;
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
@@ -2139,10 +1702,6 @@ test("Temu V3 product creation requires an external-id readback match", async ()
       return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, externalGoodsId: "TEST-TEMU-001" } }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (body.type === "temu.local.goods.list.retrieve") {
-      listReads += 1;
-      if (listReads === 1) {
-        return new Response(JSON.stringify({ success: true, result: { goodsList: [] } }), { status: 200, headers: { "content-type": "application/json" } });
-      }
       return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (body.type === "bg.local.goods.publish.status.get") {
@@ -2161,71 +1720,26 @@ test("Temu V3 product creation requires an external-id readback match", async ()
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "900001");
     assert.deepEqual(calls.map((call) => call.type), [
-      "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
       "temu.local.goods.list.retrieve",
       "bg.local.goods.publish.status.get",
       "bg.local.goods.detail.query",
     ]);
-    assert.deepEqual(calls[0].outGoodsSnList, ["TEST-TEMU-001"]);
-    assert.deepEqual(calls[2].outGoodsSnList, ["TEST-TEMU-001"]);
-    assert.deepEqual(calls[3].goodsIdList, [900001]);
-    assert.equal(calls[4].versionQueryType, 1);
-    assert.equal(result.steps[3].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
-    assert.equal(result.steps[4].data.sellerpilotVerification, "IMAGES_VERIFIED");
-    assert.equal(result.steps[4].data.actualCarouselImageCount, 1);
-    assert.equal(result.steps[4].data.actualDetailImageCount, 1);
-    assert.equal("app_secret" in calls[1], false);
-    assert.match(String(calls[1].sign), /^[0-9A-F]{32}$/);
+    assert.deepEqual(calls[1].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[2].goodsIdList, [900001]);
+    assert.equal(calls[3].versionQueryType, 1);
+    assert.equal(result.steps[2].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
+    assert.equal(result.steps[3].data.sellerpilotVerification, "IMAGES_VERIFIED");
+    assert.equal(result.steps[3].data.actualCarouselImageCount, 1);
+    assert.equal(result.steps[3].data.actualDetailImageCount, 1);
+    assert.equal("app_secret" in calls[0], false);
+    assert.match(String(calls[0].sign), /^[0-9A-F]{32}$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("Temu preserves an accepted create marker when goodsId and reconciliation are both missing", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    if (body.type === "temu.local.goods.v3.add") {
-      return Response.json({ success: true, result: {} });
-    }
-    return Response.json({ success: true, result: { goodsList: [] } });
-  };
-  try {
-    const operation = await executeChannelOperation({
-      channel: "temu",
-      operation: "listing.create",
-      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: {
-        sellerpilotTemuCreateCorrelation: {
-          version: "temu_create_attempt_external_id_v1",
-          sourceSellerSku: "TEST-TEMU-NO-ID",
-          externalGoodsId: "TEST-TEMU-NO-ID",
-          scopeFingerprint: "a".repeat(64),
-          skuCount: 1,
-        },
-        body: {
-          goodsBasic: {
-            externalGoodsId: "TEST-TEMU-NO-ID",
-            goodsName: "Missing ID test",
-            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
-            detailImage: ["https://cdn.example.com/detail.jpg"],
-          },
-          skuList: [{ externalSkuId: "TEST-TEMU-NO-ID" }],
-        },
-      },
-      environment: "production",
-    });
-    assert.equal(operation.ok, false);
-    assert.equal(operation.remoteId, undefined);
-    assert.equal(operation.steps.find((item) => item.name === "goods-v3-add")?.ok, true);
-    assert.equal(operation.steps.find((item) => item.name === "goods-reconcile")?.ok, false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Temu create preflight blocks an existing external ID without issuing a provider write", async () => {
+test("Temu listing retry reconciles an existing external ID and still verifies images", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
   globalThis.fetch = async (_input, init) => {
@@ -2261,15 +1775,16 @@ test("Temu create preflight blocks an existing external ID without issuing a pro
       environment: "production",
     });
 
-    assert.equal(result.ok, false);
-    assert.equal(result.remoteId, undefined);
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "900002");
     assert.deepEqual(result.steps.map((item) => item.name), [
-      "goods-create-external-id-preflight",
+      "goods-reconcile",
+      "goods-readback",
+      "goods-publish-status",
+      "goods-detail-image-readback",
     ]);
-    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_ID_ALREADY_EXISTS");
-    assert.equal(result.steps[0].data.sellerpilotReconciliationRequired, true);
-    assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 0);
-    assert.deepEqual(calls.map((call) => call.type), ["temu.local.goods.list.retrieve"]);
+    assert.equal(result.steps[0].data.sellerpilotVerification, "EXISTING_GOODS_RECOVERED");
+    assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2277,17 +1792,10 @@ test("Temu create preflight blocks an existing external ID without issuing a pro
 
 test("Temu listing fails verification when processed detail images are missing", async () => {
   const originalFetch = globalThis.fetch;
-  let listReads = 0;
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (body.type === "temu.local.goods.v3.add") return Response.json({ success: true, result: { goodsId: 900003 } });
-    if (body.type === "temu.local.goods.list.retrieve") {
-      listReads += 1;
-      return Response.json({
-        success: true,
-        result: { goodsList: listReads === 1 ? [] : [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] },
-      });
-    }
+    if (body.type === "temu.local.goods.list.retrieve") return Response.json({ success: true, result: { goodsList: [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] } });
     if (body.type === "bg.local.goods.publish.status.get") return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900003, status: 1, subStatus: 1 }] } });
     return Response.json({ success: true, result: { goodsId: 900003, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: [] } } });
   };
@@ -2336,9 +1844,7 @@ test("eBay does not invent a domestic-style order acknowledgement step", async (
 test("eBay refreshes an expired two-hour access token before a live operation", async () => {
   const originalFetch = globalThis.fetch;
   let tokenBody = "";
-  const lifecycle: string[] = [];
   globalThis.fetch = async (_input, init) => {
-    lifecycle.push("fetch");
     tokenBody = String(init?.body ?? "");
     return new Response(JSON.stringify({ access_token: "fresh-access-token", expires_in: 7200 }), {
       status: 200,
@@ -2354,15 +1860,10 @@ test("eBay refreshes an expired two-hour access token before a live operation", 
       access_token_expires_at: "2000-01-01T00:00:00.000Z",
       refresh_token: "refresh-token",
       refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
-    }, "sandbox", undefined, () => {
-      lifecycle.push("mutation-start");
-    }, async (refresh) => {
-      lifecycle.push(`stage:${String(refresh.payload.access_token)}`);
-    });
+    }, "sandbox");
     assert.equal(ensured.refreshed, true);
     assert.equal(ensured.payload.access_token, "fresh-access-token");
     assert.match(tokenBody, /grant_type=refresh_token/);
-    assert.deepEqual(lifecycle, ["mutation-start", "fetch", "stage:fresh-access-token"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

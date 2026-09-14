@@ -2,26 +2,13 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
-import { sellerSafeAiJobFailure } from "../../../../../lib/ai-worker-error-safety";
-import {
-  normalizeStudioResultForTerminalValidation,
-  workerCompletionSchema,
-} from "../../../../../lib/ai-cli-contract";
+import { workerCompletionSchema } from "../../../../../lib/ai-cli-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
-import { collectStudioCompletionImageDigests } from "../../../../../lib/studio-completion-image-digests";
-import { createSignedStudioImageDownloader } from "../../../../../lib/studio-image-validation";
-import {
-  createBoundedSupabaseFetch,
-  workerRpcErrorMessage,
-  workerRpcErrorStatus,
-} from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
-export const maxDuration = 240;
 
 type LegacyWorkerSuccess = {
   jobId: string;
-  claimToken: string;
   status: "succeeded";
   result: Record<string, unknown>;
   assetStoragePaths: Record<string, string>;
@@ -31,36 +18,13 @@ const legacyLocalizedMarkets = new Set([
   "shopee:SG", "shopee:MY", "shopee:PH", "shopee:VN", "shopee:TH", "shopee:TW", "shopee:BR", "shopee:MX",
   "lazada:MY", "lazada:SG", "lazada:PH", "lazada:TH", "lazada:VN", "lazada:ID",
 ]);
-const legacyDetailSectionFields = ["imageAsset", "imageAltText"] as const;
-const currentDetailSectionFields = ["type", "buyerQuestion", "evidence", "heading", "body"] as const;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function hasLegacyDetailSectionShape(listing: unknown): boolean {
-  if (!listing || typeof listing !== "object") return false;
-  const entry = listing as Record<string, unknown>;
-  const sections = entry.detailSections;
-  if (!Array.isArray(sections) || sections.length === 0) return false;
-  return sections.every((section) => {
-    if (!section || typeof section !== "object") return false;
-    const record = section as Record<string, unknown>;
-    const hasLegacyFields = legacyDetailSectionFields.every((field) => typeof record[field] === "string");
-    const hasCurrentFields = currentDetailSectionFields.some((field) => field in record);
-    return hasLegacyFields && !hasCurrentFields;
-  });
-}
 
 function isLegacyWorkerSuccess(value: unknown): value is LegacyWorkerSuccess {
   if (!value || typeof value !== "object") return false;
   const payload = value as Record<string, unknown>;
   const result = payload.result;
   const assetStoragePaths = payload.assetStoragePaths;
-  if (payload.status !== "succeeded"
-      || typeof payload.jobId !== "string"
-      || !UUID_PATTERN.test(payload.jobId)
-      || typeof payload.claimToken !== "string"
-      || !UUID_PATTERN.test(payload.claimToken)
-      || !result
-      || typeof result !== "object") return false;
+  if (payload.status !== "succeeded" || typeof payload.jobId !== "string" || !result || typeof result !== "object") return false;
   if (!assetStoragePaths || typeof assetStoragePaths !== "object") return false;
   const listings = (result as Record<string, unknown>).localizedListings;
   if ((result as Record<string, unknown>).mode !== "cli" || !Array.isArray(listings) || listings.length !== legacyLocalizedMarkets.size) return false;
@@ -70,37 +34,18 @@ function isLegacyWorkerSuccess(value: unknown): value is LegacyWorkerSuccess {
     return `${String(entry.channel ?? "")}:${String(entry.market ?? "")}`;
   }));
   return receivedMarkets.size === legacyLocalizedMarkets.size
-    && [...legacyLocalizedMarkets].every((market) => receivedMarkets.has(market))
-    && listings.every(hasLegacyDetailSectionShape);
-}
-
-function normalizeWorkerCompletionPayload(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const payload = value as Record<string, unknown>;
-  const result = payload.result;
-  if (!result || typeof result !== "object" || Array.isArray(result)
-      || (result as Record<string, unknown>).mode !== "cli") return value;
-  const normalizedResult = normalizeStudioResultForTerminalValidation(result);
-  return normalizedResult === result ? value : { ...payload, result: normalizedResult };
+    && [...legacyLocalizedMarkets].every((market) => receivedMarkets.has(market));
 }
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  if (!workerToken.startsWith("spw_") || workerToken.length < 24) {
+  if (!workerToken.startsWith("spw_") || !supabaseUrl || !secretKey) {
     return NextResponse.json({ message: "CLI 작업자 인증이 필요합니다." }, { status: 401 });
   }
-  if (!supabaseUrl || !secretKey) {
-    console.error("AI worker completion server configuration is unavailable", {
-      hasSupabaseUrl: Boolean(supabaseUrl),
-      hasSupabaseSecretKey: Boolean(secretKey),
-    });
-    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
-  }
 
-  const receivedPayload = await request.json().catch(() => null);
-  const payload = normalizeWorkerCompletionPayload(receivedPayload);
+  const payload = await request.json().catch(() => null);
   const parsed = workerCompletionSchema.safeParse(payload);
   const completion = parsed.success ? parsed.data : isLegacyWorkerSuccess(payload) ? payload : null;
   if (!completion) {
@@ -112,28 +57,8 @@ export async function POST(request: Request) {
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
-  const { data: completionAuthorized, error: completionAuthorizationError } = await serviceClient.rpc(
-    "sellerpilot_service_begin_ai_job_completion",
-    {
-      p_token_hash: tokenHash,
-      p_job_id: completion.jobId,
-      p_claim_token: completion.claimToken,
-    },
-  );
-  if (completionAuthorizationError) {
-    const status = workerRpcErrorStatus(completionAuthorizationError);
-    console.error("AI worker completion authorization RPC failed", {
-      code: completionAuthorizationError.code ?? "unknown",
-      status,
-    });
-    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
-  }
-  if (completionAuthorized !== true) {
-    return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
-  }
   let resultPayload: Record<string, unknown> | null = null;
 
   if (completion.status === "succeeded") {
@@ -144,7 +69,7 @@ export async function POST(request: Request) {
       }
       const expectedPaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
         asset.id,
-        aiGeneratedAssetPath(completion.jobId, asset, completion.claimToken),
+        aiGeneratedAssetPath(completion.jobId, asset),
       ]));
       for (const asset of aiGeneratedAssetSpecs) {
         const expectedPath = expectedPaths[asset.id];
@@ -160,7 +85,7 @@ export async function POST(request: Request) {
       const regenerated = completion.result as { mode: "asset-regeneration"; assetId: string };
       const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === regenerated.assetId);
       const paths = Object.entries(completion.assetStoragePaths);
-      const expectedPath = asset ? aiGeneratedAssetPath(completion.jobId, asset, completion.claimToken) : "";
+      const expectedPath = asset ? aiGeneratedAssetPath(completion.jobId, asset) : "";
       if (!asset || paths.length !== 1 || paths[0]?.[0] !== asset.id || paths[0]?.[1] !== expectedPath) {
         return NextResponse.json({ message: "재제작 이미지 저장 경로가 작업과 일치하지 않습니다." }, { status: 403 });
       }
@@ -168,41 +93,21 @@ export async function POST(request: Request) {
     }
   }
 
-  if (completion.status === "succeeded" && resultPayload
-      && (completion.result.mode === "cli" || completion.result.mode === "asset-regeneration")) {
-    try {
-      const paths = resultPayload.asset_storage_paths as Record<string, string>;
-      const download = await createSignedStudioImageDownloader({
-        paths: Object.values(paths),
-        sign: (values) => serviceClient.storage.from("sellerpilot-ai").createSignedUrls(values, 240),
-        fetchTimeoutMs: 20_000,
-      });
-      if (!download) throw new Error("STUDIO_COMPLETION_IMAGE_UNAVAILABLE");
-      resultPayload.asset_storage_sha256s = await collectStudioCompletionImageDigests({
-        jobId: completion.jobId, claimToken: completion.claimToken, paths, download,
-      });
-    } catch {
-      return NextResponse.json({ message: "저장된 생성 이미지 검증을 완료하지 못했습니다. 기존 작업과 이미지는 유지됩니다." }, { status: 503 });
-    }
-  }
-
-  const { data, error } = await serviceClient.rpc("sellerpilot_complete_ai_job_with_image_context", {
+  const { data, error } = await serviceClient.rpc("sellerpilot_complete_ai_job", {
     p_token_hash: tokenHash,
     p_job_id: completion.jobId,
-    p_claim_token: completion.claimToken,
     p_status: completion.status,
     p_result_payload: resultPayload,
-    p_error_message: completion.status === "failed" ? sellerSafeAiJobFailure(completion.error) : null,
-    p_terminal_image_failure_context: completion.status === "failed"
-      ? completion.terminalImageFailureContext ?? null
-      : null,
+    p_error_message: completion.status === "failed" ? completion.error : null,
   });
+  const uploadedAssets = completion.status === "succeeded" && "assetStoragePaths" in completion
+    ? Object.values(completion.assetStoragePaths)
+    : [];
   if (error || data !== true) {
-    if (error) {
-      const status = workerRpcErrorStatus(error);
-      console.error("AI worker completion RPC failed", { code: error.code ?? "unknown", status });
-      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    if (uploadedAssets.length) {
+      await serviceClient.storage.from("sellerpilot-ai").remove(uploadedAssets);
     }
+    if (error) return NextResponse.json({ message: "CLI 작업 완료 상태를 저장하지 못했습니다." }, { status: 401 });
     return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
   }
   return NextResponse.json({ message: "CLI 작업 결과가 안전하게 저장됐습니다." });

@@ -10,7 +10,6 @@ import {
   ExternalLink,
   KeyRound,
   LockKeyhole,
-  MessageCircleMore,
   Radio,
   ServerCog,
   ShieldCheck,
@@ -18,6 +17,7 @@ import {
 import {
   activeChannelKeys,
   capabilityLabels,
+  capabilityModeLabels,
   channelCatalog,
   isActiveChannelKey,
   type ChannelCapabilityKey,
@@ -28,14 +28,9 @@ import {
   channelReadinessObservedAt,
   integrationGates,
   qoo10RegistrationMap,
-  resolveChannelGatewayActivity,
-  resolveChannelReadiness,
   type ReadinessState,
 } from "./channel-readiness-data";
-import { channelCapabilityReleasePresentation } from "../lib/channels/operation-availability";
-import type { CsSyncStatus } from "./cs/workspace-contracts";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
-import { channelIntegrationStatus } from "../lib/channels/integration-status";
 
 const stateLabels: Record<ReadinessState, string> = {
   verified: "확인 완료",
@@ -44,55 +39,34 @@ const stateLabels: Record<ReadinessState, string> = {
   not_configured: "미구성",
 };
 
-function safeSyncErrorMessage(value: string | null) {
-  if (!value) return "";
-  const printable = Array.from(value, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint < 32 || codePoint === 127 ? " " : character;
-  }).join("");
-  return printable.replace(/\s+/g, " ").trim().slice(0, 180);
-}
-
 function ReadinessBadge({ state }: { state: ReadinessState }) {
   const Icon = state === "verified" ? CheckCircle2 : state === "blocked" ? AlertTriangle : state === "partial" ? Clock3 : CircleDashed;
   return <span className={`readiness-badge ${state}`}><Icon size={12} />{stateLabels[state]}</span>;
 }
 
-export function ChannelReadinessPage({ embedded = false, channelMetrics = [], syncStatus = [], onOpenCs }: {
+export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: {
   embedded?: boolean;
   channelMetrics?: OperationsSnapshot["channelMetrics"];
-  syncStatus?: Array<OperationsSnapshot["syncStatus"][number] | CsSyncStatus[number]>;
-  onOpenCs?: (channel: OperationsSnapshot["channelMetrics"][number]["channelKey"]) => void;
 }) {
   const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
-  const resolvedReadiness = channelReadiness.map((channel) => resolveChannelReadiness(
-    channel,
-    channelMetrics.find((metric) => metric.channelKey === channel.key),
-    resolveChannelGatewayActivity(channel.key, syncStatus),
-  ));
-  const consoleVerifiedChannels = resolvedReadiness.filter((channel) => channel.consoleVerified);
+  const consoleVerifiedChannels = channelReadiness.filter((channel) => channel.consoleVerified);
   const hasLiveMetrics = channelMetrics.length > 0;
   const registeredCredentials = hasLiveMetrics
     ? channelMetrics.filter((metric) => metric.credentialStatus !== "missing").length
-    : resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
-  const apiReadPassed = resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
-  // Live metrics win: the static console flags are a dated snapshot and must not
-  // be presented as the current read state when the API returns real values.
-  const liveStates = channelMetrics.map((metric) => channelIntegrationStatus(metric));
-  const liveReadPassed = liveStates.filter((state) => state.tone === "ok" || state.tone === "stale").length;
-  const liveStale = liveStates.filter((state) => state.tone === "stale").length;
-  const liveFailed = liveStates.filter((state) => state.tone === "failed").length;
-  const readPassedCount = hasLiveMetrics ? liveReadPassed : apiReadPassed;
-  const verifiedChecks = resolvedReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
-  const blockerCount = resolvedReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
+    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
+  const apiReadPassed = hasLiveMetrics
+    ? channelMetrics.filter((metric) => metric.credentialStatus === "active").length
+    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
+  const verifiedChecks = channelReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
+  const blockerCount = channelReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
 
   return (
     <div className="page-stack readiness-page">
       {!embedded && <section className="readiness-hero">
         <div>
-          <span className="readiness-eyebrow"><Radio size={14} /> LAST CONSOLE SNAPSHOT · {channelReadinessObservedAt} · LIVE DB MERGED</span>
+          <span className="readiness-eyebrow"><Radio size={14} /> READ-ONLY ACCOUNT INSPECTION · {channelReadinessObservedAt}</span>
           <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
-          <p>운영 대상 {resolvedReadiness.length}개 판매채널의 마지막 콘솔 스냅샷과 현재 Vault·인증 키 읽기·주문/문의 게이트웨이 상태를 분리해 병합합니다. 과거 심사 결과는 날짜가 붙은 이력으로만 표시하며 현재 운영 DB 근거를 덮어쓰지 않습니다.</p>
+          <p>운영 대상 {channelReadiness.length}개 판매채널의 공식 문서 구현 상태와 실제 콘솔 확인 상태를 분리했습니다. Vault 읽기 진단, 개발자 앱 심사와 주문·문의 권한을 같은 화면에서 확인할 수 있습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
@@ -101,29 +75,39 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
       </section>}
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
-        <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {resolvedReadiness.length}</strong><small>{channelReadinessObservedAt} 마지막 스냅샷</small></article>
-        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {resolvedReadiness.length}</strong><small>{hasLiveMetrics ? "현재 운영 DB 실시간 집계" : `${channelReadinessObservedAt} 정적 스냅샷 기준 · 실시간 집계 없음`}</small></article>
+        <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {channelReadiness.length}</strong><small>11번가 포함 전체 대상</small></article>
+        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {channelReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
-        <article className="danger"><span>인증 키 읽기 통과</span><strong>{readPassedCount} / {resolvedReadiness.length}</strong><small>{hasLiveMetrics ? `${liveStale ? `재확인 필요 ${liveStale}` : "최근 확인"}${liveFailed ? ` · 실패 ${liveFailed}` : ""} · 저장된 진단 시각 기준` : `${channelReadinessObservedAt} 정적 스냅샷 기준`}</small></article>
+        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {channelReadiness.length}</strong><small>최근 운영 키 읽기 진단 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
-        {resolvedReadiness.map((channel) => {
+        {channelReadiness.map((channel) => {
           const apiDefinition = isActiveChannelKey(channel.key) ? channelCatalog[channel.key] : null;
           const officialDocs = channel.officialDocs ?? apiDefinition?.officialDocs ?? [];
           const liveMetric = channelMetrics.find((metric) => metric.channelKey === channel.key);
-          const inquiryState = syncStatus
-            .filter((item) => item.channel_key === channel.key && item.data_type === "inquiries")
-            .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
+          const liveState: ReadinessState = !liveMetric
+            ? channel.overall
+            : liveMetric.credentialStatus === "active"
+              ? "verified"
+              : liveMetric.credentialStatus === "unverified"
+                ? "partial"
+                : "not_configured";
+          const liveStateCopy = !liveMetric
+            ? channel.appState
+            : liveMetric.credentialStatus === "active"
+              ? `Vault 운영 키 등록 · 최근 읽기 진단 정상${liveMetric.credentialLastCheckedAt ? ` · ${new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(liveMetric.credentialLastCheckedAt))}` : ""}`
+              : liveMetric.credentialStatus === "unverified"
+                ? `Vault 운영 키 등록 · ${liveMetric.credentialLastCheckStatus === "failed" ? "최근 읽기 진단 실패" : "읽기 진단 필요"}`
+                : "Vault 운영 키 미등록";
           return <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
               <span className="readiness-channel-mark">{channels[channel.key].mark}</span>
               <div><small>{channel.console}</small><h3>{channel.name}</h3><p>{channel.market}</p></div>
-              <ReadinessBadge state={channel.overall} />
+              <ReadinessBadge state={liveState} />
             </header>
-            <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{channel.appState}</div>
-            <div className={`readiness-inquiry-state ${inquiryState?.status ?? "never"}`}><MessageCircleMore size={13} /><span><b>문의 동기화</b><small>{inquiryState ? `${inquiryState.status} · 원장 ${inquiryState.imported_count ?? 0}건${safeSyncErrorMessage(inquiryState.last_error) ? ` · ${safeSyncErrorMessage(inquiryState.last_error)}` : ""}` : "실행 기록 없음"}</small></span>{isActiveChannelKey(channel.key) && onOpenCs ? <button type="button" onClick={() => onOpenCs(channel.key)}>문의함 열기<ArrowRight size={12} /></button> : null}</div>
+            <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{liveStateCopy}</div>
             <p className="readiness-channel-summary">{channel.summary}</p>
             <div className="readiness-doc-links">{officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">
@@ -148,13 +132,13 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
           <div><span className="panel-kicker">CHANNEL CAPABILITY ROUTING</span><h3>채널별 지원 방식 · 대체 흐름</h3></div>
           <span className="field-map-proof"><ShieldCheck size={14} />공식 문서 기준</span>
         </div>
-        <p className="capability-intro">공식 문서에 API가 있어도 현재 원격 식별·재조회·권한 검증이 끝나지 않은 기능은 출시 차단으로 표시합니다. 실제 실행 화면과 같은 release gate를 사용합니다.</p>
+        <p className="capability-intro">같은 버튼을 무조건 호출하지 않습니다. API·주기조회·웹훅·미지원·문서승인 필요 상태를 먼저 판정하고, 미지원 동작은 해당 채널 콘솔로 안내합니다.</p>
         <div className="table-wrap capability-table-wrap">
           <table className="capability-table">
             <thead><tr><th>기능</th>{activeChannelKeys.map((key) => <th key={key}>{channelCatalog[key].name}</th>)}</tr></thead>
             <tbody>{capabilityKeys.map((capability) => <tr key={capability}><td><b>{capabilityLabels[capability]}</b></td>{activeChannelKeys.map((key) => {
-              const item = channelCapabilityReleasePresentation(key, capability);
-              return <td key={key} data-label={channelCatalog[key].name}><span className={`capability-mode ${item.mode}`}>{item.label}</span><small>{item.note}</small></td>;
+              const item = channelCatalog[key].capabilities[capability];
+              return <td key={key}><span className={`capability-mode ${item.mode}`}>{capabilityModeLabels[item.mode]}</span><small>{item.note}</small></td>;
             })}</tr>)}</tbody>
           </table>
         </div>

@@ -1,15 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { buildTemuSignature, temuExactLong } from "../lib/channels/protocols";
-import { listingLedgerRemoteIdentity } from "../lib/channels/write-resource";
-
-test("eBay inventory is bound to its persisted marketplace SKU, not the public listing ID", () => {
-  const listing = { remoteId: "PUBLIC-LISTING-123", marketplaceSku: "EBAY-SKU" };
-  assert.equal(listingLedgerRemoteIdentity("ebay", "inventory.update", listing), "EBAY-SKU");
-  assert.equal(listingLedgerRemoteIdentity("ebay", "listing.stop", listing), "PUBLIC-LISTING-123");
-  assert.equal(listingLedgerRemoteIdentity("qoo10", "inventory.update", listing), "PUBLIC-LISTING-123");
-});
 
 test("Qoo10 inventory succeeds only after quantity readback", async () => {
   const originalFetch = globalThis.fetch;
@@ -181,86 +172,14 @@ test("Smartstore full-product stock update is read back before success", async (
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("Smartstore option stock update verifies every requested option by stable ID", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = async (input, init) => {
-    const url = new URL(String(input));
-    calls.push(`${init?.method}:${url.pathname}`);
-    if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
-    if (init?.method === "PUT") return Response.json({});
-    return Response.json({
-      originProduct: {
-        detailAttribute: {
-          optionInfo: {
-            optionCombinations: [{ id: 101, stockQuantity: 17 }],
-            optionStandards: [{ id: 202, stockQuantity: 9 }],
-          },
-        },
-      },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "smartstore", operation: "inventory.update", environment: "production",
-      payload: { client_id: "client", client_secret: "$2b$10$abcdefghijklmnopqrstuu", token_type: "SELF" },
-      arguments: {
-        originProductNo: "123456789",
-        quantity: 17,
-        body: {
-          optionInfo: {
-            optionCombinations: [{ id: 101, stockQuantity: 17 }],
-            optionStandards: [{ id: 202, stockQuantity: 9 }],
-          },
-        },
-      },
-    });
-    assert.equal(result.ok, true);
-    assert.deepEqual(calls.slice(-2), [
-      "PUT:/external/v1/products/origin-products/123456789/option-stock",
-      "GET:/external/v2/products/origin-products/123456789",
-    ]);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_OPTION_QUANTITIES_VERIFIED");
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Smartstore option stock write is not reported successful when readback differs", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = new URL(String(input));
-    if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
-    if (init?.method === "PUT") return Response.json({});
-    return Response.json({
-      originProduct: {
-        detailAttribute: { optionInfo: { optionCombinations: [{ id: 101, stockQuantity: 16 }] } },
-      },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "smartstore", operation: "inventory.update", environment: "production",
-      payload: { client_id: "client", client_secret: "$2b$10$abcdefghijklmnopqrstuu", token_type: "SELF" },
-      arguments: {
-        originProductNo: "123456789",
-        quantity: 17,
-        body: { optionInfo: { optionCombinations: [{ id: 101, stockQuantity: 17 }] } },
-      },
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_OPTION_QUANTITIES_MISMATCH");
-    assert.deepEqual(result.steps.at(-1)?.data.sellerpilotMismatchOptionIds, ["101"]);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
 test("Temu inventory verifies quantity through goods detail", async () => {
   const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    calls.push(String(body.type));
-    return body.type === "bg.local.goods.stock.edit"
+  let call = 0;
+  globalThis.fetch = async () => {
+    call += 1;
+    return call === 1
       ? Response.json({ success: true, result: { goodsId: 123456789 } })
-      : Response.json({ success: true, result: { goodsId: 123456789, skuList: [{ skuId: 9001, stockQuantity: 17 }] } });
+      : Response.json({ success: true, result: { goodsId: 123456789, skuList: [{ externalSkuId: "TEMU-SKU", quantity: 17 }] } });
   };
   try {
     const result = await executeChannelOperation({
@@ -269,143 +188,7 @@ test("Temu inventory verifies quantity through goods detail", async () => {
       arguments: { goodsId: 123456789, quantity: 17, body: { goodsId: 123456789, skuList: [{ externalSkuId: "TEMU-SKU", quantity: 17 }] } },
     });
     assert.equal(result.ok, true);
-    assert.deepEqual(calls, [
-      "bg.local.goods.detail.query",
-      "bg.local.goods.stock.edit",
-      "bg.local.goods.detail.query",
-    ]);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Temu inventory uses the official goods-detail method before and after stock edit", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<Record<string, unknown>> = [];
-  globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    calls.push(body);
-    return body.type === "bg.local.goods.stock.edit"
-      ? Response.json({ success: true, result: { goodsId: 123456789 } })
-      : Response.json({ success: true, result: { goodsId: 123456789, skuList: [{ skuId: 9001, stockQuantity: 17 }] } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "temu", operation: "inventory.update", environment: "production",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: { goodsId: 123456789, quantity: 17 },
-    });
-    assert.equal(result.ok, true);
-    assert.deepEqual(calls.map((call) => call.type), [
-      "bg.local.goods.detail.query",
-      "bg.local.goods.stock.edit",
-      "bg.local.goods.detail.query",
-    ]);
-    assert.deepEqual(calls[1].skuStockList, [{ skuId: 9001, stockQuantity: 17 }]);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Temu inventory preserves goodsId and skuId above MAX_SAFE_INTEGER in the signed numeric request", async () => {
-  const originalFetch = globalThis.fetch;
-  const goodsId = "9007199254740993";
-  const skuId = "9007199254740995";
-  const rawRequests: string[] = [];
-  let detailReads = 0;
-  globalThis.fetch = async (_input, init) => {
-    const raw = String(init?.body);
-    rawRequests.push(raw);
-    const request = JSON.parse(raw) as Record<string, unknown>;
-    if (request.type === "bg.local.goods.stock.edit") {
-      return new Response(`{"success":true,"result":{"goodsId":${goodsId}}}`, {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    detailReads += 1;
-    const quantity = detailReads === 1 ? 3 : 17;
-    return new Response(
-      `{"success":true,"result":{"goodsId":${goodsId},"skuList":[{"skuId":${skuId},"stockQuantity":${quantity}}]}}`,
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "temu", operation: "inventory.update", environment: "production",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: { goodsId, quantity: 17 },
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, goodsId);
-    assert.equal(rawRequests.length, 3);
-    assert.match(rawRequests[0], new RegExp(`"goodsId":${goodsId}(?:,|})`));
-    assert.match(rawRequests[1], new RegExp(`"goodsId":${goodsId}(?:,|})`));
-    assert.match(rawRequests[1], new RegExp(`"skuId":${skuId}(?:,|})`));
-    assert.doesNotMatch(rawRequests[1], new RegExp(`"(?:goodsId|skuId)":"(?:${goodsId}|${skuId})"`));
-
-    for (const raw of rawRequests) {
-      const request = JSON.parse(raw) as Record<string, unknown>;
-      const { sign, ...unsigned } = request;
-      const exactUnsigned = request.type === "bg.local.goods.stock.edit"
-        ? {
-            ...unsigned,
-            goodsId: temuExactLong(goodsId),
-            skuStockList: [{ skuId: temuExactLong(skuId), stockQuantity: 17 }],
-          }
-        : { ...unsigned, goodsId: temuExactLong(goodsId) };
-      assert.equal(sign, buildTemuSignature("secret", exactUnsigned));
-    }
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Temu inventory rejects duplicate skuId values without a provider write", async () => {
-  const originalFetch = globalThis.fetch;
-  const providerTypes: string[] = [];
-  globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    providerTypes.push(String(body.type));
-    return Response.json({
-      success: true,
-      result: {
-        goodsId: 123456789,
-        skuList: [
-          { skuId: 9001, stockQuantity: 3 },
-          { skuId: 9001, stockQuantity: 4 },
-        ],
-      },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "temu", operation: "inventory.update", environment: "production",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: { goodsId: "123456789", quantity: 17 },
-    });
-    assert.equal(result.ok, false);
-    assert.deepEqual(providerTypes, ["bg.local.goods.detail.query"]);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotNoWriteConfirmed, true);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "TEMU_INVENTORY_SKU_ID_NOT_EXACT_LONG");
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Temu inventory rejects a missing skuId without a provider write", async () => {
-  const originalFetch = globalThis.fetch;
-  const providerTypes: string[] = [];
-  globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    providerTypes.push(String(body.type));
-    return Response.json({
-      success: true,
-      result: { goodsId: 123456789, skuList: [{ externalSkuId: "TEMU-SKU", stockQuantity: 3 }] },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "temu", operation: "inventory.update", environment: "production",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: { goodsId: "123456789", quantity: 17 },
-    });
-    assert.equal(result.ok, false);
-    assert.deepEqual(providerTypes, ["bg.local.goods.detail.query"]);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotNoWriteConfirmed, true);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "TEMU_INVENTORY_SKU_ID_NOT_EXACT_LONG");
+    assert.equal(call, 2);
   } finally { globalThis.fetch = originalFetch; }
 });
 

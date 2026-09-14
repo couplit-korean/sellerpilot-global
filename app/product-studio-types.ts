@@ -1,43 +1,11 @@
 export type StudioMode = "cli";
 
-export type DetailImageAsset =
-  | "none"
-  | "detail-overview"
-  | "detail-feature"
-  | "detail-use"
-  | "detail-package"
-  | "detail-routine"
-  | "detail-scale"
-  | "detail-storage"
-  | "detail-context"
-  | "detail-material"
-  | "detail-dimensions"
-  | "detail-contents"
-  | "detail-care";
-
-export type DetailLayout = "split" | "full-bleed" | "cards" | "steps" | "spec-grid" | "editorial";
-
-export type DetailMotion = "none" | "reveal" | "stagger";
-
 export type DetailSection = {
-  type: "benefit" | "story" | "howto" | "proof" | "spec" | "caution" | "comparison" | "faq" | "notice";
-  buyerQuestion: string;
-  evidence: string;
+  type: "benefit" | "story" | "howto" | "proof" | "spec" | "caution";
   eyebrow: string;
   title: string;
   body: string;
   points: string[];
-  layout: DetailLayout;
-  imageAsset: DetailImageAsset;
-  visualDirection: string;
-  motion: DetailMotion;
-};
-
-export type ProductClassification = {
-  displayName: string;
-  verificationStatus: "verified" | "needs-review";
-  evidence: string;
-  isHealthFunctionalFood: boolean | null;
 };
 
 export type LocalizedListing = {
@@ -49,14 +17,11 @@ export type LocalizedListing = {
   description: string;
   keywords: string[];
   thumbnailAltText: string;
-  classification: ProductClassification;
   detailSections: Array<{
-    type: "overview" | "feature" | "howto" | "spec" | "routine" | "contents" | "care" | "proof";
-    buyerQuestion: string;
-    evidence: string;
+    type: "overview" | "feature" | "howto" | "spec";
     heading: string;
     body: string;
-    imageAsset: Exclude<DetailImageAsset, "none">;
+    imageAsset: "detail-overview" | "detail-feature" | "detail-use" | "detail-package";
     imageAltText: string;
   }>;
 };
@@ -66,7 +31,6 @@ export type ProductStudioResult = {
   product: {
     name: string;
     category: string;
-    classification: ProductClassification;
     oneLine: string;
     targetCustomer: string;
     features: string[];
@@ -74,16 +38,6 @@ export type ProductStudioResult = {
   };
   design: {
     themeName: string;
-    creativeStrategy: {
-      designArchetype: "proof-led" | "problem-solution" | "routine-led" | "comparison-led" | "material-led" | "fit-guide" | "gift-story" | "spec-first";
-      purchaseDecision: string;
-      contentDensity: "concise" | "long" | "deep-dive";
-      targetSectionCount: number;
-      lengthRationale: string;
-      differentiationKey: string;
-      artDirection: string;
-      motionPolicy: "static-first";
-    };
     palette: {
       primary: string;
       accent: string;

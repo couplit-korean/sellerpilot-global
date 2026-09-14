@@ -1,3 +1,13 @@
+## 2026-09-14 — 사용자 승인 8월24일 소스 복원 진행
+
+사용자가 Temu 제외 7개 채널의 8월24일 버전으로 실제 복원을 지시했다. 앱·라이브러리·테스트·실행기 소스를 `d5cfd0ad45758eae437ca1ee647dc93e1e95164d` 기준으로 같은 canonical checkout에 복원했고 workspace 검사 및 Next production build/TypeScript/45페이지 생성을 통과했다. 운영 전환 완료는 아니다.
+
+- 복원 전 HEAD `c68c0813ba1f95640ef20c9dd94bee294abf664d`는 `codex/pre-aug24-rollback-20260914t080832z`에 보존했다. 미커밋30파일은 `.local/rollback-backups/20260914T080832Z/`에 tar·patch·SHA256 manifest와 untracked 원본을 보존했다.
+- AGENTS/운영 문서·기존 migration 이력·workspace 검사·운영 supervisor·현재 outputs/tmp 이력은 보존했다. 상품/계정/토큰/DB 데이터는 되돌리거나 삭제하지 않았다.
+- 현재 운영은 여전히 `6e1f8496c739e798d86ba003d908dcc6aad20744`다. 복원 후보를 현재 운영이라고 보고하지 않는다.
+- 실제 운영 DB를 읽기 조회한 결과 옛 `sellerpilot_enqueue_channel_gateway_job`의 최종 함수는 `listing.create`를 허용하지 않는다. 옛 worker complete의5인자 RPC는 현재 없으며6인자 claim_token이 필수다. 성공 저장 함수도 현재 remoteState/job 결속을 요구한다. 이3개 계약을 맞추기 전 후보를 운영 승격하거나 옛 worker로 교체하면 등록/결과 저장이 실패한다.
+- 이미 끝낸 Shopee IP/OAuth 원인 조사를 다시 시작하지 않는다. 옛 코드도6개 채널을 local worker로 보냈다. 남은 것은 DB/작업자 계약 호환이며 새 원인 조사나 새 채널 기능 개발이 아니다.
+
 # 확인된 채널 오류와 재작업 금지 기준
 
 ## 현재 실등록 — 2026-09-14 16:25 KST

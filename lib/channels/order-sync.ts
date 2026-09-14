@@ -1,9 +1,7 @@
 import "server-only";
 import type { ActiveChannelKey } from "./catalog";
-import type { ShippingOperationResult as ChannelOperationResult } from "../shipping/contracts";
+import type { ChannelOperationResult } from "./operations";
 import { firstFiniteNonNegative } from "./normalize-value";
-import { createTimestampNormalizer } from "./normalization-time";
-import { lazadaShipmentItemIds } from "./shipment-draft";
 
 export type NormalizedChannelOrder = {
   externalOrderId: string;
@@ -26,7 +24,20 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 const number = (...values: unknown[]) => firstFiniteNonNegative(values);
-type TimestampNormalizer = ReturnType<typeof createTimestampNormalizer>;
+const iso = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const time = value < 10_000_000_000 ? value * 1000 : value;
+      const parsed = new Date(time);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+  }
+  return new Date().toISOString();
+};
 
 function status(value: unknown): NormalizedChannelOrder["status"] {
   const remote = String(value ?? "").toUpperCase();
@@ -54,25 +65,7 @@ function temuOrderStatus(value: unknown): NormalizedChannelOrder["status"] {
   return status(value);
 }
 
-function qoo10OrderStatus(value: unknown): NormalizedChannelOrder["status"] {
-  const remote = String(value ?? "").trim().toUpperCase();
-  if (remote === "5") return "delivered";
-  if (remote === "4") return "shipped";
-  if (remote === "3") return "ready_to_ship";
-  return status(remote);
-}
-
-function smartstoreOrderStatus(...values: unknown[]): NormalizedChannelOrder["status"] {
-  const remote = values.map((value) => String(value ?? "").trim().toUpperCase()).filter(Boolean).join(" ");
-  if (/CANCEL/.test(remote)) return "cancelled";
-  if (/RETURN/.test(remote)) return "refunded";
-  if (/PURCHASE_DECIDED|DELIVERED/.test(remote)) return "delivered";
-  if (/DISPATCHED|DELIVERING/.test(remote)) return "shipped";
-  if (/PRODUCT_PREPARE/.test(remote)) return "ready_to_ship";
-  return status(remote);
-}
-
-function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer) {
+function normalizeTemu(data: Record<string, unknown>) {
   const rows = list(object(data.result).pageItems);
   return rows.map((row): NormalizedChannelOrder | null => {
     const parent = object(row.parentOrderMap);
@@ -113,15 +106,12 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer) 
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalizer) {
+function normalizeCoupang(data: Record<string, unknown>) {
   const rows = list(data.data).length ? list(data.data) : list(object(data.data).orderSheets);
   return rows.map((row): NormalizedChannelOrder | null => {
     const cancellation = text(row.receiptType).toUpperCase() === "CANCEL" || Array.isArray(row.returnItems);
     const items = cancellation ? list(row.returnItems) : list(row.orderItems);
-    // Coupang's acknowledgement, order readback, and invoice endpoints all use
-    // shipmentBoxId. orderId is a different namespace and must never be sent to
-    // those endpoints as a fallback.
-    const externalOrderId = text(row.shipmentBoxId);
+    const externalOrderId = text(row.orderId, row.shipmentBoxId);
     if (!externalOrderId) return null;
     const itemTotal = items.reduce((sum, item) => {
       const unitPrice = number(item.orderPrice, item.salesPrice, item.unitPrice, item.discountPrice);
@@ -140,25 +130,17 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
       amountKrw: total,
       status: cancellation ? "cancelled" : status(row.status),
       orderedAt: iso(row.orderedAt, row.paidAt, row.createdAt, row.modifiedAt),
-      providerContext: {
-        shipmentBoxId: externalOrderId,
-        orderId: text(row.orderId),
-      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer) {
-  const response = object(data.response);
-  const credentialContext = object(data.sellerpilotProviderContext);
-  const rows = list(response.order_list);
+function normalizeShopee(data: Record<string, unknown>) {
+  const rows = list(object(data.response).order_list);
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_sn, row.order_id);
     if (!externalOrderId) return null;
     const amount = number(row.total_amount);
     const currency = text(row.currency, "KRW").toUpperCase();
-    const shopId = text(row.shop_id, row.shopId, response.shop_id, data.shop_id, credentialContext.shopId);
-    const merchantId = text(credentialContext.merchantId);
     return {
       externalOrderId,
       customerName: text(row.buyer_username, "Shopee 구매자"),
@@ -169,82 +151,25 @@ function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer
       amountKrw: currency === "KRW" ? amount : 0,
       status: status(row.order_status),
       orderedAt: iso(row.create_time, row.update_time),
-      providerContext: {
-        orderSn: externalOrderId,
-        ...(shopId ? { shopId } : {}),
-        ...(merchantId ? { merchantId } : {}),
-      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeLazada(data: Record<string, unknown>, iso: TimestampNormalizer, steps: ChannelOperationResult["steps"] = []) {
+function normalizeLazada(data: Record<string, unknown>, steps: ChannelOperationResult["steps"] = []) {
   const rows = list(object(data.data).orders);
-  const itemDetails = steps.filter((item) => item.name.startsWith("order-items:"));
-  // Inspect every successful detail page in the received batch, not just the
-  // current order page. An item identity cannot belong to two different orders.
-  const itemOwners = new Map<string, Set<string>>();
-  for (const detail of itemDetails.filter((item) => item.ok)) {
-    const orderId = detail.name.slice("order-items:".length).trim();
-    if (!orderId) continue;
-    for (const item of list(detail.data.data)) {
-      let itemId: string;
-      try {
-        [itemId] = lazadaShipmentItemIds([item.order_item_id]);
-      } catch {
-        continue;
-      }
-      const owners = itemOwners.get(itemId) ?? new Set<string>();
-      owners.add(orderId);
-      itemOwners.set(itemId, owners);
-    }
-  }
-  const conflictingOrders = new Set([...itemOwners.values()]
-    .filter((owners) => owners.size > 1).flatMap((owners) => [...owners]));
+  const itemDetails = new Map(steps
+    .filter((item) => item.name.startsWith("order-items:") && item.ok)
+    .map((item) => [item.name.slice("order-items:".length), list(item.data.data)] as const));
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_id, row.order_number);
     if (!externalOrderId) return null;
     const amount = number(row.price, row.grand_total);
     const currency = text(row.currency, "MYR").toUpperCase();
     const statuses = Array.isArray(row.statuses) ? row.statuses.join(" ") : row.status;
-    const details = itemDetails.filter((item) => item.name === `order-items:${externalOrderId}`);
-    const rawItems = details.length === 1 && details[0].ok ? details[0].data.data : undefined;
-    let items = list(rawItems);
-    let orderItemIds: string[] = [];
-    let deliveryType = "";
-    try {
-      // Inspect the unfiltered response. A malformed row must not disappear
-      // before identity validation, including array holes and duplicate IDs.
-      if (conflictingOrders.has(externalOrderId)) throw new Error("conflicting item ownership");
-      if (!Array.isArray(rawItems) || rawItems.length !== items.length) throw new Error("invalid items");
-      orderItemIds = lazadaShipmentItemIds(items.map((item) => item.order_item_id));
-      if (row.items_count !== undefined && row.items_count !== null) {
-        const count = typeof row.items_count === "number" || typeof row.items_count === "string"
-          ? Number(row.items_count) : NaN;
-        if (!Number.isSafeInteger(count) || count !== items.length) throw new Error("incomplete items");
-      }
-      if (items.some((item) => item.order_id !== undefined && text(item.order_id) !== externalOrderId)) {
-        throw new Error("wrong order items");
-      }
-      const deliveryTypes = items.map((item) => {
-        const value = typeof item.shipping_type === "string" ? item.shipping_type.trim().toLowerCase() : "";
-        return value.includes("drop") ? "dropship" : value;
-      });
-      deliveryType = deliveryTypes[0];
-      if (!deliveryType || deliveryTypes.some((value) => value !== deliveryType)) throw new Error("ambiguous delivery type");
-      // JSONB's text form adds separator whitespace. Leave headroom below the
-      // 32768-byte storage guard for this bounded, at-most-100-item object.
-      if (Buffer.byteLength(JSON.stringify({ orderId: externalOrderId, orderItemIds, deliveryType }), "utf8") > 32000) {
-        throw new Error("provider context too large");
-      }
-    } catch {
-      // Persist an explicit, small object so the storage RPC replaces any older
-      // actionable context. Missing/oversized context would retain stale IDs.
-      // Invalid details are also forbidden as display/quantity evidence.
-      items = [];
-      orderItemIds = [];
-      deliveryType = "";
-    }
+    const items = itemDetails.get(externalOrderId) ?? [];
+    const orderItemIds = [...new Set(items.map((item) => text(item.order_item_id)).filter(Boolean))].slice(0, 100);
+    const shippingType = text(items[0]?.shipping_type).toLowerCase();
+    const deliveryType = shippingType.includes("drop") ? "dropship" : shippingType;
     return {
       externalOrderId,
       customerName: text([row.customer_first_name, row.customer_last_name].filter(Boolean).join(" "), "Lazada 구매자"),
@@ -264,14 +189,11 @@ function normalizeLazada(data: Record<string, unknown>, iso: TimestampNormalizer
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
-  const nested = object(data.data);
-  const root = Object.keys(nested).length ? nested : data;
+function normalizeSmartstore(data: Record<string, unknown>) {
+  const root = object(data.data);
   const rows = list(root.lastChangeStatuses).length ? list(root.lastChangeStatuses) : list(root.contents);
   return rows.map((row): NormalizedChannelOrder | null => {
-    // Confirm, detail, and dispatch are product-order scoped. The parent
-    // orderId is not accepted as a safe substitute for productOrderId.
-    const externalOrderId = text(row.productOrderId);
+    const externalOrderId = text(row.orderId, row.productOrderId);
     if (!externalOrderId) return null;
     const amount = number(row.totalPaymentAmount, row.paymentAmount);
     return {
@@ -282,24 +204,13 @@ function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormal
       amount,
       currency: "KRW",
       amountKrw: amount,
-      status: smartstoreOrderStatus(row.productOrderStatus, row.lastChangedType),
+      status: status(text(row.productOrderStatus, row.lastChangedType)),
       orderedAt: iso(row.paymentDate, row.lastChangedDate),
-      providerContext: {
-        productOrderId: externalOrderId,
-        orderId: text(row.orderId),
-      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function ebayOrderStatus(row: Record<string, unknown>): NormalizedChannelOrder["status"] {
-  if (row.orderPaymentStatus === "FULLY_REFUNDED") return "refunded";
-  if (object(row.cancelStatus).cancelState === "CANCELED") return "cancelled";
-  if (row.orderFulfillmentStatus === "FULFILLED") return "shipped";
-  return status(`${text(row.orderPaymentStatus)} ${text(row.orderFulfillmentStatus)}`);
-}
-
-function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
+function normalizeEbay(data: Record<string, unknown>) {
   return list(data.orders).map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.orderId);
     if (!externalOrderId) return null;
@@ -315,19 +226,13 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       amount,
       currency,
       amountKrw: currency === "KRW" ? amount : 0,
-      status: ebayOrderStatus(row),
+      status: status(`${text(row.orderPaymentStatus)} ${text(row.orderFulfillmentStatus)}`),
       orderedAt: iso(row.creationDate, row.lastModifiedDate),
-      providerContext: {
-        orderId: externalOrderId,
-        // Keep every line, including incomplete ones, so the shipment contract
-        // fails closed instead of silently dropping an unrecognized item.
-        lineItems: items.map((item) => ({ lineItemId: text(item.lineItemId), quantity: item.quantity })),
-      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
+function normalizeQoo10(data: Record<string, unknown>) {
   const value = data.ResultObject;
   const rows = list(value).length ? list(value) : list(object(value).ShippingInfo);
   return rows.map((row): NormalizedChannelOrder | null => {
@@ -343,13 +248,13 @@ function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer)
       amount,
       currency,
       amountKrw: currency === "KRW" ? amount : 0,
-      status: qoo10OrderStatus(text(row.ShippingStatus, row.OrderStatus)),
+      status: status(text(row.ShippingStatus, row.OrderStatus)),
       orderedAt: iso(row.OrderDate, row.PaymentDate),
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeElevenst(data: Record<string, unknown>, iso: TimestampNormalizer) {
+function normalizeElevenst(data: Record<string, unknown>) {
   const grouped = new Map<string, Record<string, unknown>[]>();
   for (const row of list(data.orders)) {
     const orderNo = text(row.orderNo);
@@ -383,26 +288,23 @@ function normalizeElevenst(data: Record<string, unknown>, iso: TimestampNormaliz
   });
 }
 
-export function normalizeChannelOrders(
-  channel: ActiveChannelKey,
-  result: ChannelOperationResult,
-  normalizationTimestamp: string,
-): NormalizedChannelOrder[] {
-  const iso = createTimestampNormalizer(normalizationTimestamp);
-  const orderSteps = result.steps.filter((item) => item.ok && /^orders(?::\d+)?$/.test(item.name));
-  const pageData = orderSteps.length
-    ? orderSteps.map((item) => item.data)
-    : [result.steps.at(-1)?.data ?? {}];
-  const normalized = pageData.flatMap((data) => channel === "temu" ? normalizeTemu(data, iso)
-    : channel === "coupang" ? normalizeCoupang(data, iso)
-      : channel === "shopee" ? normalizeShopee(data, iso)
-        : channel === "lazada" ? normalizeLazada(data, iso, result.steps)
-          : channel === "smartstore" ? normalizeSmartstore(data, iso)
-            : channel === "ebay" ? normalizeEbay(data, iso)
-              : channel === "qoo10" ? normalizeQoo10(data, iso)
-                : channel === "elevenst" ? normalizeElevenst(data, iso)
-                  : []);
+export function normalizeChannelOrders(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelOrder[] {
+  if (channel === "temu") {
+    const normalized = result.steps
+      .filter((item) => /^orders(?::\d+)?$/.test(item.name))
+      .flatMap((item) => normalizeTemu(item.data));
+    return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
+  }
+  const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
+  const normalized = channel === "coupang" ? normalizeCoupang(data)
+    : channel === "shopee" ? normalizeShopee(data)
+      : channel === "lazada" ? normalizeLazada(data, result.steps)
+        : channel === "smartstore" ? normalizeSmartstore(data)
+          : channel === "ebay" ? normalizeEbay(data)
+            : channel === "qoo10" ? normalizeQoo10(data)
+              : channel === "elevenst" ? normalizeElevenst(data)
+                : [];
   return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
 }
 
-export { orderSyncArguments, orderSyncRequests } from "../shipping/sync-arguments";
+export { orderSyncArguments, orderSyncRequests } from "./sync-arguments";

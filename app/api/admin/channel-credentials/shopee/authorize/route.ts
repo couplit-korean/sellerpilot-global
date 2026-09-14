@@ -1,25 +1,12 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   buildShopeeAuthorizationUrl,
   textValue,
 } from "../../../../../../lib/channels/protocols";
-import {
-  ChannelGatewayInProgressError,
-  ChannelGatewayReconciliationRequiredError,
-  exchangeOAuthViaChannelGateway,
-} from "../../../../../../lib/channels/gateway";
-import {
-  configuredServerlessStaticEgressChannels,
-  databaseServerlessStaticEgressAllows,
-  hasServerlessStaticEgressFor,
-} from "../../../../../../lib/channels/serverless-static-egress";
-import {
-  resolveShopeeOAuthExecutorReadiness,
-  type ShopeeOAuthExecutorReadiness,
-} from "../../../../../../lib/channels/shopee-oauth-executor-readiness";
+import { exchangeOAuthViaChannelGateway } from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -28,11 +15,7 @@ const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
   environment: z.enum(["sandbox", "production"]).default("production"),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)).default({}),
-  expiresAt: z.string()
-    .datetime({ offset: true })
-    .transform((value) => new Date(value).toISOString())
-    .nullable()
-    .default(null),
+  expiresAt: z.string().datetime().nullable().default(null),
   rotationDays: z.number().int().min(1).max(365).default(90),
   warningDays: z.number().int().min(1).max(180).default(30),
   graceDays: z.number().int().min(0).max(30).default(0),
@@ -46,127 +29,6 @@ function sameValue(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function canonicalTimestamp(value: string | null, fallback: string) {
-  if (!value) return fallback;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : fallback;
-}
-
-async function shopeeStaticEgressReady(serviceClient: SupabaseClient) {
-  const { data, error } = await serviceClient.rpc(
-    "sellerpilot_service_serverless_static_egress_status",
-  );
-  const envConfigured = hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"]);
-  const databaseAllows = databaseServerlessStaticEgressAllows(data, "shopee");
-  return {
-    ready: !error && envConfigured && databaseAllows,
-    error: Boolean(error),
-    envConfigured,
-    databaseAllows,
-  };
-}
-
-async function shopeeGatewayWorkerReady(serviceClient: SupabaseClient) {
-  const { data, error } = await serviceClient.rpc(
-    "sellerpilot_service_serverless_cs_wakeup_status",
-  );
-  const runtimeState = data
-    && typeof data === "object"
-    && !Array.isArray(data)
-    ? data as Record<string, unknown>
-    : {};
-  return !error
-    && runtimeState.configured === true
-    && runtimeState.active === true;
-}
-
-function shopeeGatewayWorkerBlocked(message: string) {
-  return NextResponse.json({
-    ok: false,
-    operatorActionRequired: true,
-    workerReady: false,
-    blockedReason: "SERVERLESS_WORKER_REQUIRED",
-    mode: "serverless_worker_required",
-    message,
-  }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-}
-
-function shopeeOAuthExecutorBlocked(
-  readiness: ShopeeOAuthExecutorReadiness,
-  input: { staticEgressMessage: string; workerMessage: string },
-) {
-  if (readiness.reason === "serverless_worker_required") {
-    return shopeeGatewayWorkerBlocked(input.workerMessage);
-  }
-  if (readiness.reason === "static_egress_status_unavailable") {
-    return NextResponse.json({
-      ok: false,
-      manualRequired: true,
-      operatorActionRequired: true,
-      workerReady: false,
-      blockedReason: readiness.blockedReason,
-      mode: "executor_unproven",
-      reason: readiness.reason,
-      message: readiness.message,
-      prerequisites: readiness.prerequisites,
-    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  if (readiness.reason === "executor_exclusive_unproven") {
-    return NextResponse.json({
-      ok: false,
-      manualRequired: true,
-      operatorActionRequired: true,
-      workerReady: false,
-      blockedReason: readiness.blockedReason,
-      mode: "executor_unproven",
-      reason: readiness.reason,
-      message: readiness.message,
-      prerequisites: readiness.prerequisites,
-    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  return NextResponse.json({
-    ok: false,
-    operatorActionRequired: true,
-    workerReady: false,
-    blockedReason: readiness.blockedReason,
-    mode: "local_gateway_worker_required",
-    reason: readiness.reason,
-    message: readiness.message,
-    prerequisites: readiness.prerequisites,
-  }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-}
-
-async function shopeeOAuthGatewayBlocked(
-  serviceClient: SupabaseClient,
-  input: { staticEgressMessage: string; workerMessage: string },
-  userClient: SupabaseClient,
-) {
-  const staticEgress = await shopeeStaticEgressReady(serviceClient);
-  if (staticEgress.ready) {
-    const workerReady = await shopeeGatewayWorkerReady(serviceClient);
-    if (!workerReady) return shopeeGatewayWorkerBlocked(input.workerMessage);
-    return null;
-  }
-
-  let runtimeStatus: unknown = null;
-  let runtimeStatusAvailable = false;
-  if (!staticEgress.error && !staticEgress.databaseAllows) {
-    const { data, error } = await userClient.rpc("sellerpilot_ai_runtime_status");
-    runtimeStatus = data;
-    runtimeStatusAvailable = !error;
-  }
-
-  const readiness = resolveShopeeOAuthExecutorReadiness({
-    staticEgressRpcError: staticEgress.error,
-    envConfigured: staticEgress.envConfigured,
-    databaseAllows: staticEgress.databaseAllows,
-    runtimeStatus,
-    runtimeStatusAvailable,
-  });
-  if (readiness.allowed) return null;
-  return shopeeOAuthExecutorBlocked(readiness, input);
 }
 
 function oauthStartResponse(
@@ -237,57 +99,12 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  if (oauthCode) {
-    const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
-      staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 다시 시작해 주세요.",
-      workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 승인 코드를 대기열에 넣지 않았습니다. 작업자 상태를 확인한 뒤 OAuth 승인을 다시 시작해 주세요.",
-    }, userClient);
-    if (blocked) return blocked;
-  }
   const metadata = credentialId && Array.isArray(credentialRows)
     ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
     : null;
-  const callbackShopId = textValue(incoming, "shop_id");
-  const mainAccountId = textValue(incoming, "main_account_id");
-  let credentialExpiresAt = parsed.data.expiresAt;
-  if (!credentialExpiresAt && metadata && "expires_at" in metadata && typeof metadata.expires_at === "string") {
-    credentialExpiresAt = metadata.expires_at;
-  }
-  if (oauthCode) {
-    if (!callbackShopId && !mainAccountId) return NextResponse.json({ message: "Shopee 승인 응답에 Shop ID 또는 Main Account ID가 없습니다. 판매자 승인을 다시 시작해 주세요." }, { status: 400 });
-    const authorizationExpiresAt = canonicalTimestamp(
-      credentialExpiresAt,
-      new Date(Date.now() + 365 * 86_400_000).toISOString(),
-    );
-    try {
-      await exchangeOAuthViaChannelGateway({
-        serviceClient,
-        credentialId: credentialId ?? "",
-        channel: "shopee",
-        request: {
-          code: oauthCode,
-          ...(mainAccountId ? { mainAccountId } : { shopId: callbackShopId }),
-          authorizationExpiresAt,
-        },
-      });
-    } catch (error) {
-      if (error instanceof ChannelGatewayInProgressError) {
-        return NextResponse.json({ message: "Shopee OAuth 토큰 교환이 안전하게 진행 중입니다." }, { status: 202 });
-      }
-      if (error instanceof ChannelGatewayReconciliationRequiredError) {
-        const response = NextResponse.json({ message: "Shopee OAuth 결과를 수동으로 확인해야 합니다. 같은 승인 코드를 다시 제출하지 마세요." }, { status: 409 });
-        response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-        return response;
-      }
-      return NextResponse.json({ message: "Shopee OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업 상태를 확인해 주세요." }, { status: 422 });
-    }
-    const response = NextResponse.json({ message: "Shopee 8개 숍 OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
-    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-    return response;
-  }
-
   let previousSecret: Record<string, unknown> = {};
   let credentialEnvironment = parsed.data.environment;
+  let credentialExpiresAt = parsed.data.expiresAt;
   if (credentialId) {
     if (!metadata || !("channel" in metadata) || metadata.channel !== "shopee" || !("status" in metadata) || metadata.status !== "active") {
       return NextResponse.json({ message: "활성 Shopee 키와 요청이 일치하지 않습니다." }, { status: 409 });
@@ -303,15 +120,10 @@ export async function POST(request: NextRequest) {
 
   const partnerId = textValue(incoming, "partner_id") || textValue(previousSecret, "partner_id");
   const partnerKey = textValue(incoming, "partner_key") || textValue(previousSecret, "partner_key");
+  const callbackShopId = textValue(incoming, "shop_id");
+  const mainAccountId = textValue(incoming, "main_account_id");
   if (!partnerId || !partnerKey) {
     return NextResponse.json({ message: "Live Partner ID와 Live Partner Key가 필요합니다." }, { status: 400 });
-  }
-  if (parsed.data.startOAuth) {
-    const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
-      staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 시작해 주세요.",
-      workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 판매자 승인을 시작하지 않았습니다. 작업자 상태를 확인해 주세요.",
-    }, userClient);
-    if (blocked) return blocked;
   }
   const nextSecret: Record<string, unknown> = {
     ...previousSecret,
@@ -320,6 +132,27 @@ export async function POST(request: NextRequest) {
     partner_key: partnerKey,
   };
   delete nextSecret.authorization_code;
+
+  if (oauthCode) {
+    if (!callbackShopId && !mainAccountId) return NextResponse.json({ message: "Shopee 승인 응답에 Shop ID 또는 Main Account ID가 없습니다. 판매자 승인을 다시 시작해 주세요." }, { status: 400 });
+    try {
+      await exchangeOAuthViaChannelGateway({
+        serviceClient,
+        credentialId: credentialId ?? "",
+        channel: "shopee",
+        request: {
+          code: oauthCode,
+          ...(mainAccountId ? { mainAccountId } : { shopId: callbackShopId }),
+          authorizationExpiresAt: credentialExpiresAt ?? new Date(Date.now() + 365 * 86_400_000).toISOString(),
+        },
+      });
+    } catch {
+      return NextResponse.json({ message: "Shopee OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업자 연결을 확인하고 다시 승인해 주세요." }, { status: 422 });
+    }
+    const response = NextResponse.json({ message: "Shopee 8개 숍 OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+    return response;
+  }
 
   if (!oauthCode && parsed.data.startOAuth && credentialId) {
     return oauthStartResponse(request, { partnerId, credentialId, environment: credentialEnvironment });

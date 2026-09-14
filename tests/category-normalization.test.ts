@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeAttributes, normalizeChannelAttributes, normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
-import { elevenstProcessedFoodCategoryId, elevenstProcessedFoodProductNameNoticeCode } from "../lib/channels/elevenst-listing";
+import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
@@ -54,7 +53,6 @@ const qoo10Response = {
         { CATE_L_CD: "100000050", CATE_L_NM: "日用品雑貨", CATE_M_CD: "200000501", CATE_M_NM: "収納用品", CATE_S_CD: "TEST-STORAGE", CATE_S_NM: "収納ボックス・収納ケース" },
         { CATE_L_CD: "100000017", CATE_L_NM: "家具・インテリア", CATE_M_CD: "220000074", CATE_M_NM: "子供部屋家具", CATE_S_CD: "TEST-HANGER-CHILD", CATE_S_NM: "ハンガー" },
         { CATE_L_CD: "100000018", CATE_L_NM: "日用品雑貨", CATE_M_CD: "220000079", CATE_M_NM: "洗濯用品", CATE_S_CD: "TEST-HANGER-LAUNDRY", CATE_S_NM: "ハンガー" },
-        { CATE_L_CD: "100000019", CATE_L_NM: "文具", CATE_M_CD: "200000146", CATE_M_NM: "文房具", CATE_S_CD: "320000542", CATE_S_NM: "クリップ・結束用品" },
         { CATE_L_CD: "100000073", CATE_L_NM: "キッチン家電", CATE_M_CD: "200000246", CATE_M_NM: "コーヒーメーカー", CATE_S_CD: "320001985", CATE_S_NM: "エスプレッソマシーン" },
       ],
     },
@@ -70,12 +68,6 @@ test("Qoo10 category normalization maps current QAPI fields and cross-locale cup
 
 test("Qoo10 category normalization does not return an arbitrary leaf without a lexical match", () => {
   assert.deepEqual(normalizeSuggestions("qoo10", qoo10Response, "분류 사전이 없는 임의 상품"), []);
-});
-
-test("Qoo10 category normalization selects the provider-backed cable-clip leaf", () => {
-  const suggestion = normalizeSuggestions("qoo10", qoo10Response, "부착형 케이블 정리 클립 6개 세트")[0];
-  assert.equal(suggestion?.id, "320000542");
-  assert.deepEqual(suggestion?.path, ["文具", "文房具", "クリップ・結束用品"]);
 });
 
 test("Qoo10 normalization keeps notebook, cleaning-cloth, and cable-organizer products out of lookalike categories", () => {
@@ -171,32 +163,6 @@ test("Shopee GlobalProduct normalization blocks arbitrary categories without a l
 
 test("Shopee GlobalProduct normalization maps soap instead of an unrelated beauty leaf", () => {
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "Natural cleansing soap bar")[0]?.id, "100629");
-});
-
-test("Shopee provider hierarchy preserves the exact 100479 leaf path instead of a flat guessed label", () => {
-  const response = {
-    ok: true,
-    steps: [{
-      name: "global-categories",
-      ok: true,
-      status: 200,
-      data: { response: { category_list: [
-        { category_id: 100013, parent_category_id: 0, display_category_name: "Mobile & Gadgets", has_children: true },
-        { category_id: 100075, parent_category_id: 100013, display_category_name: "Accessories", has_children: true },
-        { category_id: 100284, parent_category_id: 100075, display_category_name: "Cables, Chargers & Converters", has_children: true },
-        { category_id: 100479, parent_category_id: 100284, display_category_name: "Cable Cases, Protectors, & Winders", has_children: false },
-      ] } },
-    }],
-  };
-  const suggestion = normalizeSuggestions("shopee", response, "adhesive cable clips cord organizers")[0];
-  assert.equal(suggestion?.id, "100479");
-  assert.deepEqual(suggestion?.path, [
-    "Mobile & Gadgets",
-    "Accessories",
-    "Cables, Chargers & Converters",
-    "Cable Cases, Protectors, & Winders",
-  ]);
-  assert.equal(suggestion?.leaf, true);
 });
 
 test("Shopee beauty-tool normalization keeps sponges separate from brushes", () => {
@@ -377,56 +343,6 @@ test("Lazada normalization maps Malay soap wording to a beauty cleanser leaf", (
   assert.equal(normalizeSuggestions("lazada", lazadaCategoryResponse, "Sabun pembersih pepejal")[0]?.id, "1002");
 });
 
-test("Lazada keeps official soft-drink leaves for Korean cider and excludes alcoholic cider and rum", () => {
-  // Minimal projection of official MY receipt 062a5764-fcbc-44c7-93fc-fa3eaf9593b1,
-  // completed 2026-09-13T23:03:37Z. Names, IDs, paths and leaf flags are unchanged.
-  const response = { ok: true, steps: [{
-    name: "category-suggestion", ok: true, status: 200, data: { data: { categorySuggestions: [
-      { categoryId: 10003131, categoryName: "Lemon Lime", categoryPath: "Groceries>Drinks>Soft Drinks>Carbonated Drinks>Lemon Lime" },
-      { categoryId: 10100513, categoryName: "Apple", categoryPath: "Groceries>Alcoholic Beverages>Cider>Apple" },
-      { categoryId: 10100514, categoryName: "Flavoured", categoryPath: "Groceries>Alcoholic Beverages>Cider>Flavoured" },
-      { categoryId: 10003130, categoryName: "Sparkling Flavoured Drinks", categoryPath: "Groceries>Drinks>Soft Drinks>Carbonated Drinks>Sparkling Flavoured Drinks" },
-    ] } },
-  }, {
-    name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: 3752, name: "Groceries", leaf: false, children: [
-        { category_id: 3753, name: "Minuman Beralkohol", leaf: false, children: [
-          { category_id: 3754, name: "Spirits", leaf: false, children: [{ category_id: 3755, name: "Rum", leaf: true }] },
-          { category_id: 10100512, name: "Cider", leaf: false, children: [
-            { category_id: 10100514, name: "Flavoured", leaf: true },
-            { category_id: 10100513, name: "Apple", leaf: true },
-          ] },
-        ] },
-        { category_id: 8038, name: "Minuman", leaf: false, children: [
-          { category_id: 10002163, name: "Minuman BerGas", leaf: false, children: [
-            { category_id: 10003133, name: "Carbonated Drinks", leaf: false, children: [
-              { category_id: 10003129, name: "Cola", leaf: true },
-              { category_id: 10003130, name: "Sparkling Flavoured Drinks", leaf: true },
-              { category_id: 10003131, name: "Lemon Lime", leaf: true },
-            ] },
-          ] },
-        ] },
-      ] },
-    ] },
-  }] };
-  for (const query of [
-    "Narangd Cider Zero 500 ml Minuman Berkarbonat 1 Botol",
-    "나랑드사이다 제로 500 ml 탄산음료 1병",
-    "Narangd Cider Zero Carbonated Soft Drink 500 ml Single Bottle",
-    "Minuman BerGas 500 ml",
-  ]) {
-    const suggestions = normalizeSuggestions("lazada", response, query);
-    assert.deepEqual(suggestions.slice(0, 2).map(item => item.id), ["10003131", "10003130"], query);
-    assert.ok(!suggestions.some(item => ["10100513", "10100514", "3755"].includes(item.id)));
-    assert.equal(suggestions[0]?.id, "10003131", "the provider recommendation wins over tree traversal order");
-    assert.ok(suggestions.every(item => item.leaf && /Carbonated Drinks/.test(item.path.join(" "))));
-  }
-  // The word cider alone does not reclassify a real alcoholic cider as soda.
-  const alcoholic = normalizeSuggestions("lazada", response, "Apple alcoholic cider");
-  assert.ok(alcoholic.some(item => item.id === "10100513"));
-  assert.ok(!alcoholic.some(item => item.id === "10003131"));
-});
-
 test("Lazada normalization excludes a matching parent and keeps the official nested leaf path", () => {
   const response = {
     ok: true,
@@ -502,61 +418,4 @@ test("eBay normalization blocks provider-score noise and prioritizes the three Q
   assert.deepEqual(normalizeSuggestions("ebay", response, "A5 kraft notebook notepad").map((item) => item.id), ["NOTE"]);
   assert.deepEqual(normalizeSuggestions("ebay", response, "microfiber cleaning cloth").map((item) => item.id), ["CLOTH"]);
   assert.deepEqual(normalizeSuggestions("ebay", response, "adhesive cable clips cord organizer").map((item) => item.id), ["CABLE"]);
-});
-
-test("empty category matches still expose the channel's own top-level groups", () => {
-  const payload = { ok: true, steps: [{ name: "GetCatagoryListAll", ok: true, status: 200, data: { ResultObject: [
-    { CATE_L_CD: "1", CATE_L_NM: "食品", CATE_M_CD: "2", CATE_M_NM: "スイーツ・お菓子", CATE_S_CD: "300000536", CATE_S_NM: "洋菓子" },
-    { CATE_L_CD: "9", CATE_L_NM: "レディース服", CATE_M_CD: "8", CATE_M_NM: "スーツ", CATE_S_CD: "300002246", CATE_S_NM: "パンツスーツ" },
-  ] } }] };
-  assert.deepEqual(normalizeSuggestions("qoo10", payload, "롯데 롯샌 파스퇴르 순우유맛"), []);
-  const groups = officialTopLevelGroups(payload);
-  assert.ok(groups.includes("食品"));
-  assert.ok(groups.includes("レディース服"));
-});
-
-test("category attributes preserve explicit eBay FREE_TEXT semantics with suggested values", () => {
-  const attributes = normalizeAttributes([{
-    ok: true,
-    steps: [{
-      name: "categories.attributes",
-      ok: true,
-      status: 200,
-      data: {
-        aspects: [
-          {
-            localizedAspectName: "Brand",
-            aspectConstraint: { aspectRequired: true, aspectMode: "FREE_TEXT" },
-            aspectValues: [{ localizedValue: "Unbranded" }, { localizedValue: "LOTTE" }],
-          },
-          {
-            localizedAspectName: "Product",
-            aspectConstraint: { aspectRequired: true, aspectMode: "SELECTION_ONLY" },
-            aspectValues: [{ localizedValue: "Cookie & Biscuit" }],
-          },
-          {
-            attributeTypeName: "Color",
-            mandatory: true,
-            attributeValues: [{ name: "Blue" }],
-          },
-        ],
-      },
-    }],
-  }]);
-
-  assert.equal(attributes.find((attribute) => attribute.name === "Brand")?.mode, "FREE_TEXT");
-  assert.deepEqual(attributes.find((attribute) => attribute.name === "Brand")?.values.map((value) => value.name), ["Unbranded", "LOTTE"]);
-  assert.equal(attributes.find((attribute) => attribute.name === "Product")?.mode, "SELECTION_ONLY");
-  assert.equal(attributes.find((attribute) => attribute.name === "Color")?.mode, null);
-});
-
-test("11st processed-food category exposes every non-derived notice as an explicit Step 3 field", () => {
-  const food = normalizeChannelAttributes("elevenst", elevenstProcessedFoodCategoryId, []);
-  assert.equal(food.length, 10);
-  assert.equal(food.every((attribute) => attribute.id.startsWith("notification:") && attribute.required && attribute.mode === "FREE_TEXT"), true);
-  assert.equal(food.some((attribute) => attribute.id === `notification:${elevenstProcessedFoodProductNameNoticeCode}`), false, "the product name is derived from the confirmed title");
-  assert.equal(food.some((attribute) => attribute.id === "notification:176398001"), true, "expiry must be entered explicitly");
-  assert.equal(food.some((attribute) => attribute.id === "notification:23756754"), true, "customer-service phone must be entered explicitly");
-  assert.deepEqual(normalizeChannelAttributes("elevenst", "1341821", []), []);
-  assert.deepEqual(normalizeChannelAttributes("ebay", "20473", []), []);
 });

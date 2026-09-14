@@ -1,2 +1,0 @@
-export const MAX_PROVIDER_SYNC_PAGES = 20;
-export const MAX_PROVIDER_SYNC_CONTINUATIONS = 50;

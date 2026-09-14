@@ -4,20 +4,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   buildEbayConsentUrl,
+  ebayDefaultScopes,
+  exchangeEbayOAuthToken,
   textValue,
 } from "../../../../../../lib/channels/protocols";
-import { ebayOAuthScopes, hasRecordedEbayMessageScope, parseEbayOAuthCookie } from "../../../../../../lib/channels/ebay-oauth-scopes";
-import {
-  ChannelGatewayInProgressError,
-  ChannelGatewayReconciliationRequiredError,
-  exchangeOAuthViaChannelGateway,
-} from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
-import { exchangeFreshEbayOAuth } from "../../../../../../lib/channels/ebay-fresh-oauth";
-import { configuredServerlessCsGatewayDependencies } from "../../../../../../lib/channels/serverless-gateway-runtime";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
@@ -29,7 +22,6 @@ const requestSchema = z.object({
   graceDays: z.number().int().min(0).max(30).default(0),
   oauthState: z.string().min(24).max(180).optional(),
   startOAuth: z.boolean().default(false),
-  includeMessages: z.boolean().default(false),
 });
 
 const oauthCookieName = "sellerpilot_ebay_oauth";
@@ -42,7 +34,7 @@ function sameValue(left: string, right: string) {
 
 function oauthStartResponse(
   request: NextRequest,
-  input: { clientId: string; ruName: string; credentialId: string; environment: "sandbox" | "production"; includeMessages: boolean },
+  input: { clientId: string; ruName: string; credentialId: string; environment: "sandbox" | "production" },
 ) {
   const state = `sellerpilot-ebay-${randomBytes(24).toString("base64url")}`;
   const authorizationUrl = buildEbayConsentUrl({
@@ -50,13 +42,13 @@ function oauthStartResponse(
     clientId: input.clientId,
     ruName: input.ruName,
     state,
-    scopes: ebayOAuthScopes({}, input.includeMessages),
+    scopes: ebayDefaultScopes,
   });
   const response = NextResponse.json({
-    message: input.includeMessages ? "eBay 일반 대화 조회·전송·관리 권한 승인 화면을 준비했습니다." : "eBay 판매자 승인 화면으로 이동합니다.",
+    message: "eBay 판매자 승인 화면으로 이동합니다.",
     authorizationUrl: authorizationUrl.toString(),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
-  response.cookies.set(oauthCookieName, `${state}.${input.credentialId}${input.includeMessages ? ".messages" : ""}`, {
+  response.cookies.set(oauthCookieName, `${state}.${input.credentialId}`, {
     httpOnly: true,
     secure: request.nextUrl.protocol === "https:",
     sameSite: "lax",
@@ -93,77 +85,33 @@ export async function POST(request: NextRequest) {
   const incoming = parsed.data.secretPayload;
   const oauthCode = textValue(incoming, "authorization_code");
   let credentialId = parsed.data.credentialId;
-  let consentIncludesMessages = false;
   if (oauthCode) {
     const cookieValue = request.cookies.get(oauthCookieName)?.value ?? "";
-    const consent = parseEbayOAuthCookie(cookieValue);
-    if (!parsed.data.oauthState || !consent || !sameValue(parsed.data.oauthState, consent.state)) {
+    const separator = cookieValue.lastIndexOf(".");
+    const cookieState = separator > 0 ? cookieValue.slice(0, separator) : "";
+    const cookieCredentialId = separator > 0 ? cookieValue.slice(separator + 1) : "";
+    if (!parsed.data.oauthState || !cookieState || !sameValue(parsed.data.oauthState, cookieState) || !z.string().uuid().safeParse(cookieCredentialId).success) {
       return NextResponse.json({ message: "eBay OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
     }
-    credentialId = consent.credentialId;
-    consentIncludesMessages = consent.includeMessages;
-  }
-
-  const metadata = credentialId && Array.isArray(credentialRows)
-    ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
-    : null;
-  if (credentialId && (!metadata || !("channel" in metadata) || metadata.channel !== "ebay" || !("status" in metadata) || metadata.status !== "active")) {
-    return NextResponse.json({ message: "활성 eBay 키와 요청이 일치하지 않습니다." }, { status: 409 });
+    credentialId = cookieCredentialId;
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  if (oauthCode) {
-    try {
-      if (metadata && "environment" in metadata && metadata.environment === "production") {
-        const result = await exchangeFreshEbayOAuth({
-          actorId: userData.user.id,
-          credentialId: credentialId ?? "",
-          code: oauthCode,
-          includeMessages: consentIncludesMessages,
-        }, { ...configuredServerlessCsGatewayDependencies(), executionTimeoutMs: 80_000 });
-        const status = result.status === "completed" ? 200 : result.status === "in_progress" ? 202 : 409;
-        const response = NextResponse.json({
-          message: result.status === "completed"
-            ? "eBay 새 승인과 동일 판매자 확인, Vault·완료 결과 저장을 마쳤습니다. 일반 대화 접근은 실제 조회로 확인합니다."
-            : result.status === "in_progress"
-              ? "이미 접수한 eBay 승인 결과를 확인 중입니다. 같은 코드는 다시 실행하지 않습니다."
-              : "eBay 승인 결과 확인이 필요합니다. 같은 승인 코드를 다시 제출하지 마세요.",
-          code: result.code,
-        }, { status, headers: { "cache-control": "no-store, max-age=0" } });
-        if (result.status !== "in_progress") response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-        return response;
-      }
-      await exchangeOAuthViaChannelGateway({
-        serviceClient,
-        credentialId: credentialId ?? "",
-        channel: "ebay",
-        request: { code: oauthCode, includeMessages: consentIncludesMessages },
-      });
-    } catch (error) {
-      if (error instanceof ChannelGatewayInProgressError) {
-        return NextResponse.json({ message: "eBay OAuth 토큰 교환이 안전하게 진행 중입니다." }, { status: 202 });
-      }
-      if (error instanceof ChannelGatewayReconciliationRequiredError) {
-        const response = NextResponse.json({ message: "eBay OAuth 결과를 수동으로 확인해야 합니다. 같은 승인 코드를 다시 제출하지 마세요." }, { status: 409 });
-        response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-        return response;
-      }
-      return NextResponse.json({ message: "eBay OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업 상태를 확인해 주세요." }, { status: 422 });
-    }
-    const response = NextResponse.json({ message: consentIncludesMessages ? "eBay OAuth 연결과 Vault 저장이 완료됐습니다. 일반 대화 접근과 이력 수집은 별도 조회 검증이 필요합니다." : "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
-    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-    return response;
-  }
-
+  const metadata = credentialId && Array.isArray(credentialRows)
+    ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
+    : null;
   let previousSecret: Record<string, unknown> = {};
   let credentialEnvironment = parsed.data.environment;
   if (credentialId) {
+    if (!metadata || !("channel" in metadata) || metadata.channel !== "ebay" || !("status" in metadata) || metadata.status !== "active") {
+      return NextResponse.json({ message: "활성 eBay 키와 요청이 일치하지 않습니다." }, { status: 409 });
+    }
     const { data, error } = await serviceClient.rpc("sellerpilot_decrypt_credential", { p_credential_id: credentialId });
     if (error || !data || typeof data !== "object" || Array.isArray(data)) {
       return NextResponse.json({ message: "기존 eBay 키를 안전하게 불러오지 못했습니다." }, { status: 404 });
     }
     previousSecret = data as Record<string, unknown>;
-    if (metadata && "environment" in metadata && metadata.environment === "sandbox") credentialEnvironment = "sandbox";
+    if ("environment" in metadata && metadata.environment === "sandbox") credentialEnvironment = "sandbox";
   }
 
   const clientId = textValue(incoming, "client_id") || textValue(previousSecret, "client_id");
@@ -178,13 +126,34 @@ export async function POST(request: NextRequest) {
     client_id: clientId,
     client_secret: clientSecret,
     ru_name: ruName,
-    scopes: ebayOAuthScopes(previousSecret).join(" "),
+    scopes: ebayDefaultScopes.join(" "),
   };
   delete nextSecret.authorization_code;
-  const expiresAt = parsed.data.expiresAt;
+  let expiresAt = parsed.data.expiresAt;
+
+  if (oauthCode) {
+    const remote = await exchangeEbayOAuthToken({
+      environment: credentialEnvironment,
+      clientId,
+      clientSecret,
+      ruName,
+      code: oauthCode,
+      scopes: ebayDefaultScopes,
+    });
+    const accessToken = textValue(remote.data, "access_token");
+    const refreshToken = textValue(remote.data, "refresh_token");
+    if (!remote.response.ok || !accessToken || !refreshToken) {
+      return NextResponse.json({ message: "eBay OAuth 토큰 교환에 실패했습니다. RuName·환경·승인 유효시간을 확인해 주세요." }, { status: 422 });
+    }
+    nextSecret.access_token = accessToken;
+    nextSecret.refresh_token = refreshToken;
+    nextSecret.access_token_expires_at = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
+    nextSecret.refresh_token_expires_at = new Date(Date.now() + Number(remote.data.refresh_token_expires_in ?? 47_304_000) * 1000).toISOString();
+    expiresAt = nextSecret.refresh_token_expires_at as string;
+  }
 
   if (!oauthCode && parsed.data.startOAuth && credentialId) {
-    return oauthStartResponse(request, { clientId, ruName, credentialId, environment: credentialEnvironment, includeMessages: parsed.data.includeMessages || hasRecordedEbayMessageScope(previousSecret) });
+    return oauthStartResponse(request, { clientId, ruName, credentialId, environment: credentialEnvironment });
   }
   if (!oauthCode && !parsed.data.startOAuth && !textValue(nextSecret, "access_token")) {
     return NextResponse.json({ message: "eBay User Access Token이 없습니다. OAuth 연결을 시작해 주세요." }, { status: 400 });
@@ -201,7 +170,9 @@ export async function POST(request: NextRequest) {
   });
   if (rotateError) return NextResponse.json({ message: "eBay 키를 Vault에 저장하지 못했습니다." }, { status: 500 });
   if (!oauthCode && parsed.data.startOAuth) {
-    return oauthStartResponse(request, { clientId, ruName, credentialId: String(nextCredentialId), environment: credentialEnvironment, includeMessages: parsed.data.includeMessages || hasRecordedEbayMessageScope(previousSecret) });
+    return oauthStartResponse(request, { clientId, ruName, credentialId: String(nextCredentialId), environment: credentialEnvironment });
   }
-  return NextResponse.json({ message: "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+  const response = NextResponse.json({ message: "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+  if (oauthCode) response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+  return response;
 }

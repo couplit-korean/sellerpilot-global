@@ -1,7 +1,7 @@
 import type { ActiveChannelKey } from "./channels/catalog";
 
-export const STYLE_LEARNING_VERSION = "2026.08.29-r6";
-export const STYLE_LEARNING_RESEARCH_DATE = "2026-08-29";
+export const STYLE_LEARNING_VERSION = "2026.08.24-r3";
+export const STYLE_LEARNING_RESEARCH_DATE = "2026-08-19";
 
 export type StyleLocale =
   | "ko-KR"
@@ -15,38 +15,7 @@ export type StyleLocale =
   | "zh-TW"
   | "pt-BR"
   | "es-MX"
-  | "id-ID"
-  | "en-GB"
-  | "de-DE"
-  | "en-AU"
-  | "en-CA"
-  | "fr-FR"
-  | "it-IT"
-  | "es-ES"
-  | "de-AT"
-  | "nl-BE"
-  | "de-CH"
-  | "zh-HK"
-  | "en-IE"
-  | "nl-NL"
-  | "pl-PL";
-
-type LearnedSearchLocale = Exclude<StyleLocale,
-  | "en-GB"
-  | "de-DE"
-  | "en-AU"
-  | "en-CA"
-  | "fr-FR"
-  | "it-IT"
-  | "es-ES"
-  | "de-AT"
-  | "nl-BE"
-  | "de-CH"
-  | "zh-HK"
-  | "en-IE"
-  | "nl-NL"
-  | "pl-PL"
->;
+  | "id-ID";
 
 export type StyleTargetMarket = {
   channel: ActiveChannelKey;
@@ -80,7 +49,7 @@ export type CategoryStyleProfile = {
   label: string;
   aliases: string[];
   families: string[];
-  searchTerms: Record<LearnedSearchLocale, string>;
+  searchTerms: Record<StyleLocale, string>;
   textStyle: string;
   detailLayout: string[];
   thumbnailStyle: string;
@@ -122,23 +91,8 @@ export const styleTargetMarkets: StyleTargetMarket[] = [
   { channel: "lazada", market: "VN", country: "베트남", locale: "vi-VN", language: "Tiếng Việt" },
   { channel: "lazada", market: "ID", country: "인도네시아", locale: "id-ID", language: "Bahasa Indonesia" },
   { channel: "coupang", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
-  { channel: "elevenst", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
   { channel: "smartstore", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
   { channel: "ebay", market: "US", country: "미국", locale: "en-US", language: "English" },
-  { channel: "ebay", market: "GB", country: "영국", locale: "en-GB", language: "English" },
-  { channel: "ebay", market: "DE", country: "독일", locale: "de-DE", language: "Deutsch" },
-  { channel: "ebay", market: "AU", country: "호주", locale: "en-AU", language: "English" },
-  { channel: "ebay", market: "CA", country: "캐나다", locale: "en-CA", language: "English" },
-  { channel: "ebay", market: "FR", country: "프랑스", locale: "fr-FR", language: "Français" },
-  { channel: "ebay", market: "IT", country: "이탈리아", locale: "it-IT", language: "Italiano" },
-  { channel: "ebay", market: "ES", country: "스페인", locale: "es-ES", language: "Español" },
-  { channel: "ebay", market: "AT", country: "오스트리아", locale: "de-AT", language: "Deutsch" },
-  { channel: "ebay", market: "BE", country: "벨기에", locale: "nl-BE", language: "Nederlands" },
-  { channel: "ebay", market: "CH", country: "스위스", locale: "de-CH", language: "Deutsch" },
-  { channel: "ebay", market: "HK", country: "홍콩", locale: "zh-HK", language: "繁體中文" },
-  { channel: "ebay", market: "IE", country: "아일랜드", locale: "en-IE", language: "English" },
-  { channel: "ebay", market: "NL", country: "네덜란드", locale: "nl-NL", language: "Nederlands" },
-  { channel: "ebay", market: "PL", country: "폴란드", locale: "pl-PL", language: "Polski" },
   { channel: "temu", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
 ];
 
@@ -200,20 +154,6 @@ export const channelStyleProfiles: ChannelStyleProfile[] = [
     ],
   },
   {
-    channel: "elevenst",
-    label: "11번가",
-    titleFormula: "브랜드 + 상품유형 + 모델/핵심 속성 + 용량·수량 + 옵션. 검색 정확도를 위해 확인된 브랜드·모델과 규격을 구조화 필드와 일치시키고 프로모션 문구는 제외한다.",
-    descriptionStyle: "모바일에서 먼저 읽히는 핵심 구성·규격·사용법을 짧은 블록으로 배치하고, 상품정보 제공고시와 원산지·배송 조건은 확인된 구조화 값으로 분리한다.",
-    detailLayout: ["상품·구성 즉시 인지", "핵심 특징", "규격·옵션", "실물 디테일", "사용 방법", "구성·패키지", "상품정보 제공고시"],
-    thumbnailStyle: "최소 600×600 이상의 선명한 정사각 이미지에서 실제 상품 전체와 구성 수량을 우선한다. 가격·할인·배송·랭킹 문구를 이미지에 고정하지 않는다.",
-    shotList: ["정면 대표", "45도 전체", "구성품", "재질·내용물 근접", "크기 비교", "사용 장면", "후면 표시"],
-    guardrails: ["브랜드·모델·옵션을 상품 사실과 다르게 생성하지 않음", "랭킹·최저가·쿠폰·판매량·공식 표시는 실데이터와 권한 없이는 삽입 금지", "동일 상품 중복 등록과 무관 검색어 나열 금지"],
-    evidence: [
-      { type: "official", label: "11번가 모바일 상품등록 정책", url: "https://www.11st.co.kr/tpost/FrontTPostAction.tmall?NtceNo=856123&method=getNoticeView&type=so", note: "대표·추가·목록 이미지 최소 600×600 및 모바일 상품정보 정책" },
-      { type: "market-observation", label: "11번가 식품 검색", url: "https://www.11st.co.kr/category/DisplayCategory.tmall?dispCtgrNo=1148829&method=getDisplayCategory2Depth", note: "브랜드·상품유형·중량·수량 중심 제목과 정사각 제품 이미지" },
-    ],
-  },
-  {
     channel: "smartstore",
     label: "네이버 스마트스토어",
     titleFormula: "브랜드 + 상품유형 + 핵심 속성 + 규격/수량 + 옵션. 검색어를 자연스러운 한국어 상품명 안에 한 번씩 배치한다.",
@@ -259,7 +199,7 @@ export const channelStyleProfiles: ChannelStyleProfile[] = [
   },
 ];
 
-const sharedSearchTerms: Record<CategoryStyleProfile["id"], Record<LearnedSearchLocale, string>> = {
+const sharedSearchTerms: Record<CategoryStyleProfile["id"], Record<StyleLocale, string>> = {
   "beauty-skincare": {
     "ko-KR": "스킨케어 보습 세럼", "ja-JP": "スキンケア 保湿 美容液", "en-US": "skincare moisturizer serum", "en-SG": "skincare moisturiser serum", "ms-MY": "penjagaan kulit pelembap serum", "en-PH": "skincare moisturizer serum", "vi-VN": "chăm sóc da kem dưỡng serum", "th-TH": "สกินแคร์ มอยส์เจอไรเซอร์ เซรั่ม", "zh-TW": "保養 保濕 精華", "pt-BR": "cuidados com a pele hidratante sérum", "es-MX": "cuidado de la piel crema hidratante suero", "id-ID": "perawatan kulit pelembap serum",
   },
@@ -361,7 +301,7 @@ export const categoryStyleProfiles: CategoryStyleProfile[] = [
   },
 ];
 
-const variantTerms: Record<LearnedSearchLocale, string[]> = {
+const variantTerms: Record<StyleLocale, string[]> = {
   "ko-KR": ["기본형", "단품", "세트 구성", "휴대용", "대용량", "프리미엄", "입문용", "전문가용", "선물 포장", "미니멀 패키지"],
   "ja-JP": ["スタンダード", "単品", "セット", "携帯用", "大容量", "プレミアム", "初心者向け", "プロ用", "ギフト包装", "シンプル包装"],
   "en-US": ["standard", "single item", "bundle set", "travel size", "large size", "premium", "beginner", "professional", "gift pack", "minimal packaging"],
@@ -376,7 +316,7 @@ const variantTerms: Record<LearnedSearchLocale, string[]> = {
   "id-ID": ["standar", "satuan", "set bundel", "ukuran travel", "ukuran besar", "premium", "untuk pemula", "profesional", "kemasan hadiah", "kemasan minimalis"],
 };
 
-const localizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<LearnedSearchLocale, string[]>> = {
+const localizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<StyleLocale, string[]>> = {
   "beauty-skincare": {
     "ko-KR": ["보습 크림", "진정 젤크림", "페이셜 토너", "페이셜 에센스", "페이셜 앰플", "페이셜 세럼", "페이셜 에멀전", "클렌징 폼", "클렌징 오일", "시트 마스크"],
     "ja-JP": ["保湿クリーム", "鎮静ジェルクリーム", "化粧水", "フェイスエッセンス", "フェイスアンプル", "美容液", "乳液", "洗顔フォーム", "クレンジングオイル", "シートマスク"],
@@ -463,7 +403,7 @@ const localizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<LearnedSea
   },
 };
 
-const additionalLocalizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<LearnedSearchLocale, string[]>> = {
+const additionalLocalizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<StyleLocale, string[]>> = {
   "beauty-skincare": {
     "ko-KR": ["아이 크림", "선크림", "립밤", "각질 토너 패드", "클렌징 밤", "페이셜 미스트", "슬리핑 마스크", "핸드 크림", "바디 로션", "스팟 패치"],
     "ja-JP": ["アイクリーム", "日焼け止め", "リップバーム", "角質ケアトナーパッド", "クレンジングバーム", "フェイスミスト", "スリーピングマスク", "ハンドクリーム", "ボディローション", "スポットパッチ"],
@@ -550,108 +490,6 @@ const additionalLocalizedFamilyTerms: Record<CategoryStyleProfile["id"], Record<
   },
 };
 
-type EbayLocalizedSearchLanguage = "de" | "fr" | "it" | "nl" | "pl";
-
-const ebayLocalizedSearchLanguage: Partial<Record<StyleLocale, EbayLocalizedSearchLanguage>> = {
-  "de-DE": "de", "de-AT": "de", "de-CH": "de",
-  "fr-FR": "fr",
-  "it-IT": "it",
-  "nl-BE": "nl", "nl-NL": "nl",
-  "pl-PL": "pl",
-};
-
-const ebayLocalizedVariantTerms: Record<EbayLocalizedSearchLanguage, readonly string[]> = {
-  de: ["Standard", "Einzelstück", "Set", "Reisegröße", "Großpackung", "Premium", "für Einsteiger", "für Profis", "Geschenkpackung", "schlichte Verpackung"],
-  fr: ["standard", "article seul", "lot", "format voyage", "grand format", "premium", "débutant", "professionnel", "coffret cadeau", "emballage minimaliste"],
-  it: ["standard", "articolo singolo", "set", "formato viaggio", "formato grande", "premium", "principiante", "professionale", "confezione regalo", "confezione minimalista"],
-  nl: ["standaard", "los artikel", "set", "reisformaat", "grootverpakking", "premium", "voor beginners", "professioneel", "geschenkverpakking", "minimalistische verpakking"],
-  pl: ["standardowy", "pojedynczy", "zestaw", "rozmiar podróżny", "duże opakowanie", "premium", "dla początkujących", "profesjonalny", "opakowanie prezentowe", "minimalistyczne opakowanie"],
-};
-
-const ebayLocalizedFamilyTerms: Record<
-  EbayLocalizedSearchLanguage,
-  Record<CategoryStyleProfile["id"], readonly string[]>
-> = {
-  de: {
-    "beauty-skincare": ["Feuchtigkeitscreme", "beruhigende Gelcreme", "Gesichtswasser", "Gesichtsessenz", "Gesichtsampulle", "Gesichtsserum", "Gesichtsemulsion", "Reinigungsschaum", "Reinigungsöl", "Tuchmaske", "Augencreme", "Sonnencreme", "Lippenbalsam", "Peeling Tonerpads", "Reinigungsbalsam", "Gesichtsspray", "Schlafmaske", "Handcreme", "Körperlotion", "Pickelpflaster"],
-    "beauty-tools": ["Make-up-Pinselset", "Foundationpinsel", "Lidschattenpinsel", "Make-up-Schwamm", "Cushion-Puff", "Wimpernzange", "Augenbrauenwerkzeug", "Gesichtsroller", "Gua-Sha-Werkzeug", "Pinselreiniger", "Lippenpinsel", "Augenbrauenschere", "Kosmetikspatel", "Make-up-Mischpalette", "Pinseltrockner", "Puderquaste", "Kosmetikspiegel", "Kosmetikpinzette", "Silikon-Maskenpinsel", "Kosmetiketui"],
-    "food-staples": ["weißer Reis", "Fertigreis", "Penne-Nudeln", "Spaghetti", "Weizenmehl", "Haferflocken", "Kaffeebohnen", "Teebeutel", "Kochsoße", "Knabbergebäck", "Vollkornreis", "Getreidemischung", "Couscous", "Reisnudeln", "Frühstücksflocken", "Honig", "Speiseöl", "Bohnenkonserve", "Brühe", "Trockenfrüchte"],
-    "men-tops": ["Herren Kurzarmshirt", "Herren Langarmshirt", "Herren Poloshirt", "Herren Oxfordhemd", "Herren Leinenhemd", "Herren Sweatshirt", "Herren Kapuzenpullover", "Herren Strickpullover", "Herren Reißverschlussjacke", "Herren Leichtweste", "Herren Henleyshirt", "Herren Hemd mit Kubakragen", "Herren Flanellhemd", "Herren Strickjacke", "Herren Rugbyshirt", "Herren Stehkragenoberteil", "Herren ärmelloses Oberteil", "Herren Funktionsunterhemd", "Herren Jeanshemd", "Herren Windjacke"],
-    "toys-games": ["Teddybär Plüschtier", "Spielzeugauto", "weiches Spielzeugauto", "Bausteine", "Puzzle", "Brettspiel", "Rollenspielset", "Bastelset", "Sensorikspielzeug", "Outdoor-Spielzeug", "Stapelspielzeug", "Formensortierer", "Magnetbausteine", "Dominospiel", "Kartenspiel", "Wasserspielzeug", "Badespielzeug", "Musikspielzeug", "Kinder Experimentierkasten", "ferngesteuertes Auto"],
-    "food-supplement": ["Multivitamin", "Vitamin-C-Präparat", "Vitamin-D-Präparat", "Omega-3-Präparat", "Probiotikum", "Magnesiumpräparat", "Zinkpräparat", "Kollagenpräparat", "Luteinpräparat", "Proteinpräparat", "Vitamin-B-Komplex", "Kalziumpräparat", "Eisenpräparat", "Biotinpräparat", "Coenzym-Q10-Präparat", "Mariendistelpräparat", "Glucosaminpräparat", "Ballaststoffpräparat", "Elektrolytpräparat", "Mahlzeitenersatzpulver"],
-  },
-  fr: {
-    "beauty-skincare": ["crème hydratante", "gel-crème apaisant", "lotion tonique visage", "essence visage", "ampoule visage", "sérum visage", "émulsion visage", "mousse nettoyante", "huile démaquillante", "masque en tissu", "crème contour des yeux", "crème solaire", "baume à lèvres", "disques toniques exfoliants", "baume démaquillant", "brume visage", "masque de nuit", "crème pour les mains", "lait pour le corps", "patchs boutons"],
-    "beauty-tools": ["set de pinceaux maquillage", "pinceau fond de teint", "pinceau fard à paupières", "éponge maquillage", "houppette cushion", "recourbe-cils", "outil sourcils", "rouleau visage", "outil gua sha", "nettoyeur de pinceaux", "pinceau à lèvres", "ciseaux à sourcils", "spatule cosmétique", "palette de mélange maquillage", "support séchage pinceaux", "houppette à poudre", "miroir maquillage", "pince à épiler", "pinceau masque silicone", "trousse outils maquillage"],
-    "food-staples": ["riz blanc", "riz prêt à manger", "pâtes penne", "spaghetti", "farine de blé", "flocons d’avoine", "grains de café", "sachets de thé", "sauce de cuisson", "biscuits apéritifs", "riz complet", "mélange de céréales", "couscous", "nouilles de riz", "céréales petit-déjeuner", "miel", "huile de cuisson", "haricots en conserve", "bouillon", "fruits secs"],
-    "men-tops": ["t-shirt homme manches courtes", "t-shirt homme manches longues", "polo homme", "chemise Oxford homme", "chemise en lin homme", "sweat homme", "sweat à capuche homme", "pull en maille homme", "veste zippée homme", "gilet léger homme", "t-shirt Henley homme", "chemise col cubain homme", "chemise en flanelle homme", "cardigan homme", "maillot rugby homme", "haut col montant homme", "débardeur homme", "sous-vêtement technique homme", "chemise en jean homme", "coupe-vent homme"],
-    "toys-games": ["ours en peluche", "voiture miniature", "voiture jouet souple", "blocs de construction", "puzzle", "jeu de société", "set de jeu de rôle", "set d’activités artistiques", "jouet sensoriel", "jouet extérieur", "jouet à empiler", "trieur de formes", "blocs magnétiques", "jeu de dominos", "jeu de cartes", "jouet d’eau", "jouet de bain", "jouet musical", "kit scientifique enfant", "voiture télécommandée"],
-    "food-supplement": ["multivitamines", "complément vitamine C", "complément vitamine D", "complément oméga 3", "complément probiotique", "complément magnésium", "complément zinc", "complément collagène", "complément lutéine", "complément protéiné", "complexe vitamine B", "complément calcium", "complément fer", "complément biotine", "complément coenzyme Q10", "complément chardon-Marie", "complément glucosamine", "complément fibres", "complément électrolytes", "poudre substitut de repas"],
-  },
-  it: {
-    "beauty-skincare": ["crema idratante", "gel crema lenitivo", "tonico viso", "essenza viso", "fiala viso", "siero viso", "emulsione viso", "schiuma detergente", "olio detergente", "maschera in tessuto", "crema contorno occhi", "crema solare", "balsamo labbra", "dischetti tonici esfolianti", "balsamo detergente", "nebbia viso", "maschera notte", "crema mani", "lozione corpo", "cerotti brufoli"],
-    "beauty-tools": ["set pennelli trucco", "pennello fondotinta", "pennello ombretto", "spugna trucco", "piumino cushion", "piegaciglia", "strumento sopracciglia", "rullo viso", "strumento gua sha", "pulitore pennelli", "pennello labbra", "forbici sopracciglia", "spatola cosmetica", "tavolozza miscelazione trucco", "supporto asciugatura pennelli", "piumino cipria", "specchio trucco", "pinzetta cosmetica", "pennello maschera silicone", "custodia strumenti trucco"],
-    "food-staples": ["riso bianco", "riso pronto", "pasta penne", "spaghetti", "farina di grano", "fiocchi d’avena", "chicchi di caffè", "bustine di tè", "salsa da cucina", "snack salato", "riso integrale", "miscela di cereali", "couscous", "spaghetti di riso", "cereali da colazione", "miele", "olio da cucina", "fagioli in scatola", "brodo", "frutta secca"],
-    "men-tops": ["maglietta uomo manica corta", "maglietta uomo manica lunga", "polo uomo", "camicia Oxford uomo", "camicia lino uomo", "felpa uomo", "felpa con cappuccio uomo", "pullover maglia uomo", "giacca zip uomo", "gilet leggero uomo", "maglia Henley uomo", "camicia collo cubano uomo", "camicia flanella uomo", "cardigan uomo", "maglia rugby uomo", "maglia collo alto uomo", "canotta uomo", "maglia tecnica base uomo", "camicia denim uomo", "giacca antivento uomo"],
-    "toys-games": ["orsacchiotto peluche", "automobilina giocattolo", "macchinina morbida", "blocchi da costruzione", "puzzle", "gioco da tavolo", "set gioco di ruolo", "set attività artistiche", "giocattolo sensoriale", "giocattolo da esterno", "giocattolo impilabile", "selezionatore forme", "blocchi magnetici", "set domino", "gioco di carte", "giocattolo acqua", "giocattolo bagno", "giocattolo musicale", "kit scienza bambini", "auto radiocomandata"],
-    "food-supplement": ["multivitaminico", "integratore vitamina C", "integratore vitamina D", "integratore omega 3", "integratore probiotico", "integratore magnesio", "integratore zinco", "integratore collagene", "integratore luteina", "integratore proteico", "complesso vitamina B", "integratore calcio", "integratore ferro", "integratore biotina", "integratore coenzima Q10", "integratore cardo mariano", "integratore glucosamina", "integratore fibre", "integratore elettroliti", "polvere sostitutiva pasto"],
-  },
-  nl: {
-    "beauty-skincare": ["hydraterende crème", "kalmerende gelcrème", "gezichtstoner", "gezichtsessence", "gezichtsampul", "gezichtsserum", "gezichtsemulsie", "reinigingsschuim", "reinigingsolie", "sheetmasker", "oogcrème", "zonnebrandcrème", "lippenbalsem", "exfoliërende tonerpads", "reinigingsbalsem", "gezichtsmist", "slaapmasker", "handcrème", "bodylotion", "puistjespleisters"],
-    "beauty-tools": ["make-upkwastenset", "foundationkwast", "oogschaduwkwast", "make-upspons", "cushion puff", "wimperkruller", "wenkbrauwgereedschap", "gezichtsroller", "gua sha gereedschap", "kwastenreiniger", "lippenkwast", "wenkbrauwschaar", "cosmeticaspatel", "make-up mengpalet", "kwastendroogrek", "poederdons", "make-upspiegel", "cosmetische pincet", "siliconen maskerkwast", "make-uptas"],
-    "food-staples": ["witte rijst", "kant-en-klare rijst", "penne pasta", "spaghetti", "tarwebloem", "havermout", "koffiebonen", "theezakjes", "kooksaus", "hartige snack", "zilvervliesrijst", "granenmix", "couscous", "rijstnoedels", "ontbijtgranen", "honing", "bakolie", "bonen in blik", "bouillon", "gedroogd fruit"],
-    "men-tops": ["heren T-shirt korte mouw", "heren T-shirt lange mouw", "heren poloshirt", "heren Oxford overhemd", "heren linnen overhemd", "heren sweater", "heren hoodie", "heren gebreide trui", "heren ritsjack", "heren licht vest", "heren Henleyshirt", "heren overhemd Cubaanse kraag", "heren flanellen overhemd", "heren cardigan", "heren rugbyshirt", "heren coltrui", "heren mouwloze top", "heren thermoshirt", "heren denim overhemd", "heren windjack"],
-    "toys-games": ["teddybeer knuffel", "speelgoedauto", "zachte speelgoedauto", "bouwblokken", "legpuzzel", "bordspel", "rollenspelset", "knutselset", "sensorisch speelgoed", "buitenspeelgoed", "stapelspeelgoed", "vormenstoof", "magnetische bouwblokken", "dominoset", "kaartspel", "waterspeelgoed", "badspeelgoed", "muzikaal speelgoed", "wetenschapsset kinderen", "radiografische auto"],
-    "food-supplement": ["multivitamine", "vitamine C supplement", "vitamine D supplement", "omega 3 supplement", "probiotica supplement", "magnesium supplement", "zink supplement", "collageen supplement", "luteïne supplement", "eiwit supplement", "vitamine B complex", "calcium supplement", "ijzer supplement", "biotine supplement", "co-enzym Q10 supplement", "mariadistel supplement", "glucosamine supplement", "vezelsupplement", "elektrolyten supplement", "maaltijdvervangend poeder"],
-  },
-  pl: {
-    "beauty-skincare": ["krem nawilżający", "kojący krem żelowy", "tonik do twarzy", "esencja do twarzy", "ampułka do twarzy", "serum do twarzy", "emulsja do twarzy", "pianka oczyszczająca", "olejek oczyszczający", "maska w płachcie", "krem pod oczy", "krem przeciwsłoneczny", "balsam do ust", "płatki tonizujące złuszczające", "balsam oczyszczający", "mgiełka do twarzy", "maska na noc", "krem do rąk", "balsam do ciała", "plastry na wypryski"],
-    "beauty-tools": ["zestaw pędzli do makijażu", "pędzel do podkładu", "pędzel do cieni", "gąbka do makijażu", "puszek cushion", "zalotka", "narzędzie do brwi", "roller do twarzy", "narzędzie gua sha", "czyścik do pędzli", "pędzelek do ust", "nożyczki do brwi", "szpatułka kosmetyczna", "paleta do mieszania makijażu", "stojak do suszenia pędzli", "puszek do pudru", "lusterko do makijażu", "pęseta kosmetyczna", "silikonowy pędzel do masek", "etui na akcesoria do makijażu"],
-    "food-staples": ["biały ryż", "ryż gotowy", "makaron penne", "spaghetti", "mąka pszenna", "płatki owsiane", "ziarna kawy", "herbata w torebkach", "sos do gotowania", "słona przekąska", "brązowy ryż", "mieszanka zbóż", "kuskus", "makaron ryżowy", "płatki śniadaniowe", "miód", "olej spożywczy", "fasola w puszce", "bulion", "suszone owoce"],
-    "men-tops": ["męski T-shirt krótki rękaw", "męski T-shirt długi rękaw", "męska koszulka polo", "męska koszula Oxford", "męska koszula lniana", "męska bluza", "męska bluza z kapturem", "męski sweter", "męska kurtka na zamek", "męska lekka kamizelka", "męska koszulka Henley", "męska koszula z kołnierzem kubańskim", "męska koszula flanelowa", "męski kardigan", "męska koszulka rugby", "męska bluza ze stójką", "męski top bez rękawów", "męska bielizna termoaktywna", "męska koszula jeansowa", "męska wiatrówka"],
-    "toys-games": ["miś pluszowy", "samochodzik zabawka", "miękki samochodzik", "klocki konstrukcyjne", "puzzle", "gra planszowa", "zestaw do odgrywania ról", "zestaw plastyczny", "zabawka sensoryczna", "zabawka ogrodowa", "zabawka do układania", "sorter kształtów", "klocki magnetyczne", "zestaw domino", "gra karciana", "zabawka wodna", "zabawka do kąpieli", "zabawka muzyczna", "zestaw naukowy dla dzieci", "samochód zdalnie sterowany"],
-    "food-supplement": ["multiwitamina", "suplement witaminy C", "suplement witaminy D", "suplement omega 3", "suplement probiotyczny", "suplement magnezu", "suplement cynku", "suplement kolagenu", "suplement luteiny", "suplement białkowy", "kompleks witamin B", "suplement wapnia", "suplement żelaza", "suplement biotyny", "suplement koenzymu Q10", "suplement ostropestu", "suplement glukozaminy", "suplement błonnika", "suplement elektrolitów", "proszek zastępujący posiłek"],
-  },
-};
-
-function localizedEbaySearchQuery(
-  target: StyleTargetMarket,
-  categoryId: CategoryStyleProfile["id"],
-  familyIndex: number,
-  variantIndex: number,
-  fallback: string,
-) {
-  if (target.channel !== "ebay") return fallback;
-  const language = ebayLocalizedSearchLanguage[target.locale];
-  if (!language) return fallback;
-  const family = ebayLocalizedFamilyTerms[language][categoryId][familyIndex];
-  const variant = ebayLocalizedVariantTerms[language][variantIndex];
-  if (!family || !variant) throw new Error(`Missing localized eBay search term for ${target.locale}:${categoryId}`);
-  return `${family} ${variant}`;
-}
-
-function learnedSearchLocale(locale: StyleLocale): LearnedSearchLocale {
-  switch (locale) {
-    case "es-ES": return "es-MX";
-    case "zh-HK": return "zh-TW";
-    case "en-GB":
-    case "de-DE":
-    case "en-AU":
-    case "en-CA":
-    case "fr-FR":
-    case "it-IT":
-    case "de-AT":
-    case "nl-BE":
-    case "de-CH":
-    case "en-IE":
-    case "nl-NL":
-    case "pl-PL":
-      return "en-US";
-    default:
-      return locale;
-  }
-}
-
 function marketplaceSearchUrl(target: StyleTargetMarket, query: string) {
   const keyword = encodeURIComponent(query);
   if (target.channel === "qoo10") return `https://www.qoo10.jp/s/?keyword=${keyword}`;
@@ -664,16 +502,8 @@ function marketplaceSearchUrl(target: StyleTargetMarket, query: string) {
     return `https://www.${domains[target.market]}/catalog/?q=${keyword}`;
   }
   if (target.channel === "coupang") return `https://www.coupang.com/np/search?q=${keyword}`;
-  if (target.channel === "elevenst") return `https://search.11st.co.kr/Search.tmall?kwd=${keyword}`;
   if (target.channel === "smartstore") return `https://search.shopping.naver.com/search/all?query=${keyword}`;
-  if (target.channel === "ebay") {
-    const domains: Record<string, string> = {
-      US: "ebay.com", GB: "ebay.co.uk", DE: "ebay.de", AU: "ebay.com.au", CA: "ebay.ca",
-      FR: "ebay.fr", IT: "ebay.it", ES: "ebay.es", AT: "ebay.at", BE: "ebay.be",
-      CH: "ebay.ch", HK: "ebay.com.hk", IE: "ebay.ie", NL: "ebay.nl", PL: "ebay.pl",
-    };
-    return `https://www.${domains[target.market]}/sch/i.html?_nkw=${keyword}`;
-  }
+  if (target.channel === "ebay") return `https://www.ebay.com/sch/i.html?_nkw=${keyword}`;
   return `https://www.temu.com/kr/search_result.html?search_key=${keyword}`;
 }
 
@@ -682,20 +512,13 @@ export const learnedProductExamples: LearnedProductExample[] = categoryStyleProf
     variantTerms["ko-KR"].map((variant, variantIndex) => {
       const index = familyIndex * 10 + variantIndex;
       const target = styleTargetMarkets[index % styleTargetMarkets.length];
-      const searchLocale = learnedSearchLocale(target.locale);
-      const localizedVariant = variantTerms[searchLocale][variantIndex];
+      const localizedVariant = variantTerms[target.locale][variantIndex];
       const localizedFamilies = [
-        ...localizedFamilyTerms[category.id][searchLocale],
-        ...additionalLocalizedFamilyTerms[category.id][searchLocale],
+        ...localizedFamilyTerms[category.id][target.locale],
+        ...additionalLocalizedFamilyTerms[category.id][target.locale],
       ];
       const localizedFamily = localizedFamilies[familyIndex];
-      const localSearchQuery = localizedEbaySearchQuery(
-        target,
-        category.id,
-        familyIndex,
-        variantIndex,
-        `${localizedFamily} ${localizedVariant}`,
-      );
+      const localSearchQuery = `${localizedFamily} ${localizedVariant}`;
       return {
         id: `${category.id}-${String(index + 1).padStart(3, "0")}`,
         categoryId: category.id,
@@ -717,7 +540,6 @@ export const learnedProductExamples: LearnedProductExample[] = categoryStyleProf
 
 export const styleLearningSummary = {
   categories: categoryStyleProfiles.length,
-  settingShotGroups: 9,
   examples: learnedProductExamples.length,
   channels: channelStyleProfiles.length,
   markets: styleTargetMarkets.length,
@@ -761,7 +583,7 @@ export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
     `<sellerpilot_style_learning version="${STYLE_LEARNING_VERSION}" researched_at="${STYLE_LEARNING_RESEARCH_DATE}">`,
     `선택 카테고리: ${category.label} (${category.id})`,
     examples.length
-      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. ${channelStyleProfiles.length}개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`
+      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. 7개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`
       : "학습 커버리지: 등록된 6개 학습 카테고리와 일치하지 않아 일반 상품 안전 모드를 적용한다. 특정 카테고리 연출을 추측하지 않는다.",
     `학습 상품 유형: ${category.families.length ? category.families.join(", ") : "미분류 · 실제 상품 사진과 판매자 확정 정보 우선"}`,
     `학습 제작 변형: ${variantTerms["ko-KR"].join(", ")}`,
@@ -777,37 +599,6 @@ export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
     "적용 규칙: 대표이미지는 모든 채널에서 안전한 제품 식별 중심으로 만들고, 채널별 색감·구도 차이는 제품 외형·라벨·구성품을 바꾸지 않는 범위에서만 반영한다.",
     "적용 규칙: 실제 상품 사실과 스타일 지침이 충돌하면 상품 사실과 공식 정책을 우선하고 warnings에 남긴다.",
     "</sellerpilot_style_learning>",
-  ].join("\n");
-}
-
-/**
- * Keeps the master-generation context focused on reusable art direction and
- * channel safety. The full registry remains available to the UI and audits;
- * channel-specific description, thumbnail and shot repetition is intentionally
- * deferred because the master output is channel-neutral.
- */
-export function buildMarketplaceMasterStyleBrief(categoryHint: string) {
-  const category = matchStyleCategory(categoryHint);
-  const examples = learnedProductExamples.filter((item) => item.categoryId === category.id);
-  const channelLines = channelStyleProfiles.map((profile) => (
-    `[${profile.channel}] 제목: ${profile.titleFormula} 금지/검수: ${profile.guardrails.join(" / ")}`
-  ));
-  return [
-    `<sellerpilot_master_style version="${STYLE_LEARNING_VERSION}" researched_at="${STYLE_LEARNING_RESEARCH_DATE}">`,
-    `선택 카테고리: ${category.label} (${category.id})`,
-    examples.length
-      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개.`
-      : "학습 커버리지: 일반 상품 안전 모드 · 실제 상품 사진과 판매자 확정 정보 우선.",
-    `카테고리 문안: ${category.textStyle}`,
-    `카테고리 상세 배치: ${category.detailLayout.join(" → ")}`,
-    `카테고리 썸네일: ${category.thumbnailStyle}`,
-    `카테고리 촬영: ${category.shotList.join(", ")}`,
-    `필수 사실: ${category.requiredFacts.join(", ")}`,
-    `카테고리 금지/검수: ${category.guardrails.join(" / ")}`,
-    ...channelLines,
-    "공통 적용: 상품 사실과 공식 정책이 스타일보다 우선하며, 다른 판매자의 문장·이미지·브랜드 표현을 복사하지 않는다.",
-    "공통 적용: 가격·할인·배송·후기·판매량을 제작물에 고정하지 않고, 제품 외형·라벨·구성품을 바꾸지 않는다.",
-    "</sellerpilot_master_style>",
   ].join("\n");
 }
 

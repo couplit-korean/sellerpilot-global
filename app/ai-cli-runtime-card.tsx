@@ -1,204 +1,28 @@
 "use client";
 
-import { AlertTriangle, Ban, CheckCircle2, Clock3, Cpu, DatabaseZap, History, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import { isStudioExecutionReady, type StudioWorkerReadiness } from "../lib/studio-worker-readiness";
-
-type WorkerSnapshot = {
-  label: string;
-  expires_at: string;
-  last_seen_at: string | null;
-  last_version: string | null;
-  scope?: "ai" | "gateway" | "scheduler" | "legacy_combined";
-};
 
 type WorkerStatus = {
-  worker: WorkerSnapshot | null;
-  workers?: Partial<Record<"ai" | "gateway" | "scheduler" | "legacy_combined", WorkerSnapshot>>;
+  worker: {
+    label: string;
+    fingerprint: string;
+    expires_at: string;
+    last_seen_at: string | null;
+    last_version: string | null;
+  } | null;
   queued: number;
   running: number;
   succeeded_today: number;
   failed_today: number;
 };
 
-type ServerReadiness = StudioWorkerReadiness;
-
-type GatewaySmokePayload = {
-  ok?: boolean;
-  diagnostic?: {
-    code?: string;
-    status?: number;
-  };
-};
-
-type GatewaySmokeState = {
-  status: "idle" | "checking" | "passed" | "failed";
+type IssuedToken = {
+  token: string;
+  fingerprint: string;
+  expiresAt: string;
   message: string;
-  checkedAt: string | null;
-};
-
-type RuntimeReleaseState = {
-  status: "idle" | "checking" | "passed" | "failed";
-  message: string;
-};
-
-const listingPublicationChannels = [
-  "qoo10",
-  "shopee",
-  "lazada",
-  "coupang",
-  "elevenst",
-  "smartstore",
-  "ebay",
-  "temu",
-] as const;
-
-type ListingPublicationChannel = (typeof listingPublicationChannels)[number];
-
-const listingPublicationChannelLabels: Record<ListingPublicationChannel, string> = {
-  qoo10: "Qoo10",
-  shopee: "Shopee",
-  lazada: "Lazada",
-  coupang: "쿠팡",
-  elevenst: "11번가",
-  smartstore: "스마트스토어",
-  ebay: "eBay",
-  temu: "Temu",
-};
-
-type ListingReleaseGate = {
-  open: boolean;
-  state: "open" | "closed";
-  effectiveOpen: boolean;
-  openedAt: string | null;
-  updatedAt: string;
-  openedRelease: string | null;
-  openedChannel: "qoo10" | "coupang" | "smartstore" | null;
-  attestedRelease: string | null;
-  activeRuntimeRelease: string | null;
-  publicationAdaptersReady: number;
-  publicationRecheckerReady: boolean;
-  publicationReleaseConsistent: boolean;
-  runtimeReleaseMatches: boolean;
-  orphanPendingReviews: number;
-  listingMutationsRunning: number;
-  queuedOrRunning: number;
-  reconciliationRequired: number;
-  qoo10AdapterReady: boolean;
-  qoo10AttestedRelease: string | null;
-  qoo10ReleaseConsistent: boolean;
-  qoo10RuntimeReleaseMatches: boolean;
-  qoo10ReviewViolations: number;
-  qoo10QueuedOrRunning: number;
-  qoo10ReconciliationRequired: number;
-  qoo10EffectiveOpen: boolean;
-  coupangAdapterReady: boolean;
-  coupangAttestedRelease: string | null;
-  coupangReleaseConsistent: boolean;
-  coupangRuntimeReleaseMatches: boolean;
-  coupangReviewViolations: number;
-  coupangQueuedOrRunning: number;
-  coupangReconciliationRequired: number;
-  coupangEffectiveOpen: boolean;
-  smartstoreAdapterReady: boolean;
-  smartstoreAttestedRelease: string | null;
-  smartstoreReleaseConsistent: boolean;
-  smartstoreRuntimeReleaseMatches: boolean;
-  smartstoreReviewViolations: number;
-  smartstoreQueuedOrRunning: number;
-  smartstoreReconciliationRequired: number;
-  smartstoreEffectiveOpen: boolean;
-};
-
-type ListingReleasePayload = {
-  ok?: boolean;
-  code?: string;
-  message?: string;
-  readyForOpen?: boolean;
-  readyForQoo10Open?: boolean;
-  readyForCoupangOpen?: boolean;
-  readyForSmartstoreOpen?: boolean;
-  runtimeRelease?: {
-    status: "valid" | "unavailable";
-    currentRelease: string | null;
-  };
-  gate?: ListingReleaseGate;
-};
-
-type ListingReleaseState = {
-  status: "checking" | "ready" | "working" | "failed";
-  message: string;
-  currentRelease: string | null;
-  gate: ListingReleaseGate | null;
-  readyForOpen: boolean;
-  readyForQoo10Open: boolean;
-  readyForCoupangOpen: boolean;
-  readyForSmartstoreOpen: boolean;
-};
-
-type ListingReleaseAction =
-  | { action: "attest_adapter"; channel: ListingPublicationChannel }
-  | { action: "attest_rechecker" }
-  | { action: "open_gate" }
-  | { action: "open_channel_gate"; channel: "qoo10" | "coupang" | "smartstore" }
-  | { action: "close_gate" };
-
-type PendingConfirmation =
-  | { kind: "runtime_activate" }
-  | { kind: "listing_release"; request: ListingReleaseAction }
-  | null;
-
-type ServerAiRuntimeState =
-  | "checking"
-  | "ready"
-  | "token_mismatch"
-  | "token_missing_or_expired"
-  | "status_unavailable"
-  | "configuration_missing";
-
-const serverAiRuntimeGuidance: Record<ServerAiRuntimeState, {
-  statusLabel: string;
-  queueSummary: string;
-  recoveryTitle: string;
-  recoveryDetail: string;
-}> = {
-  checking: {
-    statusLabel: "확인 중",
-    queueSummary: "Vercel·Supabase 토큰 상태 확인 중",
-    recoveryTitle: "확인 결과 전에는 설정을 변경하지 마세요",
-    recoveryDetail: "상태 확인이 끝날 때까지 새 토큰을 만들거나 환경변수를 바꾸지 않습니다.",
-  },
-  ready: {
-    statusLabel: "서버 구성 감지",
-    queueSummary: "Vercel 서버 토큰과 활성 AI 토큰 일치 · 실제 Gateway 호출은 별도 점검",
-    recoveryTitle: "구성 감지와 실제 AI 호출 성공은 별도로 판정",
-    recoveryDetail: "OIDC와 Supabase 큐가 보인다는 이유만으로 생성 가능 상태라고 표시하지 않습니다. 실제 호출 점검을 통과해야 AI Gateway 운영 연결을 확인한 것으로 판정합니다. 이 화면은 토큰을 발급·노출·복사하지 않으며 로컬 설치 명령도 제공하지 않습니다.",
-  },
-  token_mismatch: {
-    statusLabel: "서버 토큰 불일치",
-    queueSummary: "Vercel 서버 토큰과 Supabase 활성 AI 토큰이 다름",
-    recoveryTitle: "마지막 정상 배포를 복원하거나 서버 전용으로 교체하세요",
-    recoveryDetail: "새 상품 AI 요청은 차단됩니다. 방금 Vercel 환경변수나 배포가 바뀌었다면 원문을 꺼내지 말고 마지막 정상 배포를 복원하세요. 복원할 수 없으면 운영 배포·인증 체크리스트 §7의 서버 전용 교체 절차를 사용하며 이 화면에서 발급하거나 복사하지 않습니다.",
-  },
-  token_missing_or_expired: {
-    statusLabel: "활성 AI 토큰 없음·만료",
-    queueSummary: "Supabase에 만료되지 않은 활성 AI 토큰이 없음",
-    recoveryTitle: "실행 중 작업을 확인한 뒤 서버 전용으로 교체하세요",
-    recoveryDetail: "새 상품 AI 요청은 차단됩니다. 운영 배포·인증 체크리스트 §7에서 실행 중 lease를 먼저 확인한 뒤 승인된 운영 셸에서만 새 원문을 만들고, 원문은 Vercel sensitive environment에만 CLI 표준입력으로 전달하며 Supabase에는 해시와 지문만 등록합니다.",
-  },
-  status_unavailable: {
-    statusLabel: "토큰 상태 조회 실패",
-    queueSummary: "Supabase 토큰 상태를 확인하지 못함",
-    recoveryTitle: "조회 실패를 만료로 간주해 교체하지 마세요",
-    recoveryDetail: "Supabase 연결과 상태 RPC를 먼저 복구한 뒤 새로고침합니다. 실제 활성 토큰 상태가 확인되기 전에는 토큰 교체나 작업 재시도를 시작하지 않습니다.",
-  },
-  configuration_missing: {
-    statusLabel: "서버 구성 확인 필요",
-    queueSummary: "활성 AI 토큰 상태 확인 전 OIDC·Vercel 서버 구성이 준비되지 않음",
-    recoveryTitle: "토큰 교체 전에 서버 구성을 분리 확인하세요",
-    recoveryDetail: "Vercel 요청 범위의 OIDC, Supabase 서버 환경변수와 정확한 배포 프로젝트를 먼저 확인합니다. 이 상태만으로 활성 토큰의 존재 여부는 확인되지 않았으므로 원인을 분리하기 전 새 토큰을 발급하지 않습니다.",
-  },
 };
 
 type AiJob = {
@@ -232,174 +56,30 @@ const jobKindLabel: Record<string, string> = {
   support_reply: "고객 문의 답변 초안",
 };
 
-const productAiJobKinds = new Set(["product_studio", "product_research", "product_asset_regeneration"]);
-
-function aiWorker(status: WorkerStatus | null) {
-  if (!status) return null;
-  return status.workers?.ai
-    ?? (status.worker?.scope === "ai" || status.worker?.scope === undefined ? status.worker : null);
+function formatDate(value: string | null) {
+  if (!value) return "아직 접속 없음";
+  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "확인 전";
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return "확인 전";
-  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
-}
-
-function validReadiness(value: unknown): value is ServerReadiness {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value as Record<string, unknown>;
-  const coreValid = typeof candidate.available === "boolean"
-    && typeof candidate.reason === "string"
-    && typeof candidate.message === "string"
-    && typeof candidate.checkedAt === "string";
-  return coreValid && (candidate.available !== true || isStudioExecutionReady(candidate as ServerReadiness));
-}
-
-function gatewaySmokeStateFromReadiness(readiness: ServerReadiness): GatewaySmokeState {
-  if (isStudioExecutionReady(readiness)) {
-    return {
-      status: "passed",
-      message: "Vercel AI Gateway 실제 생성 호출이 확인된 실행 가능 상태입니다.",
-      checkedAt: readiness.gatewayVerification?.checkedAt ?? readiness.checkedAt,
-    };
-  }
-  if (readiness.reason === "gateway_verification_failed"
-      && readiness.gatewayVerification?.status === "failed") {
-    return {
-      status: "failed",
-      message: readiness.message,
-      checkedAt: readiness.gatewayVerification.checkedAt,
-    };
-  }
-  return {
-    status: "idle",
-    message: readiness.reason === "gateway_unverified"
-      ? readiness.message
-      : "실제 AI Gateway 호출은 아직 확인하지 않았습니다.",
-    checkedAt: null,
-  };
-}
-
-function resolveServerAiRuntimeState(
-  readiness: ServerReadiness | null,
-  serverWorker: WorkerSnapshot | null,
-): ServerAiRuntimeState {
-  if (!readiness) return "checking";
-  if (readiness.configurationReady === true || readiness.available) return "ready";
-  if (readiness.reason === "token_mismatch") return "token_mismatch";
-  if (readiness.reason === "token_missing_or_expired") return "token_missing_or_expired";
-  if (readiness.reason === "configuration_missing") return "configuration_missing";
-  if (readiness.reason === "worker_missing" && !serverWorker) return "token_missing_or_expired";
-  return "status_unavailable";
-}
-
-function confirmationCopy(pending: Exclude<PendingConfirmation, null>) {
-  if (pending.kind === "runtime_activate") {
-    return {
-      title: "운영 일정 재검증·재시작 준비",
-      detail: "현재 운영 배포의 무작업 점검 6개를 실행한 뒤 Supabase 운영 일정을 다시 시작합니다. 상품 게시를 자동 실행하지 않습니다.",
-      executeLabel: "재검증·재시작 실행",
-      danger: false,
-    };
-  }
-  if (pending.request.action === "attest_adapter") {
-    return {
-      title: `${listingPublicationChannelLabels[pending.request.channel]} 어댑터 확인 준비`,
-      detail: "서버가 확인한 현재 배포 SHA로 이 어댑터의 원격 상태 계약을 기록합니다. 상품 게시를 자동 실행하지 않습니다.",
-      executeLabel: "어댑터 확인 기록",
-      danger: false,
-    };
-  }
-  if (pending.request.action === "attest_rechecker") {
-    return {
-      title: "게시 결과 재조회기 확인 준비",
-      detail: "서버가 확인한 현재 배포 SHA로 공개 결과 재조회기 계약을 기록합니다. 상품 게시를 자동 실행하지 않습니다.",
-      executeLabel: "재조회기 확인 기록",
-      danger: false,
-    };
-  }
-  if (pending.request.action === "open_gate") {
-    return {
-      title: "8개 채널 게시 게이트 열기 준비",
-      detail: "게이트를 열면 이후 승인된 상품 등록·수정·중지 요청이 외부 채널로 전달될 수 있습니다. 준비 조건을 다시 확인한 뒤 실행하세요.",
-      executeLabel: "게시 게이트 열기 실행",
-      danger: true,
-    };
-  }
-  if (pending.request.action === "open_channel_gate") {
-    const channelLabel = listingPublicationChannelLabels[pending.request.channel];
-    return {
-      title: `${channelLabel} 전용 게시 게이트 열기 준비`,
-      detail: `현재 열려 있는 다른 단일 채널 범위를 닫고, 검증된 ${channelLabel} 상품 등록·수정·중지만 외부로 전달합니다. 다른 7개 채널은 계속 차단됩니다.`,
-      executeLabel: `${channelLabel}만 열기 실행`,
-      danger: true,
-    };
-  }
-  return {
-    title: "8개 채널 게시 게이트 닫기 준비",
-    detail: "새 상품 등록·수정·중지 요청이 외부 채널로 전달되지 않도록 게시 게이트를 닫습니다.",
-    executeLabel: "게시 게이트 닫기 실행",
-    danger: false,
-  };
-}
-
-function InlineReleaseConfirmation({
-  pending,
-  working,
-  onCancel,
-  onExecute,
-}: {
-  pending: Exclude<PendingConfirmation, null>;
-  working: boolean;
-  onCancel: () => void;
-  onExecute: () => Promise<void>;
-}) {
-  const copy = confirmationCopy(pending);
-  return <div className="cli-release-confirmation" role="alertdialog" aria-label={copy.title}>
-    <AlertTriangle size={16} />
-    <span><b>{copy.title}</b><small>{copy.detail}</small></span>
-    <div>
-      <button type="button" className="credential-secondary" onClick={onCancel} disabled={working}>취소</button>
-      <button type="button" className={`credential-primary${copy.danger ? " danger" : ""}`} onClick={() => void onExecute()} disabled={working}>{working ? <LoaderCircle className="spin" size={13} /> : <CheckCircle2 size={13} />}{working ? "처리 중" : copy.executeLabel}</button>
-    </div>
-  </div>;
+function isOnline(lastSeenAt: string | null) {
+  return Boolean(lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 30_000);
 }
 
 export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void }) {
   const [status, setStatus] = useState<WorkerStatus | null>(null);
-  const [readiness, setReadiness] = useState<ServerReadiness | null>(null);
+  const [issued, setIssued] = useState<IssuedToken | null>(null);
+  const [expiresInDays, setExpiresInDays] = useState(90);
   const [loading, setLoading] = useState(true);
+  const [issuing, setIssuing] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [jobsError, setJobsError] = useState("");
   const [workingJobId, setWorkingJobId] = useState("");
-  const [gatewaySmoke, setGatewaySmoke] = useState<GatewaySmokeState>({
-    status: "idle",
-    message: "실제 AI Gateway 호출은 아직 확인하지 않았습니다.",
-    checkedAt: null,
-  });
-  const [runtimeRelease, setRuntimeRelease] = useState<RuntimeReleaseState>({
-    status: "idle",
-    message: "배포 후 무작업 점검 6개와 Supabase 일정 상태를 함께 확인합니다.",
-  });
-  const [listingRelease, setListingRelease] = useState<ListingReleaseState>({
-    status: "checking",
-    message: "현재 배포와 8개 채널 게시 게이트 상태를 확인하고 있습니다.",
-    currentRelease: null,
-    gate: null,
-    readyForOpen: false,
-    readyForQoo10Open: false,
-    readyForCoupangOpen: false,
-    readyForSmartstoreOpen: false,
-  });
-  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation>(null);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
     const accessToken = data.session?.access_token;
-    if (!accessToken) throw new Error("운영 런타임 관리는 관리자 로그인이 필요합니다.");
+    if (!accessToken) throw new Error("CLI 작업자 관리는 관리자 로그인이 필요합니다.");
     return fetch(input, {
       ...init,
       headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}`, ...(init?.headers ?? {}) },
@@ -407,76 +87,17 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     });
   }, []);
 
-  const loadListingRelease = useCallback(async () => {
-    // A slow gate RPC or a late 503 must never erase a deploy SHA the server already
-    // confirmed, otherwise attestation buttons flip back to disabled mid-session.
-    const applyListingRelease = (listingReleasePayload: ListingReleasePayload) => {
-      setListingRelease((current) => {
-        const currentRelease = listingReleasePayload.runtimeRelease?.currentRelease ?? current.currentRelease;
-        const gate = listingReleasePayload.gate ?? current.gate;
-        return {
-          status: currentRelease ? "ready" : "failed",
-          message: listingReleasePayload.message ?? (currentRelease
-            ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
-            : "게시 릴리스 상태를 불러오지 못했습니다."),
-          currentRelease,
-          gate,
-          readyForOpen: listingReleasePayload.readyForOpen === true,
-          readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
-          readyForCoupangOpen: listingReleasePayload.readyForCoupangOpen === true,
-          readyForSmartstoreOpen: listingReleasePayload.readyForSmartstoreOpen === true,
-        };
-      });
-    };
-    const readListingRelease = async () => {
-      const listingReleaseResponse = await authenticatedFetch("/api/admin/listing-publication-release", {
-        signal: AbortSignal.timeout(40_000),
-      });
-      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
-      return { listingReleaseResponse, listingReleasePayload };
-    };
-    // The operations database is the scarce resource. Back off instead of
-    // retrying tightly so a degraded database is never amplified by this screen.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const { listingReleasePayload } = await readListingRelease();
-        applyListingRelease(listingReleasePayload);
-        if (listingReleasePayload.gate) return;
-      } catch {
-        setListingRelease((current) => ({
-          ...current,
-          status: current.currentRelease ? "ready" : "failed",
-          message: current.currentRelease
-            ? current.message
-            : "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
-        }));
-      }
-      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 15_000));
-    }
-  }, [authenticatedFetch]);
-
-  const load = useCallback(async (preserveGatewaySmoke = false) => {
+  const load = useCallback(async () => {
     setLoading(true);
-    void loadListingRelease();
     try {
-      const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
+      const [statusResponse, jobsResponse] = await Promise.all([
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
-        authenticatedFetch("/api/ai/product-studio"),
       ]);
-      const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
+      const statusPayload = await statusResponse.json().catch(() => ({ message: "CLI 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
-      const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
-      if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
+      if (!statusResponse.ok) throw new Error(statusPayload.message ?? "CLI 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
-      const nextReadiness: ServerReadiness = validReadiness(readinessPayload) ? readinessPayload : {
-        available: false,
-        reason: "status_unavailable",
-        message: "Vercel 서버 AI 연결 상태를 확인하지 못했습니다.",
-        checkedAt: new Date().toISOString(),
-      };
-      setReadiness(nextReadiness);
-      if (!preserveGatewaySmoke) setGatewaySmoke(gatewaySmokeStateFromReadiness(nextReadiness));
       setError("");
       if (jobsResponse.ok) {
         setJobs(jobsPayload.jobs ?? []);
@@ -485,24 +106,14 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
     } catch (loadError) {
-      setReadiness({
-        available: false,
-        reason: "status_unavailable",
-        message: "Vercel 서버 AI 준비 상태를 확인할 수 없습니다.",
-        checkedAt: new Date().toISOString(),
-      });
-      setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
+      setError(loadError instanceof Error ? loadError.message : "CLI 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [authenticatedFetch, loadListingRelease]);
+  }, [authenticatedFetch]);
 
   const controlJob = async (job: AiJob, action: "retry" | "cancel") => {
     const actionLabel = action === "retry" ? "다시 실행" : "취소";
-    if (action === "retry" && productAiJobKinds.has(job.kind) && !isStudioExecutionReady(readiness)) {
-      notify(readiness?.message ?? "AI Gateway 실제 호출 점검을 통과한 뒤 상품 AI 작업을 다시 실행해 주세요.");
-      return;
-    }
     if (!window.confirm(`이 AI 작업을 ${actionLabel}할까요?`)) return;
     setWorkingJobId(job.id);
     setJobsError("");
@@ -522,117 +133,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     }
   };
 
-  const verifyGateway = async () => {
-    setGatewaySmoke({ status: "checking", message: "Vercel AI Gateway 실제 호출을 확인하고 있습니다.", checkedAt: null });
-    try {
-      const response = await authenticatedFetch("/api/admin/server-runtime-smoke", {
-        method: "POST",
-        body: JSON.stringify({ action: "ai_gateway_smoke" }),
-      });
-      const payload = await response.json().catch(() => ({})) as GatewaySmokePayload;
-      const checkedAt = new Date().toISOString();
-      if (response.ok && payload.ok === true) {
-        const message = "Vercel OIDC 기반 AI Gateway 실제 생성 호출을 확인했습니다.";
-        setGatewaySmoke({ status: "passed", message, checkedAt });
-        await load(true);
-        notify(message);
-        return;
-      }
-      const message = payload.diagnostic?.code === "customer_verification_required"
-        ? "Vercel AI Gateway 계정 확인이 필요합니다. Vercel 결제수단·고객 확인을 마친 뒤 다시 점검해 주세요."
-        : payload.diagnostic?.code === "billing_required"
-          ? "Vercel AI Gateway 사용 한도 또는 결제 상태 확인이 필요합니다."
-          : payload.diagnostic?.code === "authentication_error"
-            ? "Vercel OIDC 인증 연결을 확인하지 못했습니다. 배포 프로젝트의 OIDC 설정을 확인해 주세요."
-            : "Vercel AI Gateway 실제 생성 호출에 실패했습니다. 운영 로그와 Gateway 상태를 확인해 주세요.";
-      setGatewaySmoke({ status: "failed", message, checkedAt });
-      await load(true);
-      notify(message);
-    } catch {
-      const message = "Vercel AI Gateway 실제 호출 점검 요청을 완료하지 못했습니다.";
-      setGatewaySmoke({ status: "failed", message, checkedAt: new Date().toISOString() });
-      notify(message);
-    }
-  };
-
-  const executeRuntimeReleaseActivation = async () => {
-    setRuntimeRelease({ status: "checking", message: "현재 운영 배포를 무작업 점검한 뒤 Supabase 일정을 재시작하고 있습니다." });
-    try {
-      const response = await authenticatedFetch("/api/admin/serverless-runtime-release", {
-        method: "POST",
-        body: JSON.stringify({ action: "canary_activate" }),
-      });
-      const payload = await response.json().catch(() => ({})) as { message?: string };
-      const message = payload.message ?? (response.ok
-        ? "운영 일정 재검증과 재시작을 완료했습니다."
-        : "운영 일정 재검증을 완료하지 못했습니다.");
-      setRuntimeRelease({ status: response.ok ? "passed" : "failed", message });
-      if (response.ok) await load(true);
-      notify(message);
-    } catch {
-      const message = "운영 일정 재검증 요청을 완료하지 못했습니다. 일정 상태를 다시 확인해 주세요.";
-      setRuntimeRelease({ status: "failed", message });
-      notify(message);
-    }
-  };
-
-  const executeListingReleaseAction = async (request: ListingReleaseAction) => {
-    setListingRelease((current) => ({
-      ...current,
-      status: "working",
-      message: "게시 릴리스 상태를 변경하고 결과를 다시 확인하고 있습니다.",
-    }));
-    try {
-      const response = await authenticatedFetch("/api/admin/listing-publication-release", {
-        method: "POST",
-        body: JSON.stringify(request),
-      });
-      const payload = await response.json().catch(() => ({ message: "게시 릴리스 변경 응답을 읽지 못했습니다." })) as ListingReleasePayload;
-      const message = payload.message ?? (response.ok
-        ? "게시 릴리스 상태를 변경했습니다."
-        : "게시 릴리스 상태를 변경하지 못했습니다.");
-      setListingRelease((current) => ({
-        status: response.ok && payload.gate ? "ready" : "failed",
-        message,
-        currentRelease: payload.runtimeRelease?.currentRelease ?? current.currentRelease,
-        gate: payload.gate ?? current.gate,
-        readyForOpen: payload.readyForOpen === true,
-        readyForQoo10Open: payload.readyForQoo10Open === true,
-        readyForCoupangOpen: payload.readyForCoupangOpen === true,
-        readyForSmartstoreOpen: payload.readyForSmartstoreOpen === true,
-      }));
-      notify(message);
-    } catch {
-      const message = "게시 릴리스 관리 요청을 완료하지 못했습니다. 현재 상태를 다시 확인해 주세요.";
-      setListingRelease((current) => ({
-        ...current,
-        status: "failed",
-        message,
-        readyForOpen: false,
-        readyForQoo10Open: false,
-        readyForCoupangOpen: false,
-        readyForSmartstoreOpen: false,
-      }));
-      notify(message);
-    }
-  };
-
-  const executePendingConfirmation = async () => {
-    const pending = pendingConfirmation;
-    if (!pending) return;
-    setPendingConfirmation(null);
-    if (pending.kind === "runtime_activate") {
-      await executeRuntimeReleaseActivation();
-      return;
-    }
-    await executeListingReleaseAction(pending.request);
-  };
-
   const recoverProduct = async (job: AiJob) => {
     setWorkingJobId(job.id);
     setJobsError("");
     try {
-      const response = await authenticatedFetch("/api/admin/products/snapshot", {
+      const response = await authenticatedFetch("/api/operations/snapshot", {
         method: "POST",
         body: JSON.stringify({ action: "product_create", jobId: job.id }),
       });
@@ -652,127 +157,55 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     return () => { window.clearTimeout(initialLoad); window.clearInterval(interval); };
   }, [load]);
 
-  const serverWorker = aiWorker(status);
-  const serverConfigured = readiness?.configurationReady === true;
-  const serverReady = isStudioExecutionReady(readiness);
-  const gatewayVerified = serverReady;
-  const queueReady = serverConfigured && Boolean(serverWorker);
-  const runtimeState = resolveServerAiRuntimeState(readiness, serverWorker);
-  const runtimeGuidance = serverAiRuntimeGuidance[runtimeState];
-  const runtimeStatusLabel = gatewayVerified
-    ? "AI Gateway 실호출 확인"
-    : gatewaySmoke.status === "failed"
-      ? "AI Gateway 확인 필요"
-      : runtimeGuidance.statusLabel;
-  const listingGate = listingRelease.gate;
-  const listingReleaseBusy = listingRelease.status === "working";
-  const exactPublicationReleaseReady = Boolean(
-    listingRelease.currentRelease
-      && listingGate?.publicationReleaseConsistent
-      && listingGate.attestedRelease === listingRelease.currentRelease,
-  );
-  const exactRuntimeReleaseReady = Boolean(
-    listingRelease.currentRelease
-      && listingGate?.runtimeReleaseMatches
-      && listingGate.activeRuntimeRelease === listingRelease.currentRelease,
-  );
-  const exactQoo10ReleaseReady = Boolean(
-    listingRelease.currentRelease
-      && listingGate?.qoo10ReleaseConsistent
-      && listingGate.qoo10AttestedRelease === listingRelease.currentRelease,
-  );
-  const exactCoupangReleaseReady = Boolean(
-    listingRelease.currentRelease
-      && listingGate?.coupangReleaseConsistent
-      && listingGate.coupangRuntimeReleaseMatches
-      && listingGate.coupangAttestedRelease === listingRelease.currentRelease,
-  );
-  const exactSmartstoreReleaseReady = Boolean(
-    listingRelease.currentRelease
-      && listingGate?.smartstoreReleaseConsistent
-      && listingGate.smartstoreRuntimeReleaseMatches
-      && listingGate.smartstoreAttestedRelease === listingRelease.currentRelease,
-  );
-  const anyListingGateEffective = Boolean(
-    listingGate?.effectiveOpen
-      || listingGate?.qoo10EffectiveOpen
-      || listingGate?.coupangEffectiveOpen
-      || listingGate?.smartstoreEffectiveOpen,
-  );
+  const issueToken = async () => {
+    if (status?.worker && !window.confirm("기존 CLI 작업자 토큰은 즉시 폐기됩니다. 새 토큰으로 교체할까요?")) return;
+    setIssuing(true);
+    setError("");
+    try {
+      const response = await authenticatedFetch("/api/admin/ai-worker-token", {
+        method: "POST",
+        body: JSON.stringify({ label: "SellerPilot Mac · ChatGPT CLI", expiresInDays }),
+      });
+      const payload = await response.json().catch(() => ({ message: "토큰 발급 응답을 읽지 못했습니다." })) as IssuedToken;
+      if (!response.ok || !payload.token) throw new Error(payload.message ?? "CLI 작업자 토큰을 발급하지 못했습니다.");
+      setIssued(payload);
+      notify("CLI 작업자 토큰을 발급했습니다. 지금 한 번만 복사할 수 있습니다.");
+      await load();
+    } catch (issueError) {
+      setError(issueError instanceof Error ? issueError.message : "CLI 작업자 토큰을 발급하지 못했습니다.");
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const copy = async (value: string, message: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      notify(message);
+    } catch {
+      notify("클립보드 권한이 없어 복사하지 못했습니다. 값을 직접 선택해 주세요.");
+    }
+  };
+
+  const online = Number(status?.running ?? 0) > 0 || isOnline(status?.worker?.last_seen_at ?? null);
 
   return <section className="cli-runtime-card">
     <header>
-      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>SERVER-ONLY VERCEL AI</small><h3>서버 AI 스튜디오 런타임</h3><p>상품 분석과 이미지 제작은 Vercel Node·AI Gateway OIDC·Supabase 비공개 큐에서 실행됩니다. 운영에 Mac 또는 로컬 상품 작업자는 필요하지 않습니다.</p></div></div>
-      <span className={`cli-runtime-state ${serverReady && gatewayVerified ? "online" : "offline"}`}><i />{runtimeStatusLabel}</span>
+      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>CHATGPT CLI RUNTIME</small><h3>로컬 Codex AI 작업자</h3><p>ChatGPT OAuth는 Mac에만 남고, Vercel은 암호화된 작업 큐만 전달합니다.</p></div></div>
+      <span className={`cli-runtime-state ${online ? "online" : "offline"}`}><i />{online ? "실시간 연결" : status?.worker ? "작업자 대기" : "토큰 미발급"}</span>
     </header>
 
-    <div className="cli-server-runtime-flow" aria-label="서버 AI 실행 경로">
-      <article><span><i className={gatewayVerified ? "online" : "missing"} />Vercel Node + OIDC</span><small>{gatewayVerified ? "실제 AI Gateway 생성 호출 확인" : serverConfigured ? "OIDC 인증 수단 감지 · 실제 호출은 아래에서 점검" : "OIDC·AI Gateway 구성 확인 필요"}</small></article>
-      <article><span><i className={queueReady ? "online" : "missing"} />Supabase 비공개 큐</span><small>{runtimeGuidance.queueSummary}{serverWorker ? ` · 만료 ${formatDate(serverWorker.expires_at)}` : ""}</small></article>
-      <article><span><i className={gatewayVerified ? "ready" : "missing"} />운영 복구 게이트</span><small>{gatewayVerified ? "실제 Gateway 호출 통과 · 큐 복구 상태는 운영 원장에서 확인" : "구성 감지만으로 성공 처리하지 않음 · 실제 호출 점검 필요 · 토큰 불일치·만료는 자동 복구하지 않음"}</small></article>
-    </div>
-
     <div className="cli-runtime-grid">
-      <article><Cpu size={16} /><span><small>상품 제작 실행 위치</small><b>Vercel Node · AI Gateway</b><em>로컬 프로세스 없이 서버에서 실행</em></span></article>
-      <article><Clock3 size={16} /><span><small>서버 연결 확인</small><b>{formatDate(readiness?.checkedAt)}</b><em>{readiness?.message ?? "서버 연결 상태 확인 중"}</em></span></article>
+      <article><Cpu size={16} /><span><small>작업자</small><b>{status?.worker?.label ?? "연결 필요"}</b><em>{status?.worker?.last_version ?? "Codex CLI 로그인 후 실행"}</em></span></article>
+      <article><Clock3 size={16} /><span><small>마지막 신호</small><b>{formatDate(status?.worker?.last_seen_at ?? null)}</b><em>{status?.worker ? `토큰 ${status.worker.fingerprint} · 만료 ${formatDate(status.worker.expires_at)}` : "토큰을 먼저 발급하세요"}</em></span></article>
       <article><RefreshCw size={16} /><span><small>현재 작업</small><b>{Number(status?.running ?? 0)} 실행 · {Number(status?.queued ?? 0)} 대기</b><em>15초마다 자동 갱신</em></span></article>
-      <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>16개 이미지 + 26개국 현지화 계약</em></span></article>
+      <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>상세페이지 분석 + codex-image</em></span></article>
     </div>
 
-    <div className="cli-runtime-actions cli-server-runtime-notice" role="status" aria-live="polite">
-      <aside>{gatewayVerified ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{gatewaySmoke.status === "idle" ? runtimeGuidance.recoveryTitle : gatewaySmoke.message}</b><small>{gatewaySmoke.checkedAt ? `실제 호출 점검 ${formatDate(gatewaySmoke.checkedAt)}` : runtimeGuidance.recoveryDetail}</small></span></aside>
-      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void verifyGateway()} disabled={!serverConfigured || gatewaySmoke.status === "checking"}>{gatewaySmoke.status === "checking" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{gatewaySmoke.status === "checking" ? "실제 호출 확인 중" : "AI Gateway 실제 호출 점검"}</button>
-      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => setPendingConfirmation({ kind: "runtime_activate" })} disabled={runtimeRelease.status === "checking" || listingReleaseBusy} title={runtimeRelease.message}>{runtimeRelease.status === "checking" ? <LoaderCircle className="spin" size={13} /> : runtimeRelease.status === "passed" ? <CheckCircle2 size={13} /> : <RefreshCw size={13} />}{runtimeRelease.status === "checking" ? "운영 일정 재검증 중" : "운영 일정 재검증·재시작"}</button>
+    <div className="cli-runtime-actions">
+      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={() => void issueToken()} disabled={issuing}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "작업자 토큰 교체" : "작업자 토큰 발급"}</button></div>
+      <aside><ShieldCheck size={15} /><span><b>API Key 불필요</b><small>`codex login`의 ChatGPT 계정 인증과 codex-image 스킬을 사용합니다.</small></span></aside>
     </div>
-
-    {pendingConfirmation?.kind === "runtime_activate" && <InlineReleaseConfirmation pending={pendingConfirmation} working={runtimeRelease.status === "checking"} onCancel={() => setPendingConfirmation(null)} onExecute={executePendingConfirmation} />}
-
-    <section className="cli-listing-release" aria-labelledby="listing-release-heading">
-      <header>
-        <div><ShieldCheck size={17} /><span><small>EXACT-SHA PUBLICATION CONTROL</small><h4 id="listing-release-heading">8개 채널 게시 릴리스 게이트</h4><p>서버가 확인한 현재 배포 SHA로만 어댑터와 재조회기를 기록합니다. 이 화면에서 SHA를 입력하거나 자동 게시하지 않습니다.</p></span></div>
-        <span className={`cli-listing-release-state ${anyListingGateEffective ? "open" : "closed"}`}><i />{listingGate?.effectiveOpen ? "8개 채널 게시 허용" : listingGate?.qoo10EffectiveOpen ? "Qoo10만 게시 허용" : listingGate?.coupangEffectiveOpen ? "쿠팡만 게시 허용" : listingGate?.smartstoreEffectiveOpen ? "스마트스토어만 게시 허용" : listingGate?.open ? "조건 불일치 · 차단" : "외부 게시 차단"}</span>
-      </header>
-
-      <div className="cli-listing-release-summary">
-        <article><small>현재 서버 배포 SHA</small><code title={listingRelease.currentRelease ?? undefined}>{listingRelease.currentRelease ?? "확인 불가"}</code><em>{listingRelease.currentRelease ? "브라우저 입력 없이 서버에서 확인" : "attestation·게이트 열기 차단"}</em></article>
-        <article><small>8개 게시 어댑터</small><b>{listingGate?.publicationAdaptersReady ?? 0} / {listingPublicationChannels.length}</b><em className={exactPublicationReleaseReady ? "ok" : "waiting"}>{exactPublicationReleaseReady ? "현재 SHA 일치" : "현재 SHA 확인 필요"}</em></article>
-        <article><small>Qoo10 단일 채널</small><b>{listingGate?.qoo10AdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactQoo10ReleaseReady ? "ok" : "waiting"}>{exactQoo10ReleaseReady ? "현재 SHA 일치" : "Qoo10 SHA 확인 필요"}</em></article>
-        <article><small>쿠팡 단일 채널</small><b>{listingGate?.coupangAdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactCoupangReleaseReady ? "ok" : "waiting"}>{exactCoupangReleaseReady ? "현재 SHA 일치" : "쿠팡 SHA 확인 필요"}</em></article>
-        <article><small>스마트스토어 단일 채널</small><b>{listingGate?.smartstoreAdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactSmartstoreReleaseReady ? "ok" : "waiting"}>{exactSmartstoreReleaseReady ? "현재 SHA 일치" : "스마트스토어 SHA 확인 필요"}</em></article>
-        <article><small>게시 결과 재조회기</small><b>{listingGate?.publicationRecheckerReady ? "확인됨" : "확인 필요"}</b><em className={listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "ok" : "waiting"}>{listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "현재 SHA 일치" : "재조회 계약 확인 필요"}</em></article>
-        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "게시 기준·런타임 SHA 결속 확인 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
-      </div>
-
-      <div className="cli-listing-release-blockers">
-        <span className={(listingGate?.queuedOrRunning ?? 0) === 0 ? "ok" : "blocked"}>게시 작업 {listingGate?.queuedOrRunning ?? 0}건</span>
-        <span className={(listingGate?.reconciliationRequired ?? 0) === 0 ? "ok" : "blocked"}>조정 필요 {listingGate?.reconciliationRequired ?? 0}건</span>
-        <span className={(listingGate?.orphanPendingReviews ?? 0) === 0 ? "ok" : "blocked"}>고아 심사대기 {listingGate?.orphanPendingReviews ?? 0}건</span>
-        <span className={(listingGate?.listingMutationsRunning ?? 0) === 0 ? "ok" : "blocked"}>전체 게시 실행 중 {listingGate?.listingMutationsRunning ?? 0}건</span>
-        <span className={listingRelease.readyForOpen ? "ok" : "blocked"}>{listingRelease.readyForOpen ? "게이트 개방 조건 충족" : "게이트 개방 조건 미충족"}</span>
-        <span className={listingRelease.readyForQoo10Open ? "ok" : "blocked"}>{listingRelease.readyForQoo10Open ? "Qoo10 단일 개방 조건 충족" : "Qoo10 단일 개방 조건 미충족"}</span>
-        <span className={listingRelease.readyForCoupangOpen ? "ok" : "blocked"}>{listingRelease.readyForCoupangOpen ? "쿠팡 단일 개방 조건 충족" : "쿠팡 단일 개방 조건 미충족"}</span>
-        <span className={listingRelease.readyForSmartstoreOpen ? "ok" : "blocked"}>{listingRelease.readyForSmartstoreOpen ? "스마트스토어 단일 개방 조건 충족" : "스마트스토어 단일 개방 조건 미충족"}</span>
-      </div>
-
-      <div className="cli-listing-release-controls">
-        <div className="cli-listing-adapter-controls">
-          <b>어댑터별 현재 SHA 확인</b>
-          <small>각 채널의 원격 상태 계약을 검증한 뒤 해당 버튼을 두 단계로 실행하세요.</small>
-          <div>{listingPublicationChannels.map((channel) => <button key={channel} type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "attest_adapter", channel } })} disabled={!listingRelease.currentRelease || listingReleaseBusy}>{listingPublicationChannelLabels[channel]} 확인 기록</button>)}</div>
-        </div>
-        <div className="cli-listing-gate-controls">
-          <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "attest_rechecker" } })} disabled={!listingRelease.currentRelease || listingReleaseBusy}>재조회기 확인 기록</button>
-          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "qoo10" } })} disabled={!listingRelease.readyForQoo10Open || listingReleaseBusy || listingGate?.qoo10EffectiveOpen === true}>Qoo10만 열기</button>
-          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "coupang" } })} disabled={!listingRelease.readyForCoupangOpen || listingReleaseBusy || listingGate?.coupangEffectiveOpen === true}>쿠팡만 열기</button>
-          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "smartstore" } })} disabled={!listingRelease.readyForSmartstoreOpen || listingReleaseBusy || listingGate?.smartstoreEffectiveOpen === true}>스마트스토어만 열기</button>
-          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_gate" } })} disabled={!listingRelease.readyForOpen || listingReleaseBusy || listingGate?.effectiveOpen === true}>게시 게이트 열기</button>
-          <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "close_gate" } })} disabled={listingReleaseBusy}>게시 게이트 닫기</button>
-        </div>
-      </div>
-
-      {pendingConfirmation?.kind === "listing_release" && <InlineReleaseConfirmation pending={pendingConfirmation} working={listingReleaseBusy} onCancel={() => setPendingConfirmation(null)} onExecute={executePendingConfirmation} />}
-      <p className={`cli-listing-release-message ${listingRelease.status}`} role="status" aria-live="polite">{listingRelease.status === "checking" || listingRelease.status === "working" ? <LoaderCircle className="spin" size={13} /> : listingRelease.status === "failed" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{listingRelease.message}</p>
-    </section>
 
     <div className="cli-job-history">
       <div className="cli-job-history-heading"><span><History size={15} /><b>최근 AI 작업</b></span><small>요청 이미지·시도 횟수·결과 상태를 운영 화면에서 관리합니다.</small></div>
@@ -780,11 +213,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         {jobs.map((job) => <article key={job.id} className="cli-job-row">
           <div className="cli-job-main">
             <span className={`cli-job-status ${job.status}`}>{jobStatusLabel[job.status]}</span>
-            <div><b>{job.product_description || jobKindLabel[job.kind] || "AI 작업"}</b><small>{job.kind === "product_studio" ? `${job.image_count}개 이미지 · ` : ""}{job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
+            <div><b>{job.product_description || jobKindLabel[job.kind] || "CLI 작업"}</b><small>{job.kind === "product_studio" ? `${job.image_count}개 이미지 · ` : ""}{job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
           </div>
           <div className="cli-job-controls">
             {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.kind === "support_reply" ? "답변 초안 완료" : job.has_result ? "분석 완료" : "완료"}</span>{job.kind === "product_studio" && <button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button>}</>}
-            {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id || productAiJobKinds.has(job.kind) && !gatewayVerified} title={productAiJobKinds.has(job.kind) && !gatewayVerified ? readiness?.message : undefined}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{productAiJobKinds.has(job.kind) && !gatewayVerified ? "Gateway 점검 필요" : "다시 실행"}</button>}
+            {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}다시 실행</button>}
             {(job.status === "queued" || job.status === "running") && <button type="button" className="danger" onClick={() => void controlJob(job, "cancel")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <Ban size={13} />}취소</button>}
           </div>
         </article>)}
@@ -792,7 +225,13 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       {jobsError && <p className="cli-runtime-error"><AlertTriangle size={14} />{jobsError}</p>}
     </div>
 
+    {issued && <div className="cli-token-reveal">
+      <div><AlertTriangle size={16} /><span><b>일회성 토큰 — 창을 닫기 전에 복사하세요.</b><small>토큰 원문은 서버에도 저장되지 않으며 SHA-256 지문만 보관됩니다.</small></span></div>
+      <code>{issued.token}</code>
+      <button type="button" onClick={() => void copy(issued.token, "CLI 작업자 토큰을 복사했습니다.")}><Copy size={14} />토큰 복사</button>
+      <p><b>Mac 자동실행 설치</b><code>npm run ai:worker:install</code><button type="button" onClick={() => void copy("npm run ai:worker:install", "CLI 작업자 설치 명령을 복사했습니다.")}><Copy size={13} />명령 복사</button><small>명령 실행 후 뜨는 보안 입력창에 위 토큰을 붙여 넣으면 키체인에 저장되고 로그인 시 자동 실행됩니다.</small></p>
+    </div>}
     {error && <p className="cli-runtime-error"><AlertTriangle size={14} />{error}</p>}
-    {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />운영 런타임 상태 확인 중</div>}
+    {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />CLI 작업자 상태 확인 중</div>}
   </section>;
 }

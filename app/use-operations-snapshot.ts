@@ -1,32 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import {
   mergeOperationProductImages,
   type OperationProductImageCacheEntry,
 } from "../lib/operation-product-image-cache";
-import {
-  createBoundedRequestSignal,
-  OperationsSnapshotRequestCoordinator,
-  operationsSnapshotRangeKey,
-  unavailableOperationsSnapshot,
-  waitForAbortablePromise,
-} from "./operations-snapshot-request-coordinator";
 
 const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
-// Exported so the shell can state the real refresh cadence instead of guessing.
-export const OPERATIONS_REFRESH_MINUTES = Math.round(DATA_REFRESH_INTERVAL_MS / 60_000);
 const RETRY_INTERVAL_MS = 30_000;
 const PRODUCT_IMAGE_REFRESH_INTERVAL_MS = 45 * 60_000;
 const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
-const STALE_AI_RECOVERY_INTERVAL_MS = 5 * 60_000;
-const STALE_AI_RECOVERY_RETRY_MS = 30_000;
-export const operationsSnapshotRequestTimeoutMs = 30_000;
-const OPERATIONS_TIMEOUT_RETRY_LIMIT = 2;
-// Exponential backoff keeps a degraded operations database from being retried
-// into a deeper outage by every open browser tab.
-const OPERATIONS_TIMEOUT_RETRY_MS = 15_000;
 
 export type OperationProduct = {
   id: string;
@@ -42,21 +26,6 @@ export type OperationProduct = {
   reserved: number;
   available: number;
   costKrw: number;
-  baseSellingPrice: number | null;
-  baseCurrency: string | null;
-  categoryHint: string | null;
-  confirmedCategories: Array<{
-    channelKey: string;
-    market: string;
-    categoryId: string;
-    categoryPath: string[];
-    confirmedAt: string | null;
-  }>;
-  marginState: "calculated" | "missing" | "invalid";
-  marginPercent: number | null;
-  marginChannelKey: string | null;
-  latestError: string | null;
-  latestErrorKind: "analysis" | "listing" | "external_action" | null;
   sold30d: number;
   revenue30dKrw: number;
   listingChannels: string[];
@@ -126,22 +95,6 @@ export type OperationOrder = {
   demo: boolean;
 };
 
-export type OperationTicketDelivery = {
-  jobId: string;
-  ticketId: string;
-  channel: string;
-  inboundKey: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "reconciliation_required";
-  safeMessage: string | null;
-  reconciliationReason: string | null;
-  providerRequestId: string | null;
-  providerMessageId: string | null;
-  queuedAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  updatedAt: string;
-};
-
 export type OperationTicket = {
   id: string;
   externalTicketId: string;
@@ -152,21 +105,6 @@ export type OperationTicket = {
   message: string;
   translatedMessage: string | null;
   replyDraft: string | null;
-  replyDeliveryStatus: "never" | "preparing" | "sending" | "succeeded" | "failed" | "reconciliation_required";
-  replyDeliveryError: string | null;
-  replyOperationAttemptId: string | null;
-  replyGatewayJobId: string | null;
-  orderId: string | null;
-  externalOrderReference?: string | null;
-  providerStatus?: "unknown" | "waiting" | "answered" | "closed";
-  providerStatusUpdatedAt?: string | null;
-  providerContext?: Record<string, unknown>;
-  latestInboundKey?: string | null;
-  ticketKind?: "conversation" | "after_sales";
-  latestMessageState?: "normal" | "recalled" | "conflict_review_required";
-  replyAllowed?: boolean;
-  delivery?: OperationTicketDelivery | null;
-  blockingDelivery?: OperationTicketDelivery | null;
   status: "urgent" | "waiting" | "in_progress" | "resolved";
   priority: number;
   receivedAt: string;
@@ -176,7 +114,6 @@ export type OperationTicket = {
 
 export type OperationMarginScenario = {
   id: string;
-  productId: string | null;
   name: string;
   channelKey: string;
   inputs: Record<string, unknown>;
@@ -186,14 +123,6 @@ export type OperationMarginScenario = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
-  aiRecovery: {
-    status: "checking" | "passed" | "failed";
-    expiredCount: number;
-    message: string | null;
-    checkedAt: string | null;
-  };
-  productReadinessState: "checking" | "ready" | "unavailable";
-  productReadinessMessage: string | null;
   analytics: SalesAnalytics;
   aiRuntime: {
     worker: {
@@ -242,14 +171,7 @@ export type OperationsSnapshot = {
   products: OperationProduct[];
   orders: OperationOrder[];
   tickets: OperationTicket[];
-  csDeliverySummary?: {
-    queued: number;
-    running: number;
-    reconciliationRequired: number;
-  } | null;
   marginScenarios: OperationMarginScenario[];
-  marginScenarioState: "checking" | "ready" | "unavailable";
-  marginScenarioMessage: string | null;
   externalActions: Array<{
     listingId: string;
     productId: string;
@@ -273,8 +195,6 @@ export type OperationsSnapshot = {
     productCode: string;
     sku: string;
     status: "analyzing" | "ready" | "publishing" | "completed" | "failed" | "blocked";
-    controlState?: "stopping" | "stopped" | null;
-    queueState?: "queued" | "running" | null;
     startedAt: string;
     updatedAt: string;
     completedAt: string | null;
@@ -294,7 +214,6 @@ export type OperationsSnapshot = {
     }>;
     message: string;
   }>;
-  registrationActivityState?: "ready" | "unavailable";
   pipeline: {
     aiRunning: number;
     listingQueued: number;
@@ -319,180 +238,8 @@ export type OperationsSnapshot = {
   };
 };
 
-type ProductReadinessFact = Pick<OperationProduct,
-  | "baseSellingPrice"
-  | "baseCurrency"
-  | "categoryHint"
-  | "confirmedCategories"
-  | "marginState"
-  | "marginPercent"
-  | "marginChannelKey"
-  | "latestError"
-  | "latestErrorKind"
-> & { productId: string };
-
-type ProductReadinessResponse = {
-  facts: ProductReadinessFact[];
-  factsState: OperationsSnapshot["productReadinessState"];
-  factsMessage: string | null;
-  aiRecovery: OperationsSnapshot["aiRecovery"];
-  marginScenarios: OperationMarginScenario[];
-  marginScenarioState: OperationsSnapshot["marginScenarioState"];
-  marginScenarioMessage: string | null;
-};
-
-const pendingProductReadiness: ProductReadinessResponse = {
-  facts: [],
-  factsState: "checking",
-  factsMessage: null,
-  aiRecovery: {
-    status: "checking",
-    expiredCount: 0,
-    message: "상품 가격·마진·카테고리·오류 상태를 확인하고 있습니다.",
-    checkedAt: null,
-  },
-  marginScenarios: [],
-  marginScenarioState: "checking",
-  marginScenarioMessage: null,
-};
-
-function parseProductReadinessResponse(value: unknown): ProductReadinessResponse | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const payload = value as Record<string, unknown>;
-  const recovery = payload.aiRecovery;
-  if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) return null;
-  const recoveryRecord = recovery as Record<string, unknown>;
-  if ((recoveryRecord.status !== "checking" && recoveryRecord.status !== "passed" && recoveryRecord.status !== "failed")
-    || typeof recoveryRecord.expiredCount !== "number"
-    || !Number.isFinite(recoveryRecord.expiredCount)
-    || (recoveryRecord.message !== null && typeof recoveryRecord.message !== "string")
-    || (recoveryRecord.checkedAt !== null && typeof recoveryRecord.checkedAt !== "string")
-    || !Array.isArray(payload.facts)
-    || (payload.factsState !== "ready" && payload.factsState !== "unavailable")
-    || (payload.factsMessage !== null && typeof payload.factsMessage !== "string")
-    || !Array.isArray(payload.marginScenarios)
-    || (payload.marginScenarioState !== "ready" && payload.marginScenarioState !== "unavailable")
-    || (payload.marginScenarioMessage !== null && typeof payload.marginScenarioMessage !== "string")) return null;
-  return {
-    facts: payload.facts as ProductReadinessFact[],
-    factsState: payload.factsState,
-    factsMessage: payload.factsMessage,
-    aiRecovery: {
-      status: recoveryRecord.status,
-      expiredCount: Math.max(0, Math.trunc(recoveryRecord.expiredCount)),
-      message: recoveryRecord.message,
-      checkedAt: recoveryRecord.checkedAt,
-    },
-    marginScenarios: payload.marginScenarios as OperationMarginScenario[],
-    marginScenarioState: payload.marginScenarioState,
-    marginScenarioMessage: payload.marginScenarioMessage,
-  };
-}
-
-function mergeProductReadiness(
-  snapshot: OperationsSnapshot,
-  readiness: ProductReadinessResponse,
-): OperationsSnapshot {
-  const factsByProductId = new Map(readiness.facts
-    .filter((fact) => fact && typeof fact.productId === "string")
-    .map((fact) => [fact.productId, fact]));
-  return {
-    ...snapshot,
-    aiRecovery: readiness.aiRecovery.status === "checking" && snapshot.aiRecovery
-      ? snapshot.aiRecovery
-      : readiness.aiRecovery,
-    productReadinessState: readiness.factsState,
-    productReadinessMessage: readiness.factsMessage,
-    marginScenarios: readiness.marginScenarioState === "ready"
-      ? readiness.marginScenarios
-      : snapshot.marginScenarios,
-    marginScenarioState: readiness.marginScenarioState,
-    marginScenarioMessage: readiness.marginScenarioMessage,
-    products: snapshot.products.map((product) => {
-      const facts = readiness.factsState === "ready"
-        ? factsByProductId.get(product.id) ?? product
-        : product;
-      const confirmedCategories = Array.isArray(facts?.confirmedCategories)
-        ? facts.confirmedCategories.flatMap((category) => {
-            if (!category || typeof category !== "object") return [];
-            if (typeof category.channelKey !== "string"
-              || typeof category.market !== "string"
-              || typeof category.categoryId !== "string"
-              || !Array.isArray(category.categoryPath)
-              || !category.categoryPath.every((part) => typeof part === "string")
-              || (category.confirmedAt !== null && typeof category.confirmedAt !== "string")) return [];
-            return [category];
-          })
-        : [];
-      return {
-        ...product,
-        baseSellingPrice: typeof facts?.baseSellingPrice === "number" && Number.isFinite(facts.baseSellingPrice)
-          ? facts.baseSellingPrice
-          : null,
-        baseCurrency: typeof facts?.baseCurrency === "string" && /^[A-Z]{3}$/.test(facts.baseCurrency)
-          ? facts.baseCurrency
-          : null,
-        categoryHint: typeof facts?.categoryHint === "string" ? facts.categoryHint : null,
-        confirmedCategories,
-        marginState: facts?.marginState === "calculated" || facts?.marginState === "invalid"
-          ? facts.marginState
-          : "missing",
-        marginPercent: typeof facts?.marginPercent === "number" && Number.isFinite(facts.marginPercent)
-          ? facts.marginPercent
-          : null,
-        marginChannelKey: typeof facts?.marginChannelKey === "string" ? facts.marginChannelKey : null,
-        latestError: typeof facts?.latestError === "string" ? facts.latestError : null,
-        latestErrorKind: facts?.latestErrorKind === "analysis"
-          || facts?.latestErrorKind === "listing"
-          || facts?.latestErrorKind === "external_action"
-          ? facts.latestErrorKind
-          : null,
-      };
-    }),
-  };
-}
-
-function carryForwardProductReadiness(
-  snapshot: OperationsSnapshot,
-  previous: OperationsSnapshot | null,
-): OperationsSnapshot {
-  if (!previous) return snapshot;
-  const previousByProductId = new Map(previous.products.map((product) => [product.id, product]));
-  return {
-    ...snapshot,
-    aiRecovery: previous.aiRecovery,
-    productReadinessState: previous.productReadinessState,
-    productReadinessMessage: previous.productReadinessMessage,
-    marginScenarioState: previous.marginScenarioState,
-    marginScenarioMessage: previous.marginScenarioMessage,
-    marginScenarios: previous.marginScenarios,
-    products: snapshot.products.map((product) => {
-      const previousProduct = previousByProductId.get(product.id);
-      if (!previousProduct) return product;
-      return {
-        ...product,
-        baseSellingPrice: previousProduct.baseSellingPrice,
-        baseCurrency: previousProduct.baseCurrency,
-        categoryHint: previousProduct.categoryHint,
-        confirmedCategories: previousProduct.confirmedCategories,
-        marginState: previousProduct.marginState,
-        marginPercent: previousProduct.marginPercent,
-        marginChannelKey: previousProduct.marginChannelKey,
-        latestError: previousProduct.latestError,
-        latestErrorKind: previousProduct.latestErrorKind,
-      };
-    }),
-  };
-}
-
 type LoadState = "loading" | "database" | "unavailable";
 type LoadOptions = { force?: boolean; refreshProductImages?: boolean };
-
-class OperationsSnapshotLoadError extends Error {
-  constructor(message: string, readonly retainLastGood: boolean) {
-    super(message);
-  }
-}
 
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
@@ -500,11 +247,8 @@ export function useOperationsSnapshot() {
   const [message, setMessage] = useState("");
   const productImageCacheRef = useRef(new Map<string, OperationProductImageCacheEntry>());
   const nextProductImageRefreshAtRef = useRef(0);
-  const nextDataRefreshAtRef = useRef(new Map<string, number>());
-  const nextStaleAiRecoveryAtRef = useRef(0);
-  const requestCoordinatorRef = useRef(new OperationsSnapshotRequestCoordinator());
-  const lastSuccessfulRangeKeyRef = useRef("");
-  const lastGoodDataRef = useRef<OperationsSnapshot | null>(null);
+  const nextDataRefreshAtRef = useRef(0);
+  const inFlightLoadRef = useRef<Promise<void> | null>(null);
   const [range, setRange] = useState<SalesRange>(() => {
     const now = new Date();
     const to = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -512,58 +256,28 @@ export function useOperationsSnapshot() {
     const from = new Date(monthStart.getTime() - monthStart.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
     return { from, to, preset: "month" };
   });
-  const rangeKey = operationsSnapshotRangeKey(range);
-  const selectedRangeKeyRef = useRef(rangeKey);
-  const timeoutRetryCountRef = useRef(0);
-  const timeoutRetryTimerRef = useRef(0);
-
-  useLayoutEffect(() => {
-    selectedRangeKeyRef.current = rangeKey;
-    requestCoordinatorRef.current.abortCurrent();
-  }, [rangeKey]);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
-    const sessionPromise = createClient().auth.getSession();
-    const { data: sessionData } = init?.signal
-      ? await waitForAbortablePromise(sessionPromise, init.signal)
-      : await sessionPromise;
-    if (init?.signal?.aborted) {
-      throw init.signal.reason ?? new DOMException("운영 데이터 요청이 취소되었습니다.", "AbortError");
-    }
+    const { data: sessionData } = await createClient().auth.getSession();
     const accessToken = sessionData.session?.access_token;
-    if (!accessToken) throw new OperationsSnapshotLoadError("운영 데이터를 보려면 다시 로그인해 주세요.", false);
-    const headers = new Headers(init?.headers);
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    headers.set("authorization", `Bearer ${accessToken}`);
-    const request = fetch(input, {
+    if (!accessToken) throw new Error("운영 데이터를 보려면 다시 로그인해 주세요.");
+    return fetch(input, {
       ...init,
       cache: "no-store",
-      headers,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${accessToken}`,
+        ...(init?.headers ?? {}),
+      },
     });
-    return init?.signal ? waitForAbortablePromise(request, init.signal) : request;
   }, []);
 
-  const load = useCallback(function loadOperationsSnapshot(options: LoadOptions = {}) {
+  const load = useCallback((options: LoadOptions = {}) => {
+    if (inFlightLoadRef.current) return inFlightLoadRef.current;
     const startedAt = Date.now();
-    const nextRefreshAt = nextDataRefreshAtRef.current.get(rangeKey) ?? 0;
-    if (!options.force && startedAt < nextRefreshAt) return Promise.resolve();
+    if (!options.force && startedAt < nextDataRefreshAtRef.current) return Promise.resolve();
 
-    return requestCoordinatorRef.current.run(rangeKey, async (request) => {
-      const coordinator = requestCoordinatorRef.current;
-      const isSelectedRequest = () => coordinator.isCurrent(request, selectedRangeKeyRef.current);
-      const bounded = createBoundedRequestSignal(
-        request.signal,
-        operationsSnapshotRequestTimeoutMs,
-        "운영 데이터 조회가 30초를 초과했습니다. 다시 시도해 주세요.",
-      );
-      if (lastSuccessfulRangeKeyRef.current !== request.key) {
-        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
-          setState("loading");
-          setMessage(lastSuccessfulRangeKeyRef.current
-            ? "선택한 기간의 실데이터를 불러오는 중입니다. 이전 정상 데이터를 잠시 유지합니다."
-            : "Supabase 운영 DB 연결을 확인하고 있습니다.");
-        });
-      }
+    const request = (async () => {
       try {
         const refreshProductImages = options.refreshProductImages === true
           || startedAt >= nextProductImageRefreshAtRef.current;
@@ -572,138 +286,45 @@ export function useOperationsSnapshot() {
           to: range.to,
           includeProductImages: refreshProductImages ? "1" : "0",
         });
-        const shouldRecoverStaleAi = startedAt >= nextStaleAiRecoveryAtRef.current;
-        const readinessBounded = createBoundedRequestSignal(
-          request.signal,
-          12_000,
-          "상품 가격·마진·카테고리 상태 확인이 12초를 초과했습니다.",
-        );
-        const readinessPromise = (async (): Promise<ProductReadinessResponse> => {
-          const readinessResponse = await authenticatedFetch(`/api/operations/product-readiness?recoverStale=${shouldRecoverStaleAi ? "1" : "0"}`, {
-            signal: readinessBounded.signal,
-          });
-          const readinessPayload = parseProductReadinessResponse(await waitForAbortablePromise(
-            readinessResponse.json().catch(() => null),
-            readinessBounded.signal,
-          ));
-          if (!readinessResponse.ok || !readinessPayload) {
-            throw new Error("상품 가격·마진·카테고리·오류 상태를 불러오지 못했습니다.");
-          }
-          return readinessPayload;
-        })().catch((error): ProductReadinessResponse => ({
-          facts: [],
-          factsState: "unavailable",
-          factsMessage: "상품 가격·마진·카테고리·오류 상태를 불러오지 못했습니다. 마지막 정상 상태가 있으면 유지합니다.",
-          aiRecovery: {
-            status: shouldRecoverStaleAi ? "failed" : "checking",
-            expiredCount: 0,
-            message: shouldRecoverStaleAi && error instanceof Error
-              ? `${error.message} 장기 AI 분석 자동 복구 상태도 확인하지 못했습니다.`
-              : shouldRecoverStaleAi ? "장기 AI 분석 자동 복구 상태를 확인하지 못했습니다." : null,
-            checkedAt: shouldRecoverStaleAi ? new Date(startedAt).toISOString() : null,
-          },
-          marginScenarios: [],
-          marginScenarioState: "unavailable",
-          marginScenarioMessage: "저장된 마진 계산 이력을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.",
-        })).finally(() => readinessBounded.dispose());
-        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`, {
-          signal: bounded.signal,
-        });
-        const payload = await waitForAbortablePromise(
-          response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })),
-          bounded.signal,
-        ) as OperationsSnapshot & { message?: string };
-        if (bounded.signal.aborted) {
-          throw bounded.signal.reason ?? new DOMException("운영 데이터 요청이 취소되었습니다.", "AbortError");
-        }
-        if (!isSelectedRequest()) return;
-        if (!response.ok) {
-          const isTransient = response.status === 408
-            || response.status === 425
-            || response.status === 429
-            || response.status >= 500;
-          throw new OperationsSnapshotLoadError(payload.message ?? "운영 데이터를 불러오지 못했습니다.", isTransient);
-        }
+        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`);
+        const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
+        if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
 
-        const basePayload = mergeProductReadiness(
-          carryForwardProductReadiness(payload, lastGoodDataRef.current),
-          pendingProductReadiness,
-        );
         const merged = mergeOperationProductImages(
-          basePayload.products,
+          payload.products,
           productImageCacheRef.current,
           startedAt,
           PRODUCT_IMAGE_CLIENT_CACHE_MS,
         );
-        const baseData = { ...basePayload, products: merged.products };
-        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
-          if (refreshProductImages) {
-            nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
-          } else if (merged.missingVersionedImage) {
-            nextProductImageRefreshAtRef.current = 0;
-          }
-
-          nextDataRefreshAtRef.current.set(request.key, startedAt + DATA_REFRESH_INTERVAL_MS);
-          lastSuccessfulRangeKeyRef.current = request.key;
-          lastGoodDataRef.current = baseData;
-          timeoutRetryCountRef.current = 0;
-          window.clearTimeout(timeoutRetryTimerRef.current);
-          setData(baseData);
-          setState("database");
-          setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
-        });
-
-        const readiness = await readinessPromise;
-        if (shouldRecoverStaleAi) {
-          nextStaleAiRecoveryAtRef.current = Date.now() + (readiness.aiRecovery.status === "passed"
-            ? STALE_AI_RECOVERY_INTERVAL_MS
-            : STALE_AI_RECOVERY_RETRY_MS);
+        if (refreshProductImages) {
+          nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
+        } else if (merged.missingVersionedImage) {
+          nextProductImageRefreshAtRef.current = 0;
         }
-        if (!isSelectedRequest()) return;
-        const readyData = mergeProductReadiness(baseData, readiness);
-        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
-          lastGoodDataRef.current = readyData;
-          setData(readyData);
-        });
+
+        nextDataRefreshAtRef.current = startedAt + DATA_REFRESH_INTERVAL_MS;
+        setData({ ...payload, products: merged.products });
+        setState("database");
+        setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
       } catch (error) {
-        if (!isSelectedRequest()) return;
-        const failureMessage = error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.";
-        const retainLastGood = !(error instanceof OperationsSnapshotLoadError) || error.retainLastGood;
-        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
-          nextDataRefreshAtRef.current.set(request.key, startedAt + RETRY_INTERVAL_MS);
-          const unavailable = unavailableOperationsSnapshot(lastGoodDataRef.current, failureMessage, retainLastGood);
-          if (!retainLastGood) {
-            lastGoodDataRef.current = null;
-            lastSuccessfulRangeKeyRef.current = "";
-          }
-          setData(unavailable.data);
-          setState(unavailable.state);
-          setMessage(unavailable.message);
-        });
-        const isTimeout = failureMessage.includes("30초를 초과");
-        if (isTimeout && timeoutRetryCountRef.current < OPERATIONS_TIMEOUT_RETRY_LIMIT) {
-          const backoffMs = OPERATIONS_TIMEOUT_RETRY_MS * 2 ** timeoutRetryCountRef.current;
-          timeoutRetryCountRef.current += 1;
-          window.clearTimeout(timeoutRetryTimerRef.current);
-          timeoutRetryTimerRef.current = window.setTimeout(() => {
-            void loadOperationsSnapshot({ force: true });
-          }, backoffMs);
-        }
-      } finally {
-        bounded.dispose();
+        nextDataRefreshAtRef.current = startedAt + RETRY_INTERVAL_MS;
+        setData(null);
+        setState("unavailable");
+        setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
       }
+    })();
+
+    inFlightLoadRef.current = request;
+    void request.finally(() => {
+      if (inFlightLoadRef.current === request) inFlightLoadRef.current = null;
     });
-  }, [authenticatedFetch, range.from, range.to, rangeKey]);
+    return request;
+  }, [authenticatedFetch, range.from, range.to]);
 
   const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
   const refresh = useCallback(() => load({ force: true }), [load]);
-  const reloadAfterMutation = useCallback(() => {
-    requestCoordinatorRef.current.abortCurrent();
-    return load({ force: true, refreshProductImages: true });
-  }, [load]);
 
   useEffect(() => {
-    const requestCoordinator = requestCoordinatorRef.current;
     const initialLoad = window.setTimeout(() => void load({ force: true, refreshProductImages: true }), 0);
     const refresh = window.setInterval(() => void load({ force: true }), DATA_REFRESH_INTERVAL_MS);
     const refreshWhenVisible = () => {
@@ -712,14 +333,12 @@ export function useOperationsSnapshot() {
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
-      requestCoordinator.abortCurrent();
       window.clearTimeout(initialLoad);
-      window.clearTimeout(timeoutRetryTimerRef.current);
       window.clearInterval(refresh);
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [load]);
 
-  return { data, state, message, range, setRange, reload, refresh, reloadAfterMutation, authenticatedFetch };
+  return { data, state, message, range, setRange, reload, refresh, authenticatedFetch };
 }

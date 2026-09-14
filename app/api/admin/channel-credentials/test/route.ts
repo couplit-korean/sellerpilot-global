@@ -1,8 +1,9 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { runChannelDiagnostic, type ChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
-import { ChannelGatewayInProgressError, executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
+import { runChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
+import { executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
+import { ensureEbayAccessToken } from "../../../../../lib/channels/protocols";
 import { runTracxDiagnostic } from "../../../../../lib/logistics/tracx";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
@@ -12,35 +13,6 @@ const requestSchema = z.object({
   credentialId: z.string().uuid(),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu", "tracx"]),
 });
-
-// Recording failure is not a provider failure. Never retry it as a failed diagnostic.
-async function recordedDiagnosticResponse(
-  serviceClient: SupabaseClient,
-  credentialId: string,
-  result: ChannelDiagnostic,
-) {
-  const recordFailure = () => NextResponse.json({
-    status: "manual",
-    code: "CREDENTIAL_TEST_RECORD_FAILED",
-    diagnosticStatus: result.status,
-    recordingStatus: "unverified",
-    message: "연결 검사 결과의 DB 기록 완료를 확인하지 못했습니다. 연결 검사와 기록 실패를 구분해 확인해 주세요.",
-  }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-  try {
-    const { error } = await serviceClient.rpc("sellerpilot_record_credential_test", {
-      p_credential_id: credentialId,
-      p_status: result.status,
-      p_safe_message: result.message,
-    });
-    if (error) return recordFailure();
-  } catch {
-    return recordFailure();
-  }
-  return NextResponse.json(result, {
-    status: result.status === "failed" ? 422 : 200,
-    headers: { "cache-control": "no-store, max-age=0" },
-  });
-}
 
 export async function POST(request: NextRequest) {
   const authorization = request.headers.get("authorization") ?? "";
@@ -82,7 +54,6 @@ export async function POST(request: NextRequest) {
     || parsed.data.channel === "coupang"
     || parsed.data.channel === "elevenst"
     || parsed.data.channel === "smartstore"
-    || parsed.data.channel === "ebay"
     || parsed.data.channel === "temu"
   ) {
     try {
@@ -91,35 +62,31 @@ export async function POST(request: NextRequest) {
         credentialId: parsed.data.credentialId,
         channel: parsed.data.channel,
       });
-      // The worker commits its diagnostic and receipt in the same transaction.
-      // Re-recording here could overwrite a newer diagnostic with an older poll.
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: parsed.data.credentialId,
+        p_status: result.status,
+        p_safe_message: result.message,
+      });
       return NextResponse.json(result, {
         status: result.status === "failed" ? 422 : 200,
         headers: { "cache-control": "no-store, max-age=0" },
       });
-    } catch (error) {
-      if (error instanceof ChannelGatewayInProgressError) {
-        return NextResponse.json({
-          status: "pending",
-          code: "CREDENTIAL_TEST_IN_PROGRESS",
-          jobId: error.jobId,
-          message: "연결 검사가 대기 또는 실행 중입니다. 완료되면 연결 상태에 반영됩니다. 잠시 후 새로고침해 주세요.",
-        }, { status: 202, headers: { "cache-control": "no-store, max-age=0" } });
-      }
+    } catch {
       const channelName = {
         shopee: "Shopee",
         lazada: "Lazada",
         coupang: "쿠팡",
         elevenst: "11번가",
         smartstore: "네이버",
-        ebay: "eBay",
         temu: "Temu",
       }[parsed.data.channel];
-      return NextResponse.json({
-        status: "manual",
-        code: "CREDENTIAL_TEST_EXECUTION_UNVERIFIED",
-        message: `${channelName} 연결 검사 실행 결과를 확인하지 못했습니다. 작업자와 운영 DB 상태를 확인해 주세요.`,
-      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      const message = `${channelName} 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다. 워커 상태와 채널 인증값을 확인해 주세요.`;
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: parsed.data.credentialId,
+        p_status: "failed",
+        p_safe_message: message,
+      });
+      return NextResponse.json({ status: "failed", message }, { status: 422 });
     }
   }
   const { data: secretPayload, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", {
@@ -130,20 +97,58 @@ export async function POST(request: NextRequest) {
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
-  const diagnosticPayload = secretPayload as Record<string, unknown>;
-  const diagnosticCredentialId = parsed.data.credentialId;
+  let diagnosticPayload = secretPayload as Record<string, unknown>;
+  let diagnosticCredentialId = parsed.data.credentialId;
   if (parsed.data.channel === "tracx") {
     try {
       const result = await runTracxDiagnostic(diagnosticPayload);
-      return recordedDiagnosticResponse(serviceClient, diagnosticCredentialId, result);
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: diagnosticCredentialId,
+        p_status: result.status,
+        p_safe_message: result.message,
+      });
+      return NextResponse.json(result, {
+        status: result.status === "failed" ? 422 : 200,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
     } catch (error) {
       const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
       const message = timeout
         ? "SmartShip 응답 제한시간(15초)을 초과했습니다."
         : "SmartShip TxAPI 연결 중 안전하게 처리된 오류가 발생했습니다.";
-      return recordedDiagnosticResponse(serviceClient, diagnosticCredentialId, { status: "failed", message });
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: diagnosticCredentialId,
+        p_status: "failed",
+        p_safe_message: message,
+      });
+      return NextResponse.json({ status: "failed", message }, { status: 422 });
+    }
+  }
+  if (parsed.data.channel === "ebay") {
+    try {
+      const ensured = await ensureEbayAccessToken(diagnosticPayload, environment);
+      diagnosticPayload = ensured.payload;
+      if (ensured.refreshed) {
+        const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
+          p_credential_id: parsed.data.credentialId,
+          p_secret_payload: ensured.payload,
+          p_expires_at: ensured.credentialExpiresAt,
+        });
+        if (refreshError || typeof nextCredentialId !== "string") throw new Error("refresh_store_failed");
+        diagnosticCredentialId = nextCredentialId;
+      }
+    } catch {
+      return NextResponse.json({ status: "failed", message: "eBay OAuth 토큰을 갱신하지 못했습니다. 판매자 동의를 다시 확인해 주세요." }, { status: 422 });
     }
   }
   const result = await runChannelDiagnostic(parsed.data.channel, diagnosticPayload, environment);
-  return recordedDiagnosticResponse(serviceClient, diagnosticCredentialId, result);
+  await serviceClient.rpc("sellerpilot_record_credential_test", {
+    p_credential_id: diagnosticCredentialId,
+    p_status: result.status,
+    p_safe_message: result.message,
+  });
+  return NextResponse.json(result, {
+    status: result.status === "failed" ? 422 : 200,
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
 }

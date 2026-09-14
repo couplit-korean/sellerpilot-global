@@ -1,72 +1,41 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../lib/admin-api";
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
-import {
-  firstDraftImageProductFactsFromResearchResult,
-  firstDraftImageFactsMatchStudioRequest,
-  firstDraftImageQualityManifestPath,
-  validateFirstDraftImageQualityManifest,
-  type FirstDraftImageAssetId,
-} from "../../../../lib/first-draft-images";
-import { withPromiseTimeout } from "../../../../lib/promise-timeout";
-import { verifyIssuedProductResearchLineageReceipt } from "../../../../lib/product-research-lineage-receipt";
-import { productResearchInputSha256 } from "../../../../lib/product-research-lineage-receipt-core";
-import {
-  validateSucceededProductResearchPreflight,
-  validateVisibleSucceededProductResearchJob,
-} from "../../../../lib/product-studio-lineage";
-import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
-import { createSignedStudioImageDownloader, sha256PreservedStudioOriginalImage, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
-import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
-import { wakeServerProductStudioAfterResponse, readServerProductStudioReadiness } from "../../../../lib/server-product-studio-runtime";
-import type { StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
-function recordValue(value: unknown) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+function jpegDimensions(bytes: Uint8Array) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  const startOfFrame = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  while (offset + 8 < bytes.length) {
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    const marker = bytes[offset];
+    offset += 1;
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (offset + 1 >= bytes.length) break;
+    const length = (bytes[offset] << 8) | bytes[offset + 1];
+    if (length < 2 || offset + length > bytes.length) break;
+    if (startOfFrame.has(marker) && length >= 7) {
+      return {
+        height: (bytes[offset + 3] << 8) | bytes[offset + 4],
+        width: (bytes[offset + 5] << 8) | bytes[offset + 6],
+      };
+    }
+    offset += length;
+  }
+  return null;
 }
 
-export async function GET(request: Request) {
-  const admin = await authenticateAdminRequest(request);
-  if (isAdminApiError(admin)) return admin;
-  const readiness = await readServerProductStudioReadiness(admin, request);
-  return NextResponse.json(readiness, {
-    status: readiness.reason === "status_unavailable" ? 503 : 200,
-    headers: { "cache-control": "no-store, max-age=0" },
-  });
-}
-
-async function studioValidationDownloader(paths: string[], admin: AdminApiContext) {
-  return createSignedStudioImageDownloader({
-    paths,
-    sign: () => withPromiseTimeout(
-      admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(paths, 10 * 60),
-      30_000,
-      "상품 이미지 검증 URL 생성 제한시간을 초과했습니다.",
-    ),
-  });
-}
-
-async function cleanupStudioUploadsOnlyWhenJobIsAbsent(
-  admin: AdminApiContext,
-  jobId: string,
-  paths: string[],
-) {
-  const readback = await withPromiseTimeout(
-    admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: jobId }),
-    15_000,
-    "CLI 작업 큐 확인 제한시간을 초과했습니다.",
-  ).catch(() => null);
-  // An unreadable or non-null exact job state is never safe to delete. This
-  // also protects a duplicate POST whose first response was lost after commit.
-  if (!readback || readback.error || readback.data != null) return false;
-  const { error } = await admin.serviceClient.storage.from("sellerpilot-ai").remove(paths);
-  return !error;
+async function verifyPublishImages(paths: string[], admin: AdminApiContext) {
+  const inspections = await Promise.all(paths.slice(0, 9).map(async (path) => {
+    const { data, error } = await admin.serviceClient.storage.from("sellerpilot-ai").download(path);
+    if (error || !data || data.size > 3 * 1024 * 1024 || data.type !== "image/jpeg") return false;
+    const size = jpegDimensions(new Uint8Array(await data.arrayBuffer()));
+    return size?.width === 1200 && size.height === 1200;
+  }));
+  return inspections.every(Boolean);
 }
 
 export async function POST(request: Request) {
@@ -76,336 +45,49 @@ export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = studioJobRequestSchema.safeParse(payload);
   if (!parsed.success) {
-    const humanReviewRequired = !payload
-      || typeof payload !== "object"
-      || Array.isArray(payload)
-      || (payload as Record<string, unknown>).humanReviewConfirmed !== true;
-    const orphanedPaths = expandStudioCleanupStoragePaths(rejectedUploadPaths(payload, admin.user.id));
-    const candidateJobId = payload && typeof payload === "object" && !Array.isArray(payload)
-      && typeof (payload as Record<string, unknown>).jobId === "string"
-      ? (payload as Record<string, unknown>).jobId as string
-      : "";
-    if (orphanedPaths.length && candidateJobId) {
-      await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, candidateJobId, orphanedPaths);
-    }
-    return NextResponse.json({
-      ...(humanReviewRequired ? { code: "HUMAN_REVIEW_REQUIRED" } : {}),
-      message: humanReviewRequired
-        ? "사람이 1차 상품정보와 이미지 8장을 확인한 뒤 상세페이지 제작을 시작해 주세요."
-        : "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요.",
-    }, { status: humanReviewRequired ? 409 : 400 });
+    const orphanedPaths = rejectedUploadPaths(payload, admin.user.id);
+    if (orphanedPaths.length) await admin.serviceClient.storage.from("sellerpilot-ai").remove(orphanedPaths);
+    return NextResponse.json({ message: "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요." }, { status: 400 });
   }
 
-  const preservedPaths = validatePreservedStudioUploadPaths(
-    admin.user.id,
-    parsed.data.jobId,
-    parsed.data.imagePaths,
-    parsed.data.imageSpecs,
-  );
-  if (!preservedPaths) {
+  const expectedPrefix = `${admin.user.id}/${parsed.data.jobId}/input/`;
+  const uploadedPaths = parsed.data.imagePaths;
+  if (uploadedPaths.some((path) => !path.startsWith(expectedPrefix) || path.includes(".."))) {
     return NextResponse.json({ message: "현재 사용자의 비공개 이미지 경로만 등록할 수 있습니다." }, { status: 403 });
   }
-  const uploadedPaths = preservedPaths.imagePaths;
-  const allUploadedPaths = preservedPaths.allPaths;
 
-  const sourceResearchReadback = await withPromiseTimeout(
-    admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: parsed.data.sourceResearchJobId }),
-    15_000,
-    "1차 상품정보 분석 작업 확인 제한시간을 초과했습니다.",
-  ).catch(() => ({ data: null, error: { code: "SOURCE_RESEARCH_READ_FAILED" } }));
-  const sourceResearch = validateVisibleSucceededProductResearchJob({
-    expectedJobId: parsed.data.sourceResearchJobId,
-    data: sourceResearchReadback.data,
-    error: sourceResearchReadback.error,
-  });
-  if (!sourceResearch.valid) {
-    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
-      admin,
-      parsed.data.jobId,
-      allUploadedPaths,
-    );
-    const sourceUnavailable = sourceResearch.reason === "read_failed";
-    return NextResponse.json({
-      code: sourceUnavailable ? "SOURCE_RESEARCH_UNAVAILABLE" : "SOURCE_RESEARCH_REQUIRED",
-      jobId: parsed.data.jobId,
-      sourceResearchJobId: parsed.data.sourceResearchJobId,
-      cleanupPending: !cleaned,
-      message: sourceUnavailable
-        ? "1차 상품정보 분석 결과를 확인하지 못했습니다. 잠시 후 같은 상품으로 다시 시도해 주세요."
-        : "같은 사용자가 완료한 1차 상품정보 분석 결과가 있어야 최종 제작을 시작할 수 있습니다.",
-    }, {
-      status: sourceUnavailable ? 503 : 409,
-      headers: { "cache-control": "no-store, max-age=0" },
-    });
-  }
-
-  const sourcePreflight = validateSucceededProductResearchPreflight({
-    expectedJobId: parsed.data.sourceResearchJobId,
-    expectedResearchInputSha256: productResearchInputSha256(parsed.data.manualFields.researchInput),
-    expectedSourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
-    data: sourceResearchReadback.data,
-  });
-  if (!sourcePreflight.valid) {
-    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
-      admin,
-      parsed.data.jobId,
-      allUploadedPaths,
-    );
-    return NextResponse.json({
-      code: sourcePreflight.reason === "source_photo_mismatch"
-        ? "SOURCE_PHOTO_MISMATCH"
-        : sourcePreflight.reason === "research_input_mismatch"
-          ? "SOURCE_RESEARCH_INPUT_MISMATCH"
-        : "SOURCE_RESEARCH_PREFLIGHT_REQUIRED",
-      jobId: parsed.data.jobId,
-      sourceResearchJobId: parsed.data.sourceResearchJobId,
-      cleanupPending: !cleaned,
-      message: sourcePreflight.reason === "preflight_missing"
-        ? "기존 텍스트 전용 1차 분석은 읽을 수 있지만 최종 제작에는 사진 기반 1차 자동생성을 다시 완료해야 합니다."
-        : sourcePreflight.reason === "source_photo_mismatch"
-          ? "1차 자동생성 자산의 대표사진과 현재 최종작성 대표사진이 다릅니다."
-          : sourcePreflight.reason === "research_input_mismatch"
-            ? "1차 자동생성에 사용한 상품 링크·설명과 현재 검수 내용이 다릅니다. 현재 내용으로 1차 자동생성을 다시 실행해 주세요."
-          : "1차 자동생성 이미지의 경로·해시·감사 이력을 확인하지 못해 최종 제작을 시작하지 않았습니다.",
-    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-
-  const sourceResearchRecord = recordValue(sourceResearchReadback.data);
-  const sourceResearchResult = recordValue(sourceResearchRecord?.result);
-  let firstDraftProductFacts;
-  try {
-    if (!sourceResearchResult) throw new Error("source result missing");
-    firstDraftProductFacts = firstDraftImageProductFactsFromResearchResult({
-      result: sourceResearchResult,
-    });
-  } catch {
-    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
-    return NextResponse.json({
-      code: "FIRST_DRAFT_QUALITY_REQUIRED",
-      message: "1차 이미지에 결속된 상품 사실 버전을 확인하지 못해 최종 제작을 시작하지 않았습니다.",
-    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  const manifestPath = firstDraftImageQualityManifestPath(
-    parsed.data.sourceResearchJobId,
-    sourcePreflight.preflight.assetStoragePaths as Record<FirstDraftImageAssetId, string>,
-  );
-  const manifestDownload = manifestPath
-    ? await admin.serviceClient.storage.from("sellerpilot-ai").download(manifestPath)
-    : { data: null, error: { message: "invalid manifest path" } };
-  let firstDraftQualityManifest: unknown = null;
-  if (!manifestDownload.error && manifestDownload.data && manifestDownload.data.size <= 256 * 1024) {
-    firstDraftQualityManifest = await manifestDownload.data.text()
-      .then((value) => JSON.parse(value))
-      .catch(() => null);
-  }
-  const qualityVerified = validateFirstDraftImageQualityManifest({
-    jobId: parsed.data.sourceResearchJobId,
-    productFacts: firstDraftProductFacts,
-    sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
-    assetDigests: sourcePreflight.preflight.assetDigests as Record<FirstDraftImageAssetId, string>,
-    manifest: firstDraftQualityManifest,
-  });
-  if (!qualityVerified) {
-    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
-      admin,
-      parsed.data.jobId,
-      allUploadedPaths,
-    );
-    return NextResponse.json({
-      code: "FIRST_DRAFT_QUALITY_REQUIRED",
-      jobId: parsed.data.jobId,
-      sourceResearchJobId: parsed.data.sourceResearchJobId,
-      cleanupPending: !cleaned,
-      recovery: {
-        mode: "new-product-research-job",
-        endpoint: "/api/ai/product-research",
-        reuseSourceResearchJob: false,
-      },
-      message: "이전 1차 이미지에는 복원 가능한 품질 manifest가 없어 재사용하지 않습니다. 같은 진입점에서 기존 작업을 다시 큐잉하지 말고, 현재 원본과 판매자 사실로 새 1차 상품정보 분석 작업을 만든 뒤 이미지 8장을 검수해 주세요.",
-    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  const reuseFirstDraftAssets = firstDraftImageFactsMatchStudioRequest(
-    firstDraftProductFacts,
-    parsed.data.manualFields,
-  );
-
-  if (!reuseFirstDraftAssets) {
-    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
-    return NextResponse.json({ code: "PREPARED_IMAGE_FACTS_CHANGED", message: "이미지를 만든 뒤 상품 사실정보가 변경되었습니다. 변경된 정보로 이미지 준비를 다시 완료해 주세요. 상세페이지 단계에서 이미지를 자동 재생성하지 않습니다." }, { status: 409 });
-  }
-
-  const lineageReceiptVerification = verifyIssuedProductResearchLineageReceipt(
-    parsed.data.sourceResearchLineageReceipt,
-    {
-      ownerId: admin.user.id,
-      researchJobId: parsed.data.sourceResearchJobId,
-      researchInput: parsed.data.manualFields.researchInput,
-      sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
-    },
-  );
-  if (!lineageReceiptVerification.valid) {
-    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
-      admin,
-      parsed.data.jobId,
-      allUploadedPaths,
-    );
-    return NextResponse.json({
-      code: "SOURCE_RESEARCH_REQUIRED",
-      jobId: parsed.data.jobId,
-      sourceResearchJobId: parsed.data.sourceResearchJobId,
-      cleanupPending: !cleaned,
-      message: lineageReceiptVerification.reason === "configuration_missing"
-        ? "1차 분석과 원본 사진을 확인할 서버 설정이 완료되지 않았습니다."
-        : "현재 설명·대표사진과 일치하는 1차 자동생성을 다시 완료해 주세요.",
-    }, { status: lineageReceiptVerification.reason === "configuration_missing" ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-
-  const download = await studioValidationDownloader(allUploadedPaths, admin);
-  const verified = download ? await verifyPreservedStudioImages({
-    normalizedPaths: uploadedPaths,
-    originalPaths: preservedPaths.originalPaths,
-    specs: parsed.data.imageSpecs,
-    download,
-  }) : { normalized: false, originals: false };
-  if (!verified.normalized) {
-    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
+  if (!await verifyPublishImages(uploadedPaths, admin)) {
+    await admin.serviceClient.storage.from("sellerpilot-ai").remove(uploadedPaths);
     return NextResponse.json({ message: "실제 등록용 이미지는 1200×1200 JPG·3MB 이하 규격이어야 합니다." }, { status: 400 });
   }
-  if (!verified.originals) {
-    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
-    return NextResponse.json({ message: "원본 이미지의 형식·크기·픽셀 정보가 업로드 요청과 일치하지 않습니다." }, { status: 400 });
-  }
-  const uploadedMainSourceSha256 = download ? await sha256PreservedStudioOriginalImage(
-    preservedPaths.originalPaths[0],
-    parsed.data.imageSpecs[0],
-    download,
-  ) : null;
-  if (!uploadedMainSourceSha256 || uploadedMainSourceSha256 !== parsed.data.sourcePhotoFingerprint) {
-    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
-      admin,
-      parsed.data.jobId,
-      allUploadedPaths,
-    );
+
+  try {
+    const { error } = await admin.userClient.rpc("sellerpilot_create_ai_job", {
+      p_id: parsed.data.jobId,
+      p_kind: "product_studio",
+      p_request_payload: {
+        description: parsed.data.manualFields.description.trim(),
+        product_url: parsed.data.manualFields.productUrl.trim(),
+        research_input: parsed.data.manualFields.researchInput.trim(),
+        manual_fields: parsed.data.manualFields,
+        image_paths: uploadedPaths,
+        image_specs: parsed.data.imageSpecs,
+      },
+    });
+    if (error) throw new Error("CLI 작업 큐 등록에 실패했습니다.");
+
     return NextResponse.json({
-      code: "SOURCE_PHOTO_MISMATCH",
-      jobId: parsed.data.jobId,
-      cleanupPending: !cleaned,
-      message: "1차 자동생성에 사용한 대표사진과 최종작성에 업로드된 원본이 다릅니다. 현재 사진으로 1차 자동생성을 다시 실행해 주세요.",
-    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-
-  const sourceEvidence = sourcePreflight.preflight.sourcePhotoEvidence;
-  if (sourceEvidence) {
-    let matches = sourceEvidence.length === parsed.data.imageSpecs.length;
-    for (let index = 0; matches && index < sourceEvidence.length; index += 1) {
-      const expected = sourceEvidence[index];
-      const digest = download ? await sha256PreservedStudioOriginalImage(preservedPaths.originalPaths[index], parsed.data.imageSpecs[index], download) : null;
-      matches = expected.sourceIndex === index && expected.inputRole === parsed.data.imageSpecs[index].role && expected.sourceSha256 === digest;
-    }
-    if (!matches) {
-      await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
-      return NextResponse.json({ code: "SOURCE_PHOTO_SET_MISMATCH", message: "1차 검수 후 사진 구성이 바뀌었습니다. 현재 사진 전체로 1차 자동생성을 다시 실행해 주세요." }, { status: 409 });
-    }
-  }
-
-  const requestPayload = {
-    source_research_job_id: parsed.data.sourceResearchJobId,
-    source_research_input_sha256: lineageReceiptVerification.researchInputSha256,
-    source_photo_sha256: parsed.data.sourcePhotoFingerprint,
-    description: parsed.data.manualFields.description.trim(),
-    product_url: parsed.data.manualFields.productUrl.trim(),
-    research_input: parsed.data.manualFields.researchInput.trim(),
-    manual_fields: parsed.data.manualFields,
-    competitor_context: parsed.data.competitorContext,
-    image_paths: uploadedPaths,
-    image_specs: parsed.data.imageSpecs,
-    preflight_version: sourcePreflight.preflight.preflightVersion,
-    preflight_asset_storage_paths: sourcePreflight.preflight.assetStoragePaths,
-    preflight_asset_digests: sourcePreflight.preflight.assetDigests,
-    preflight_asset_audit_lineage: sourcePreflight.preflight.auditLineage,
-    first_draft_product_facts: firstDraftProductFacts,
-    preflight_asset_quality_manifest: firstDraftQualityManifest,
-    reuse_first_draft_assets: reuseFirstDraftAssets,
-    human_review_confirmation: {
-      first_draft_reviewed: true,
-      source: "authenticated_admin_request",
-      source_research_job_id: parsed.data.sourceResearchJobId,
-    },
-  };
-  const enqueueGuard: { checked: boolean; readiness: StudioWorkerReadiness } = {
-    checked: false,
-    readiness: {
-      available: false,
-      reason: "status_unavailable",
-      message: "서버 AI 제작 상태를 아직 확인하지 않았습니다.",
-      checkedAt: new Date().toISOString(),
-    },
-  };
-  const admission = await resolveStudioAdmission({
-    jobId: parsed.data.jobId,
-    createJob: async () => {
-      enqueueGuard.readiness = await readServerProductStudioReadiness(admin, request);
-      enqueueGuard.checked = true;
-      if (!enqueueGuard.readiness.available) {
-        return { data: null, error: { code: "AI_WORKER_UNAVAILABLE" } };
-      }
-      return withPromiseTimeout(
-        admin.userClient.rpc("sellerpilot_create_ai_job", {
-          p_id: parsed.data.jobId,
-          p_kind: "product_studio",
-          p_request_payload: requestPayload,
-        }),
-        15_000,
-        "CLI 작업 큐 등록 제한시간을 초과했습니다.",
-      );
-    },
-    readExactJob: () => withPromiseTimeout(
-      admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: parsed.data.jobId }),
-      15_000,
-      "CLI 작업 큐 확인 제한시간을 초과했습니다.",
-    ),
-    cleanupUploads: async () => {
-      const { error } = await admin.serviceClient.storage.from("sellerpilot-ai").remove(allUploadedPaths);
-      if (error) throw new Error("studio_upload_cleanup_failed");
-    },
-  });
-
-  if (admission.outcome === "accepted") {
-    after(wakeServerProductStudioAfterResponse);
-    return NextResponse.json({
-      mode: "server",
+      mode: "cli",
       jobId: parsed.data.jobId,
       status: "queued",
-      reconciled: admission.reconciled,
-      message: admission.reconciled
-        ? "작업 큐 응답은 끊겼지만 같은 작업 ID가 접수된 것을 확인해 업로드를 보존했습니다."
-        : "서버 AI에 상품 분석과 이미지 제작을 요청했습니다.",
+      message: "ChatGPT CLI 작업자에게 상품 분석과 이미지 제작을 요청했습니다.",
     }, {
       status: 202,
       headers: { "cache-control": "no-store, max-age=0" },
     });
+  } catch (error) {
+    if (uploadedPaths.length) await admin.serviceClient.storage.from("sellerpilot-ai").remove(uploadedPaths);
+    const message = error instanceof Error ? error.message : "CLI 작업을 등록하지 못했습니다.";
+    return NextResponse.json({ message }, { status: 500 });
   }
-  if (admission.outcome === "ambiguous") {
-    return NextResponse.json({
-      jobId: parsed.data.jobId,
-      reconciliationRequired: true,
-      message: "상품 분석 접수 여부를 확정하지 못했습니다. 업로드를 보존하고 같은 작업 ID만 확인합니다.",
-    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  if (enqueueGuard.checked && !enqueueGuard.readiness.available) {
-    return NextResponse.json({
-      code: "AI_WORKER_UNAVAILABLE",
-      jobId: parsed.data.jobId,
-      workerAvailable: false,
-      cleanupPending: admission.cleanupPending,
-      message: enqueueGuard.readiness.message,
-    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  return NextResponse.json({
-    jobId: parsed.data.jobId,
-    cleanupPending: admission.cleanupPending,
-    message: admission.cleanupPending
-      ? "상품 분석 작업이 생성되지 않았습니다. 브라우저에서 임시 업로드 정리를 다시 시도합니다."
-      : "상품 분석 작업이 생성되지 않아 임시 업로드를 정리했습니다.",
-  }, { status: 400, headers: { "cache-control": "no-store, max-age=0" } });
 }

@@ -1,8 +1,5 @@
 export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] as const;
 
-// The Trading API ASQ connector is implemented for Sandbox verification, but
-// production reads and replies remain fail-closed until a two-user eBay
-// Sandbox flow and a real seller-account readback have both been recorded.
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
   | "connection"
@@ -121,7 +118,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       orders: polling("/api/v2/order/get_order_list + get_order_detail"),
       shipment: api("get_shipping_parameter 확인 후 /api/v2/logistics/ship_order"),
       claims: api("Return/Refund API 권한과 지역별 상태를 기준으로 처리"),
-      inquiries: polling("상품 후기 get_comment 조회·reply_comment 답변. Seller Centre Chat은 공개 Open API가 없어 별도 확인"),
+      inquiries: polling("Chat API 권한이 활성화된 마켓의 대화·메시지 조회"),
       settlements: polling("Payment/Escrow API 권한으로 수입·정산 상세 조회"),
       webhooks: webhook("Push Mechanism 서명 검증 + 주문 폴링 보정"),
     },
@@ -221,14 +218,14 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       categories: polling("카테고리 조회 API의 말단 카테고리를 주기 동기화"),
       imageUpload: api("상품 등록 시 공개 HTTPS 이미지 URL을 11번가가 다운로드"),
       listingCreate: api("POST /rest/prodservices/product → 판매자 상품 재조회 검증"),
-      listingUpdate: api("PUT /rest/prodservices/product/{prdNo} → 동일 prdNo 사전·사후 조회 검증"),
+      listingUpdate: vendorDocsRequired("판매자 상품 수정 API 문서·서비스 권한 확인 전 실행 차단"),
       listingStop: api("PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}"),
       price: vendorDocsRequired("판매자 가격 API 문서·서비스 권한 확인 필요"),
       inventory: vendorDocsRequired("판매자 재고 API 문서·서비스 권한 확인 필요"),
       orders: polling("등록 고정 IP에서 결제완료 주문을 최대 7일 단위로 주기 조회"),
       shipment: vendorDocsRequired("발주·송장 API 서비스 권한과 공식 엔드포인트 확인 필요"),
       claims: vendorDocsRequired("취소·반품 API 서비스 권한과 공식 엔드포인트 확인 필요"),
-      inquiries: polling("공식 상품 Q&A를 7일 이하 날짜 창으로 조회하고 글번호·상품번호에 결속해 답변 · 구매후기·셀러톡·긴급알리미는 별도 표면"),
+      inquiries: unsupported("공개 개발 가이드와 API 검색에 판매자 문의 조회 API가 제공되지 않음"),
       settlements: vendorDocsRequired("정산 API 서비스 권한과 공식 엔드포인트 확인 필요"),
       webhooks: unsupported("공개 OPEN API 가이드에 판매자 주문·문의 웹훅이 확인되지 않음"),
     },
@@ -256,9 +253,9 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       categories: api("bg.local.goods.category.recommend 자동 추천"),
       imageUpload: api("V3가 공개 HTTPS 이미지 URL을 자동 다운로드·저장"),
       listingCreate: api("temu.local.goods.v3.add"),
-      listingUpdate: api("bg.local.goods.update"),
+      listingUpdate: api("bg.local.goods.update / partial.update"),
       listingStop: api("bg.local.goods.sale.status.set · off-shelf"),
-      price: api("bg.local.goods.priceorder.change.sku.price"),
+      price: api("상품 가격 관리 API"),
       inventory: api("bg.local.goods.stock.edit"),
       orders: polling("bg.order.list.v2.get 기반 주문 수명주기·품목 체크포인트 조회"),
       shipment: api("창고·택배사 조회 → bg.logistics.shipment.v2.confirm → 운송장 재조회 검증"),
@@ -330,14 +327,14 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       categories: polling("Taxonomy category tree/aspects"),
       imageUpload: api("Inventory API HTTPS imageUrls 또는 EPS 연계"),
       listingCreate: api("inventory location → inventory item → offer → publish"),
-      listingUpdate: api("불변 offerId·SKU·listingId 결속 후 Inventory item/offer PUT 및 독립 readback (CREATE·publish 없음)"),
+      listingUpdate: api("inventory item/offer 수정 후 publish"),
       listingStop: api("offer withdraw 또는 수량 0 정책"),
       price: api("offer pricingSummary 수정"),
       inventory: api("PUT inventory_item/{sku} availability"),
       orders: polling("Fulfillment getOrders · 완료된 checkout 주문만"),
       shipment: api("createShippingFulfillment"),
       claims: api("Fulfillment refunds·payment disputes + Post-Order 범위"),
-      inquiries: polling("Trading API GetMemberMessages 조회 + AddMemberMessageRTQ 답변"),
+      inquiries: unsupported("Sell REST API 공통 문의함으로 통합되지 않아 Seller Hub 보조"),
       settlements: polling("Finances API 권한 추가 시 지급·거래 조회"),
       webhooks: webhook("Notification API 구독을 보조 신호로 사용하고 주문 폴링으로 보정"),
     },
