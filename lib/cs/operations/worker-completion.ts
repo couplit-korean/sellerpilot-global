@@ -7,6 +7,7 @@ import { inquiryCoverageEvidence } from "../../channels/inquiry-coverage";
 import { qoo10ReplyS3CompletionEvidence, qoo10ReplyS3ReadbackContext, qoo10ReplyS3StatusRpcArguments } from "../../channels/cs/qoo10/reply-readback-completion";
 import { recordQoo10ReplyS3Requery } from "../../channels/cs/qoo10/reply-readback-requery-runtime";
 import { qoo10HistoryGatewayCompletion, qoo10HistoryGatewayRpcArguments } from "../../channels/cs/qoo10/history-gateway";
+import { isQoo10HistoryEvidenceConflict } from "../../channels/cs/qoo10/history-completion-error";
 import { parseQoo10InquiryIdentityContext, qoo10InquiryIdentityContextRpcArguments } from "../../channels/cs/qoo10/inquiry-identity-context";
 import { hasProviderReplyAcceptance, inquiryReplyObservations, type InquiryReplyObservation } from "../../channels/reply-verification";
 import { smartstoreReplyReadbackContext, smartstoreReplyReadbackResultContract } from "../../channels/cs/smartstore/reply-readback";
@@ -514,12 +515,18 @@ export async function completeCsWorker({ serviceClient, tokenHash, job, completi
         || receipt.windowKey !== qoo10HistoryCompletion.windowKey
         || receipt.completionState !== qoo10HistoryCompletion.state
         || receipt.refinementCount !== qoo10HistoryCompletion.refinementRequests.length) {
-      const status = history.error ? workerRpcErrorStatus(history.error) : 503;
+      const conflict = isQoo10HistoryEvidenceConflict(history.error);
+      const failureStatus = history.error ? workerRpcErrorStatus(history.error) : 503;
+      const status = conflict ? 409 : failureStatus;
       console.error("Qoo10 history window recording failed", {
         code: history.error?.code ?? "invalid_contract",
         status,
       });
-      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+      return NextResponse.json({ message: conflict
+        ? "Qoo10 이력 창에 다른 완료 작업의 증거가 이미 저장되어 있습니다. 기존 증거를 보존했습니다."
+        : workerRpcErrorMessage(failureStatus),
+        ...(conflict ? { code: "QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH" } : {}),
+      }, { status });
     }
   }
   if (elevenstReadReceipt) {

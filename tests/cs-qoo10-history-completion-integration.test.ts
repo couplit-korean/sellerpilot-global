@@ -14,6 +14,9 @@ registerHooks({
 const { inquiryHistorySyncRequests } = await import("../lib/channels/sync-arguments.ts");
 const { completeCsClaim } = await import("../lib/cs/operations/complete.ts");
 const { completeCsWorker } = await import("../lib/cs/operations/worker-completion.ts");
+const { isQoo10HistoryEvidenceConflict } = await import("../lib/channels/cs/qoo10/history-completion-error.ts");
+const { processCsGatewayJob } = await import("../scripts/cs-gateway-job.mjs");
+const { requestWithTransientRetry } = await import("../scripts/worker-lifecycle-retry.mjs");
 
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
 const CLAIM_TOKEN = "20000000-0000-4000-8000-000000000001";
@@ -209,4 +212,53 @@ test("external worker completion uses the same dedicated Qoo10 history receipt",
   assert.equal(completion.state, "refining");
   assert.equal(completion.refinementRequests.length, 24);
   assert.equal(calls.some((call) => call.name === "sellerpilot_service_record_cs_history_page_v1"), false);
+});
+
+test("only the exact Qoo10 evidence conflict is permanent, including the legacy SQLSTATE", () => {
+  for (const code of ["PT409", "40001"]) assert.equal(isQoo10HistoryEvidenceConflict({ code, message: "QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH" }), true);
+  for (const error of [null, { code: "40001", message: "serialization failure" }, { code: "PT409", message: "OTHER_CONFLICT" }, { code: "57014", message: "QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH" }]) {
+    assert.equal(isQoo10HistoryEvidenceConflict(error), false);
+  }
+});
+
+test("Qoo10 permanent history conflict returns 409 and drains the actual worker after one completion, without provider replay", async () => {
+  for (const code of ["PT409", "40001"]) {
+    const request = inquiryHistorySyncRequests("qoo10", new Date("2026-09-09T00:01:00Z"), 30)[116]!;
+    const job = { ...historyJob(request), normalization_timestamp: "2026-09-09T00:02:00Z" };
+    let providerCalls = 0;
+    let completionCalls = 0;
+    let historyCalls = 0;
+    let stopped = 0;
+    const serviceClient = { rpc: async (name: string) => {
+      if (name === "sellerpilot_service_qoo10_inquiry_identity_context_v1") return { data: identityContext(), error: null };
+      if (name === "sellerpilot_service_complete_gateway_transaction") return { data: { status: "completed_replay" }, error: null };
+      if (name === "sellerpilot_service_record_qoo10_history_window_v1") {
+        historyCalls += 1;
+        return { data: null, error: { code, message: "QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH" } };
+      }
+      throw new Error(`Unexpected RPC: ${name}`);
+    } };
+    await processCsGatewayJob(job, {
+      createGatewayHeartbeat: () => ({ start: async () => {}, assertHealthy: async () => {}, stop: async () => { stopped += 1; } }),
+      reserveProviderRequest: async () => {},
+      executeProvider: async () => { providerCalls += 1; return historyResult(0); },
+      persistWorkerCompletion: async (_path: string, completion: unknown) => requestWithTransientRetry({
+        request: async () => {
+          completionCalls += 1;
+          const response = await completeCsWorker({ serviceClient: serviceClient as never, tokenHash: "a".repeat(64), job, completion: completion as never });
+          assert.equal(response.status, 409);
+          assert.equal((await response.clone().json()).code, "QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH");
+          return response;
+        },
+        delay: async () => { assert.fail("Permanent conflict must not enter retry delay"); },
+        graceMs: 600_000,
+        terminalStatuses: [401, 409],
+        label: "fixture Qoo10 completion",
+      }),
+    });
+    assert.equal(providerCalls, 1);
+    assert.equal(completionCalls, 1);
+    assert.equal(historyCalls, 1);
+    assert.equal(stopped, 1);
+  }
 });

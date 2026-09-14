@@ -9,6 +9,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260909153334_cs_qoo10_history_window_ledger.sql",
   import.meta.url,
 ), "utf8");
+const conflictMigration = await readFile(new URL(
+  "../supabase/migrations/20260914155000_qoo10_history_permanent_replay_conflict.sql",
+  import.meta.url,
+), "utf8");
 const owner = "00000000-0000-4000-8000-000000000001";
 const credential = "00000000-0000-4000-8000-000000000002";
 const worker = "00000000-0000-4000-8000-000000000003";
@@ -33,7 +37,7 @@ function providerResult() {
   };
 }
 
-async function fixture() {
+async function fixture({ applyConflictFix = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create role service_role;
@@ -64,6 +68,7 @@ async function fixture() {
     );
   `);
   await db.exec(migration);
+  if (applyConflictFix) await db.exec(conflictMigration);
   const request = qoo10HistoryExecutionRequests("2026-09-09", "2026-09-09")[0];
   await db.query("insert into sellerpilot_private.channel_credentials values($1,$2)", [credential, sellerAccountKey]);
   await db.query("insert into sellerpilot_private.ai_cli_worker_tokens values($1,$2,'active',clock_timestamp()+interval '1 hour','gateway')", [worker, tokenHash]);
@@ -159,6 +164,62 @@ function recordWith(db, completion, hash = tokenHash) {
     $1,$2,$3,$4::jsonb
   ) result`, [hash, job, claim, JSON.stringify(completion)]);
 }
+
+test("a new completed job for an already recorded window is a permanent conflict and preserves all evidence", async () => {
+  const { db, request } = await fixture();
+  try {
+    const result = providerResult();
+    result.steps[0].data.TotalCount = 0;
+    const completion = qoo10HistoryGatewayCompletion({ arguments: request.arguments, result });
+    await recordWith(db, completion);
+    const before = (await db.query("select to_jsonb(w) evidence from sellerpilot_private.qoo10_history_windows w where job_id=$1", [job])).rows[0].evidence;
+    const nextJob = "00000000-0000-4000-8000-000000000099";
+    await db.query(`insert into sellerpilot_private.channel_gateway_jobs
+      select $1,credential_id,attempt_id,channel,operation,environment,request_payload,response_payload,status,created_by,seller_account_key,created_at
+      from sellerpilot_private.channel_gateway_jobs where id=$2`, [nextJob, job]);
+    await db.query("insert into sellerpilot_private.gateway_completion_receipts values($1,$2,$3)", [nextJob, childClaim, worker]);
+    await assert.rejects(db.query("select public.sellerpilot_service_record_qoo10_history_window_v1($1,$2,$3,$4::jsonb)",
+      [tokenHash, nextJob, childClaim, JSON.stringify(completion)]), error => {
+      assert.equal(error.code, "PT409");
+      assert.match(error.message, /QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH/);
+      return true;
+    });
+    assert.deepEqual((await db.query("select to_jsonb(w) evidence from sellerpilot_private.qoo10_history_windows w where job_id=$1", [job])).rows[0].evidence, before);
+    assert.equal((await db.query("select count(*)::int n from sellerpilot_private.qoo10_history_windows")).rows[0].n, 1);
+    assert.equal((await db.query("select status from sellerpilot_private.channel_gateway_jobs where id=$1", [nextJob])).rows[0].status, "succeeded");
+    assert.equal((await recordWith(db, completion)).rows[0].result.status, "duplicate");
+  } finally { await db.close(); }
+});
+
+test("Qoo10 conflict migration rolls back exactly and rejects a changed function preimage", async () => {
+  const { db } = await fixture({ applyConflictFix: false });
+  try {
+    const definition = async () => (await db.query("select pg_get_functiondef('public.sellerpilot_service_record_qoo10_history_window_v1(text,uuid,uuid,jsonb)'::regprocedure) source")).rows[0].source;
+    const before = await definition();
+    await db.exec(conflictMigration.replace(/commit;\s*$/u, "rollback;"));
+    assert.equal(await definition(), before);
+    await db.exec(conflictMigration);
+    const after = await definition();
+    assert.equal(after, before.replaceAll("errcode='40001'", "errcode='PT409'"));
+    await assert.rejects(db.exec(conflictMigration), /QOO10_HISTORY_CONFLICT_PREIMAGE_CHANGED/);
+    await db.exec("rollback;");
+    assert.equal(await definition(), after);
+    await db.exec(`do $rollback$
+      declare source text;
+      begin
+        if (select md5(prosrc) from pg_proc where oid='public.sellerpilot_service_record_qoo10_history_window_v1(text,uuid,uuid,jsonb)'::regprocedure)
+            is distinct from '5860bd7a48c16efc00df85cc38073f35' then
+          raise exception 'QOO10_HISTORY_CONFLICT_ROLLBACK_PREIMAGE_CHANGED';
+        end if;
+        source := pg_get_functiondef('public.sellerpilot_service_record_qoo10_history_window_v1(text,uuid,uuid,jsonb)'::regprocedure);
+        execute replace(source,
+          $new$raise exception 'QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH' using errcode='PT409';$new$,
+          $old$raise exception 'QOO10_HISTORY_COMPLETION_REPLAY_MISMATCH' using errcode='40001';$old$);
+      end;
+      $rollback$;`);
+    assert.equal(await definition(), before);
+  } finally { await db.close(); }
+});
 
 test("Qoo10 history RPC rejects missing, null, mistyped, and malformed lineage without writes", async () => {
   const cases = [
