@@ -4,6 +4,7 @@ import test from 'node:test';
 import {PGlite} from '@electric-sql/pglite';
 const before=JSON.parse(await readFile(new URL('./fixtures/local-category-read-before.json',import.meta.url),'utf8'));
 const migration=await readFile(new URL('../supabase/migrations/20260914081000_local_category_read_routes.sql',import.meta.url),'utf8');
+const lazadaMigration=await readFile(new URL('../supabase/migrations/20260914085500_lazada_local_category_reads.sql',import.meta.url),'utf8');
 const u=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const release='a'.repeat(40),ip='b'.repeat(64),version=`sellerpilot-cli-worker/1.61+${release}.${ip.slice(0,11)}`;
 async function setup(){
@@ -63,6 +64,46 @@ test('migration rejects changed function or constraint and rolls every partial d
   else await db.exec('alter table sellerpilot_private.local_channel_executor_routes drop constraint local_channel_executor_routes_operation_check;alter table sellerpilot_private.local_channel_executor_routes add constraint local_channel_executor_routes_operation_check check(true)');
   const old=(await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h;
   await assert.rejects(db.exec(migration),/LOCAL_CATEGORY_READ_.*PREIMAGE_CHANGED/);await db.exec('rollback');
+  assert.equal((await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h,old);
+ }finally{await db.close();}}
+});
+
+test('Lazada forward migration admits three reads only after an explicit matching route, preserving previous channels',async()=>{
+ const db=await setup();try{
+  await db.exec(migration);
+  const acl=(await db.query("select oid::regprocedure::text signature,proacl::text acl from pg_proc where pronamespace='sellerpilot_private'::regnamespace order by 1")).rows;
+  await db.exec(lazadaMigration);
+  assert.deepEqual((await db.query("select oid::regprocedure::text signature,proacl::text acl from pg_proc where pronamespace='sellerpilot_private'::regnamespace order by 1")).rows,acl);
+  let n=20;
+  for(const channel of ['lazada','coupang','elevenst','temu'])for(const operation of ['categories.suggest','categories.attributes','categories.validate']){
+   await db.exec('begin');await seed(db,n,channel,operation);
+   await db.exec('savepoint missing_route');await db.exec('delete from sellerpilot_private.local_channel_executor_routes');
+   assert.equal(await claim(db),null);await db.exec('rollback to missing_route');
+   const result=await claim(db);assert.equal(result.id,u(n+200));assert.equal(result.operation,operation);assert.equal(result.attempt_count,1);
+   await db.exec('rollback');n++;
+  }
+  for(const operation of ['categories.list','categories.update'])await assert.rejects(db.query('insert into sellerpilot_private.local_channel_executor_routes(id,channel,operation) values($1,$2,$3)',[u(99),'lazada',operation]),e=>e.code==='23514');
+  assert.equal((await db.query('select count(*)::int n from sellerpilot_private.channel_gateway_jobs')).rows[0].n,0);
+ }finally{await db.close();}
+});
+
+test('Lazada category reads retain approval, seller, credential, rate, release and IP gates',async()=>{
+ const db=await setup();try{
+  await db.exec(migration);await db.exec(lazadaMigration);await seed(db,10,'lazada','categories.suggest');
+  for(const change of ["update sellerpilot_private.local_channel_executor_routes set enabled=false","update sellerpilot_private.local_channel_executor_routes set approved_by=null","update sellerpilot_private.local_channel_executor_routes set expires_at=now()-interval '1 second'","update sellerpilot_private.local_channel_executor_routes set seller_account_key='other'","update sellerpilot_private.local_channel_executor_routes set worker_token_id=null","update sellerpilot_private.channel_credentials set status='revoked'","update sellerpilot_private.channel_credentials set expires_at=now()-interval '1 second'","update sellerpilot_private.channel_gateway_jobs set rate_not_before=now()+interval '1 hour'"]){await db.exec('begin');await db.exec(change);assert.equal(await claim(db),null);await db.exec('rollback');}
+  for(const args of [['good',version,'c'.repeat(40),ip],['good',version,release,'d'.repeat(64)],['good','wrong',release,ip]])assert.equal(await claim(db,args),null);
+  assert.equal((await db.query('select attempt_count from sellerpilot_private.channel_gateway_jobs')).rows[0].attempt_count,0);
+  assert.equal((await claim(db)).id,u(210));
+ }finally{await db.close();}
+});
+
+test('Lazada forward migration fails closed on preimage drift and rolls back partial patches',async()=>{
+ for(const target of ['function','constraint']){const db=await setup();try{
+  await db.exec(migration);
+  if(target==='function')await db.exec('create or replace function sellerpilot_private.local_channel_executor_access(p_channel text,p_operation text) returns text language sql as $$select null::text$$');
+  else await db.exec('alter table sellerpilot_private.local_channel_executor_routes drop constraint local_channel_executor_routes_operation_check;alter table sellerpilot_private.local_channel_executor_routes add constraint local_channel_executor_routes_operation_check check(true)');
+  const old=(await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h;
+  await assert.rejects(db.exec(lazadaMigration),/LAZADA_LOCAL_CATEGORY_.*PREIMAGE_CHANGED/);await db.exec('rollback');
   assert.equal((await db.query("select md5(pg_get_functiondef('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)'::regprocedure)) h")).rows[0].h,old);
  }finally{await db.close();}}
 });

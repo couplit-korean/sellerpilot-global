@@ -132,3 +132,26 @@
 - SmartStore unit-price draft uses verified500ml total,100ml display basis, enabled. Official API guidance permits product-appropriate capacity and unit (https://github.com/commerce-api-naver/commerce-api/discussions/3439). Category validation still runs before publication. Shipping policy confirmation remains pending; no marketplace CREATE has been sent.
 
 - Category-change restoration now preserves only explicit title/description scalar paths for all8 channels; new category IDs, attributes, brand IDs, prices and logistics are rebuilt. Same-category full-patch restoration is unchanged. Four new regressions reproduce Qoo10 save/reload, all8 channel paths and array-patch isolation;11 existing regressions passed.
+
+
+## 06bb73e production alignment and delayed category results
+
+- Vercel deployment dpl_EHVN3PQcL1J8J69rB7hAreYqhFA3 was promoted. Candidate and production six-route canaries passed; active DB runtime and eight listing gates match06bb73ef239b0ed84c405cff26a86031a7b37efc. Idle Mac Gateway restarted and reports ready at this SHA; Mac AI six changed files installed, PID14337.
+- Nine explicit local category routes were inherited from the same approved diagnostic owner/credential/seller/token/IP/expiry at the aligned release. Coupang suggestion7cbce733 succeeded23:42:28UTC,11st a753d12823:42:44,Temu106bc9b023:43:00. Existing jobs were used.
+- SmartStore attribute05cdc8d7 and validation75c4a71d succeeded23:50:36/23:50:51, but the UI had discarded202 pending responses and never read completed results. A GET-only bounded continuation is being implemented.
+- Lazada suggestiona3d31ed7 had no claimant: serverless explicitly excludesLazada and local category scope omitted it. Narrow085500 forward migration applied; its sourceMD5 is440fad09e6fe8fd3e76b9e0e8ce9a522. TS admission change and three exact routes await the next aligned release.
+- Existing ShopeeSG shops.get4a45f463 was sent once from Aside; it remains queued. The UI does not resendPOST. Currentv90 SG token has independent bytes, but another shop's uncertain refresh and the credential-wide target-claim key block progress. No historical Shopee flag was cleared.
+
+## eBay live refresh and actual DB contract verification
+
+- Official existing-scope refresh and GetUser same-EIAS validation passed once, butSTORE returned500. Readback proved no new credential and old209/refresh uncertainty unchanged. The initial in-memory response was not retained, so it is not claimed recoverable.
+- Rollback-only live DB diagnostics exposed two gaps absent from the initial fixture: actual category attempt belongs to shared admin768 while credential/job retainscreator21; and the existingflightCHECK requires refresh_started_atNULL wheneverin_flight=false. Shared-admin forward132500 applied and verified sourceMD5679de0611f6d5a9285dff1ba32df1336.
+- Proposed133500 preserves the original refresh-start timestamp in both audits and clears the paired flight fields together. A live rollback-only patched call reachedversion210 and verified inquiry-row preservation outside those two fields and audit timestamp preservation. No diagnostic token or job/credential/audit change was committed.
+- The operator script now saves future official confirmed responses privately outside cloud sync beforeSTORE and offersSTORE-only resume. Existing proof lifetime, same-source/grant/identity and private-file integrity checks remain. No newOAuth orscope expansion is involved.
+
+### 2026-09-14 카테고리 결과 반영 및 eBay 인증 저장 후속
+
+- 카테고리 POST 202 후 같은 job ID를 GET으로 조회하도록 수정. 화면 이동/timeout에는 ID를 보존하며 자동 POST 재전송 없이 재개한다. 실제 완료 응답 4건의 UI 정규화 결과가 원본과 동일했고, 관련 집중 27개 및 전체 TypeScript 검사를 통과했다.
+- Lazada 로컬 카테고리 읽기 3개를 기존 승인/판매자/IP/release 검사를 유지해 추가했다. 085500 migration 원문 해시 일치 적용 완료, 실제 route와 새 실행 코드 배포는 아래 배포 검증을 따른다.
+- eBay 실제 refresh/GetUser 응답을 개인 로컬 원장에 보존한 뒤 REST STORE가 8초 제한(실측 DB 약9초)으로 rollback되는 것을 확인했다. 같은 원래 providerVerifiedAt/HMAC 검증 응답으로 transaction-local20초의 동일 RPC STORE만 재개해 v210 credential 2ba31905-9879-44c4-88be-2204776fa303 저장 성공. 이전 문의 결과/감사시각 보존, 새 provider 작업 강제 시작0, 기존 queued credential 정상 rebind312. 이는 상품 등록 성공이 아니다.
+- 132500 공유 관리자 검증 및 133500 refresh flag/timestamp CHECK 일관성 forward 적용. 운영의17개 CHECK를 포함한 회귀 통과. Shopee SG+merchant 좁은 갱신 수정은 별도 진행 중이며 전체 신규 채널 등록은 여전히0/8.

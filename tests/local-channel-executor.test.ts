@@ -28,7 +28,7 @@ test("the local executor has an exact read/write operation whitelist", () => {
   ];
 
   assert.equal(localChannelExecutorAccess("coupang", "categories.attributes"), "read");
-  for (const channel of ["coupang", "elevenst", "temu"]) {
+  for (const channel of ["coupang", "elevenst", "temu", "lazada"]) {
     for (const operation of ["categories.suggest", "categories.attributes", "categories.validate"]) {
       assert.equal(localChannelExecutorAccess(channel, operation), "read");
     }

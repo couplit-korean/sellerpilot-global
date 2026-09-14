@@ -1,12 +1,85 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import {readFile,mkdtemp,rm,stat,writeFile,chmod,symlink,link,unlink} from "node:fs/promises";
+import {createHash} from "node:crypto";
+import {join} from "node:path";
 import test from "node:test";
 import {PGlite} from "@electric-sql/pglite";
 import {ensureEbayAccessToken} from "../lib/channels/protocols.ts";
-import {validateSource,sourceCredentialId as oldId} from "../scripts/ebay-exact-listing-read-refresh.mjs";
+import {validateSource,sourceCredentialId as oldId,writeConfirmedRefreshEvidence,readConfirmedRefreshEvidence,validateConfirmedRefresh,safeStoreError} from "../scripts/ebay-exact-listing-read-refresh.mjs";
 
 const migration=await readFile(new URL("../supabase/migrations/20260914131500_ebay_exact_listing_read_refresh_supersession.sql",import.meta.url),"utf8");
 const base=await readFile(new URL("../supabase/migrations/20260821110000_harden_oauth_rotation_and_cleanup_lints.sql",import.meta.url),"utf8");
+// All 17 deployed channel_gateway_jobs CHECK definitions, read 2026-09-14.
+const liveGatewayChecks=[
+  {
+    "conname": "channel_gateway_jobs_attempt_count_check",
+    "definition": "CHECK (((attempt_count >= 0) AND (attempt_count <= 6)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_channel_check",
+    "definition": "CHECK ((channel = ANY (ARRAY['qoo10'::text, 'shopee'::text, 'lazada'::text, 'coupang'::text, 'elevenst'::text, 'smartstore'::text, 'ebay'::text, 'temu'::text])))"
+  },
+  {
+    "conname": "channel_gateway_jobs_credential_recovery_state_check",
+    "definition": "CHECK ((((credential_refresh_recovery_vault_id IS NULL) AND (credential_refresh_recovery_fingerprint IS NULL) AND (credential_refresh_recovery_staged_at IS NULL)) OR ((credential_refresh_recovery_vault_id IS NOT NULL) AND (credential_refresh_recovery_fingerprint ~ '^[a-f0-9]{64}$'::text) AND (credential_refresh_recovery_staged_at IS NOT NULL))))"
+  },
+  {
+    "conname": "channel_gateway_jobs_credential_refresh_flight_check",
+    "definition": "CHECK ((credential_refresh_in_flight = (credential_refresh_started_at IS NOT NULL)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_credential_refresh_state_check",
+    "definition": "CHECK ((((prepared_credential_id IS NULL) AND (credential_refresh_fingerprint IS NULL) AND (credential_refresh_prepared_at IS NULL)) OR ((prepared_credential_id IS NOT NULL) AND (credential_refresh_fingerprint ~ '^[a-f0-9]{64}$'::text) AND (credential_refresh_prepared_at IS NOT NULL))))"
+  },
+  {
+    "conname": "channel_gateway_jobs_ebay_publication_recovery_claim_coun_check",
+    "definition": "CHECK (((ebay_publication_recovery_claim_count >= 0) AND (ebay_publication_recovery_claim_count <= 2)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_environment_check",
+    "definition": "CHECK ((environment = ANY (ARRAY['sandbox'::text, 'production'::text])))"
+  },
+  {
+    "conname": "channel_gateway_jobs_oauth_completion_state_check",
+    "definition": "CHECK (((NOT oauth_exchange_completed) OR ((operation = 'oauth.exchange'::text) AND (prepared_credential_id IS NOT NULL) AND (credential_refresh_in_flight = false) AND (credential_refresh_recovery_vault_id IS NULL))))"
+  },
+  {
+    "conname": "channel_gateway_jobs_oauth_request_state_check",
+    "definition": "CHECK ((((operation <> 'oauth.exchange'::text) AND (oauth_request_vault_id IS NULL) AND (oauth_request_fingerprint IS NULL) AND (oauth_source_credential_id IS NULL)) OR ((operation = 'oauth.exchange'::text) AND (oauth_request_fingerprint ~ '^[a-f0-9]{64}$'::text) AND (oauth_source_credential_id IS NOT NULL) AND ((status <> ALL (ARRAY['queued'::text, 'running'::text])) OR (oauth_request_vault_id IS NOT NULL)))))"
+  },
+  {
+    "conname": "channel_gateway_jobs_operation_check",
+    "definition": "CHECK ((operation = ANY (ARRAY['oauth.exchange'::text, 'shops.get'::text, 'diagnostic.test'::text, 'competitor.search'::text, 'categories.list'::text, 'categories.suggest'::text, 'categories.attributes'::text, 'categories.validate'::text, 'listing.create'::text, 'listing.update'::text, 'listing.stop'::text, 'listing.activate'::text, 'listing.lineage.verify'::text, 'listing.publication.verify'::text, 'price.update'::text, 'inventory.update'::text, 'orders.list'::text, 'orders.get'::text, 'inquiries.list'::text, 'inquiries.reply'::text, 'shipment.acknowledge'::text, 'shipment.confirm'::text]))) NOT VALID"
+  },
+  {
+    "conname": "channel_gateway_jobs_rate_limit_count_check",
+    "definition": "CHECK (((rate_limit_count >= 0) AND (rate_limit_count <= 1000)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_request_payload_check",
+    "definition": "CHECK (((jsonb_typeof(request_payload) = 'object'::text) AND (octet_length((request_payload)::text) <= 128000)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_response_payload_check",
+    "definition": "CHECK (((response_payload IS NULL) OR ((jsonb_typeof(response_payload) = 'object'::text) AND (octet_length((response_payload)::text) <= 1000000))))"
+  },
+  {
+    "conname": "channel_gateway_jobs_running_claim_token_check",
+    "definition": "CHECK (((status <> 'running'::text) OR (claim_token IS NOT NULL)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_seller_account_key_check",
+    "definition": "CHECK (((seller_account_key IS NULL) OR (seller_account_key ~ '^[a-f0-9]{64}$'::text)))"
+  },
+  {
+    "conname": "channel_gateway_jobs_status_check",
+    "definition": "CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'reconciliation_required'::text])))"
+  },
+  {
+    "conname": "channel_gateway_jobs_write_resource_check",
+    "definition": "CHECK ((((write_resource_kind IS NULL) AND (write_resource_key IS NULL) AND (request_fingerprint IS NULL) AND (inventory_item_id IS NULL) AND (order_id IS NULL) AND (shipment_carrier IS NULL) AND (shipment_tracking IS NULL)) OR ((operation = 'listing.publication.verify'::text) AND (write_resource_kind IS NULL) AND (write_resource_key IS NULL) AND (request_fingerprint ~ '^[a-f0-9]{64}$'::text) AND (inventory_item_id IS NULL) AND (order_id IS NULL) AND (shipment_carrier IS NULL) AND (shipment_tracking IS NULL)) OR ((write_resource_kind = ANY (ARRAY['listing_mutation'::text, 'order_shipment'::text])) AND (write_resource_key ~ '^[a-f0-9]{64}$'::text) AND (request_fingerprint ~ '^[a-f0-9]{64}$'::text) AND ((shipment_carrier IS NULL) OR ((length(shipment_carrier) >= 1) AND (length(shipment_carrier) <= 40))) AND ((shipment_tracking IS NULL) OR (length(shipment_tracking) <= 100)))))"
+  }
+];
 const owner="21eb1892-0894-4f9f-b414-4c9464182dd6";
 const oldJob="42f87fd2-8583-47c1-85f0-7e3ff436ad4a";
 const category="d49fcf37-32b6-41f5-a822-0f9bc99b51de";
@@ -14,7 +87,7 @@ const diagnostic="1654d17e-2ef7-421d-b90f-6bf0e536e626";
 const attempt="cd5e52d7-2819-48ba-adab-de0e5dbfe9ed";
 const rpc="public.sellerpilot_service_store_ebay_exact_listing_refresh(uuid,jsonb,timestamptz)";
 function payload() {return {access_token:"expired-fixture-access",refresh_token:"same-fixture-refresh",client_id:"fixture-client",client_secret:"fixture-secret",ru_name:"fixture-runame",scopes:"https://api.ebay.com/oauth/api_scope",provider_account_identity_version:"v1",provider_account_subject:"ebay:eias:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",access_token_expires_at:new Date(Date.now()-3600000).toISOString(),refresh_token_expires_at:"2028-03-13T16:44:15.612Z"};}
-async function setup() {
+async function setup({currentChecks=false}={}) {
   const db=new PGlite();
   await db.exec(`
     create role anon;create role authenticated;create role service_role;
@@ -34,7 +107,13 @@ async function setup() {
       started_at timestamptz,completed_at timestamptz,updated_at timestamptz default now(),
       provider_mutation_started_at timestamptz,credential_refresh_in_flight boolean default false,
       credential_refresh_recovery_vault_id uuid,prepared_credential_id uuid,credential_refresh_fingerprint text,
-      claim_token uuid,worker_token_id uuid,lease_expires_at timestamptz,error_message text);
+      claim_token uuid,worker_token_id uuid,lease_expires_at timestamptz,error_message text,
+      credential_refresh_started_at timestamptz,credential_refresh_prepared_at timestamptz,
+      credential_refresh_recovery_fingerprint text,credential_refresh_recovery_staged_at timestamptz,
+      ebay_publication_recovery_claim_count integer default 0,rate_limit_count integer default 0,
+      oauth_exchange_completed boolean default false,oauth_request_vault_id uuid,oauth_request_fingerprint text,
+      oauth_source_credential_id uuid,response_payload jsonb,write_resource_kind text,write_resource_key text,
+      request_fingerprint text,inventory_item_id uuid,order_id uuid,shipment_carrier text,shipment_tracking text);
     create table sellerpilot_private.channel_operation_attempts(
       id uuid primary key,credential_id uuid,owner_id uuid,channel text,operation text,status text,
       completed_at timestamptz,seller_account_key text);
@@ -66,6 +145,10 @@ async function setup() {
           and unresolved.credential_refresh_in_flight)
     $$;
   `);
+  if(currentChecks)for(const check of liveGatewayChecks) {
+    assert.match(check.conname,/^[a-z0-9_]+$/);
+    await db.exec(`alter table sellerpilot_private.channel_gateway_jobs add constraint ${check.conname} ${check.definition}`);
+  }
   const start=base.indexOf("create or replace function public.sellerpilot_service_refresh_ebay(");
   assert.ok(start>=0);
   await db.exec(base.slice(start,base.indexOf("$$;",start)+3));
@@ -79,7 +162,7 @@ async function setup() {
     await db.query(`insert into sellerpilot_private.channel_gateway_jobs(id,credential_id,channel,environment,operation,status,created_by,seller_account_key,attempt_id)
       select $1,id,channel,environment,$2,$3,created_by,seller_account_key,$4 from sellerpilot_private.channel_credentials where id=$5`,[id,operation,status,aid,oldId]);
   }
-  await db.query("update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=true,error_message='CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION',started_at='2026-09-13T16:19:43Z',completed_at='2026-09-13T16:29:54Z' where id=$1",[oldJob]);
+  await db.query("update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=true,credential_refresh_started_at='2026-09-13T16:19:44.510642Z',error_message='CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION',started_at='2026-09-13T16:19:43Z',completed_at='2026-09-13T16:29:54Z' where id=$1",[oldJob]);
   await db.query(`insert into sellerpilot_private.channel_operation_attempts select $1,id,created_by,channel,'categories.suggest','running',null,seller_account_key from sellerpilot_private.channel_credentials where id=$2`,[attempt,oldId]);
   // Existing 310 reads remain queued; only normal credential retarget applies.
   // No test or migration claims, cancels or sends any of those operations.
@@ -219,4 +302,115 @@ test("operator source validation never upgrades a changed account or an already 
   for(const patch of [{version:210},{status:"revoked"},{created_by:oldId},{identity_verified:false}])assert.throws(()=>validateSource({...s,...patch}),/SOURCE_DRIFT/);
   assert.throws(()=>validateSource({...s,payload:{...s.payload,access_token_expires_at:"2099-01-01"}}),/TOKEN_STATE_INVALID/);
   assert.throws(()=>validateSource({...s,payload:{...s.payload,refresh_token_expires_at:"2000-01-01"}}),/TOKEN_STATE_INVALID/);
+});
+
+test("confirmed response survives STORE failure with private authenticated evidence; tamper or drift cannot resume",async()=>{
+  const directory=await mkdtemp("/private/tmp/sellerpilot-ebay-evidence-test-");
+  const source={id:oldId,version:209,status:"active",created_by:owner,channel:"ebay",environment:"production",seller_account_key_source:"provider_certified_v1",identity_verified:true,payload:payload()};
+  const serviceKey="fixture-service-key-never-a-real-secret";
+  const options={source,serviceKey,directory};
+  try {
+    assert.equal(await readConfirmedRefreshEvidence(options),null);
+    const next={...source.payload,access_token:"fixture-issued-token-for-store-only",access_token_expires_at:new Date(Date.now()+7200000).toISOString(),ebay_user_id:"verified-name"};
+    const verifiedAt=new Date().toISOString();
+    const saved=await writeConfirmedRefreshEvidence({...options,payload:next,verifiedAt});
+    assert.equal((await stat(saved.path)).mode&0o777,0o600);
+    assert.equal((await stat(directory)).mode&0o777,0o700);
+    assert.equal((await stat(saved.path)).nlink,1);
+    const evidence=await readConfirmedRefreshEvidence(options);
+    assert.deepEqual(evidence.payload,next);assert.equal(evidence.verifiedAt,verifiedAt);
+    await assert.rejects(writeConfirmedRefreshEvidence({...options,payload:next,verifiedAt}),/EXISTS_USE_RESUME_STORE/);
+    await assert.rejects(readConfirmedRefreshEvidence({...options,serviceKey:"different-fixture-service-key"}),/EVIDENCE_INVALID/);
+    await assert.rejects(readConfirmedRefreshEvidence({...options,source:{...source,version:210}}),/SOURCE_DRIFT/);
+    assert.throws(()=>validateConfirmedRefresh(source,evidence,Date.now()+601000),/PROOF_EXPIRED/);
+    const original=await readFile(saved.path,"utf8");
+    const changed=JSON.parse(original);changed.body=changed.body.replace("verified-name","forged-name");
+    changed.digest=createHash("sha256").update(changed.body).digest("hex");
+    await writeFile(saved.path,JSON.stringify(changed));
+    await assert.rejects(readConfirmedRefreshEvidence(options),/EVIDENCE_INVALID/);
+    await writeFile(saved.path,original);
+    await chmod(saved.path,0o644);await assert.rejects(readConfirmedRefreshEvidence(options),/EVIDENCE_INVALID/);await chmod(saved.path,0o600);
+    const other=join(directory,"hardlink");await link(saved.path,other);
+    await assert.rejects(readConfirmedRefreshEvidence(options),/EVIDENCE_INVALID/);await unlink(other);
+    await unlink(saved.path);await writeFile(other,original,{mode:0o600});await symlink(other,saved.path);
+    await assert.rejects(readConfirmedRefreshEvidence(options),/EVIDENCE_INVALID/);
+    assert.deepEqual((await readFile(other,"utf8")),original);
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
+
+test("STORE error classification emits static diagnostics without SQL, tokens or arbitrary server text",()=>{
+  assert.match(safeStoreError(500,{code:"42702",message:'column reference "credential_id" is ambiguous'}),/42702_AMBIGUOUS_COLUMN/);
+  assert.match(safeStoreError(500,{code:"P0001",message:"EBAY_EXACT_READ_REFRESH_ATTEMPT_DRIFT"}),/ATTEMPT_DRIFT/);
+  const result=safeStoreError(500,{code:"P0001",message:"SQL secret-access-token fixture",details:"select token",hint:"private refresh token"});
+  assert.match(result,/P0001_DATABASE_EXCEPTION/);assert.doesNotMatch(result,/secret|token|select|private/);
+  assert.doesNotMatch(safeStoreError(500,{code:"private-secret",message:"credential plaintext"}),/private-secret|plaintext/);
+});
+
+test("forward patch accepts actual shared admin attempt without rewriting either owner, and rejects revoked access",async()=>{
+  const {db,p,sql}=await setup();const actor="768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
+  try {
+    await db.exec(sql);
+    await db.exec(`create schema auth;create table sellerpilot_private.admin_users(user_id uuid primary key);
+      create function auth.uid() returns uuid language sql as $$select nullif(current_setting('test.uid',true),'')::uuid$$;`);
+    const adminBase=await readFile(new URL("../supabase/migrations/20260816060000_channel_credentials_and_roles.sql",import.meta.url),"utf8");
+    const adminStart=adminBase.indexOf("create or replace function public.sellerpilot_is_admin()");
+    assert.ok(adminStart>=0);await db.exec(adminBase.slice(adminStart,adminBase.indexOf("$$;",adminStart)+3));
+    await db.exec(await readFile(new URL("../supabase/migrations/20260906010000_verify_channel_credential_owner.sql",import.meta.url),"utf8"));
+    await db.query("insert into sellerpilot_private.admin_users values($1),($2)",[actor,owner]);
+    await db.query("update sellerpilot_private.channel_operation_attempts set owner_id=$1 where id=$2",[actor,attempt]);
+    // Execute the existing official shared-admin proof with the actual fixture
+    // actor; no production impersonation is added to the service-only patch.
+    await db.query("select set_config('test.uid',$1,false)",[actor]);await db.exec("set role authenticated");
+    const proof=(await db.query("select public.sellerpilot_verify_channel_credential_owner_v1($1,'ebay','production') p",[oldId])).rows[0].p;
+    assert.equal(proof.actorId,actor);assert.equal(proof.credentialOwnerId,owner);await db.exec("reset role");
+    await assert.rejects(save(db,p),/ATTEMPT_DRIFT/);
+    const forward=await readFile(new URL("../supabase/migrations/20260914132500_ebay_exact_refresh_shared_admin_attempt.sql",import.meta.url),"utf8");
+    const h=(await db.query("select md5(prosrc) h from pg_proc where oid=$1::regprocedure",[rpc])).rows[0].h;
+    const fixed=forward.replace("03ece524ce771a6820b661b788bd2cd1",h);
+    const unchanged=(await db.query("select proname,pg_get_functiondef(oid) d from pg_proc where proname in ('sellerpilot_service_refresh_ebay','sellerpilot_183000_claim_serverless_gateway_unsafe') order by proname")).rows;
+    await db.exec(fixed);
+    assert.deepEqual((await db.query("select proname,pg_get_functiondef(oid) d from pg_proc where proname in ('sellerpilot_service_refresh_ebay','sellerpilot_183000_claim_serverless_gateway_unsafe') order by proname")).rows,unchanged);
+    await db.query("delete from sellerpilot_private.admin_users where user_id=$1",[actor]);
+    await assert.rejects(save(db,p),/SHARED_ADMIN_DENIED/);
+    await db.query("insert into sellerpilot_private.admin_users values($1)",[actor]);
+    await db.query("update sellerpilot_private.channel_operation_attempts set owner_id=$1 where id=$2",[owner,attempt]);
+    await assert.rejects(save(db,p),/ATTEMPT_DRIFT/);
+    await db.query("update sellerpilot_private.channel_operation_attempts set owner_id=$1 where id=$2",[actor,attempt]);
+    const saved=await save(db,p);
+    const actual=(await db.query("select a.owner_id,c.created_by,j.created_by job_owner from sellerpilot_private.channel_operation_attempts a join sellerpilot_private.channel_credentials c on c.id=a.credential_id join sellerpilot_private.channel_gateway_jobs j on j.attempt_id=a.id where a.id=$1",[attempt])).rows[0];
+    assert.deepEqual(actual,{owner_id:actor,created_by:owner,job_owner:owner});
+    assert.equal(saved.version,210);assert.equal((await eligible(db)).length,312);
+    await assert.rejects(db.exec(fixed),/PREIMAGE_DRIFT/);await db.exec("rollback");
+  }finally{await db.close();}
+});
+
+test("all 17 deployed CHECKs reproduce flight failure, then forward supersession preserves its timestamp in both audits",async()=>{
+  const {db,p,sql}=await setup({currentChecks:true});const actor="768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
+  try {
+    await db.exec(sql);
+    await db.exec("create table sellerpilot_private.admin_users(user_id uuid primary key)");
+    await db.query("insert into sellerpilot_private.admin_users values($1)",[actor]);
+    await db.query("update sellerpilot_private.channel_operation_attempts set owner_id=$1 where id=$2",[actor,attempt]);
+    const shared=await readFile(new URL("../supabase/migrations/20260914132500_ebay_exact_refresh_shared_admin_attempt.sql",import.meta.url),"utf8");
+    let h=(await db.query("select md5(prosrc) h from pg_proc where oid=$1::regprocedure",[rpc])).rows[0].h;
+    await db.exec(shared.replace("03ece524ce771a6820b661b788bd2cd1",h));
+    await assert.rejects(save(db,p),error=>error.code==="23514" && error.constraint==="channel_gateway_jobs_credential_refresh_flight_check");
+    assert.equal((await db.query("select count(*)::int n from sellerpilot_private.channel_credentials")).rows[0].n,1);
+    const deployed=(await db.query("select conname,pg_get_constraintdef(oid) definition from pg_constraint where conrelid='sellerpilot_private.channel_gateway_jobs'::regclass and contype='c' order by conname")).rows;
+    assert.deepEqual(deployed,liveGatewayChecks);
+    const flight=await readFile(new URL("../supabase/migrations/20260914133500_ebay_exact_refresh_flight_consistency.sql",import.meta.url),"utf8");
+    h=(await db.query("select md5(prosrc) h from pg_proc where oid=$1::regprocedure",[rpc])).rows[0].h;
+    const fixed=flight.replace("c8face602aebf60da821a0de58a9039a",h);
+    const before=(await db.query("select to_jsonb(j) value from sellerpilot_private.channel_gateway_jobs j where id=$1",[oldJob])).rows[0].value;
+    await db.exec(fixed);const saved=await save(db,p);
+    const after=(await db.query("select to_jsonb(j) value from sellerpilot_private.channel_gateway_jobs j where id=$1",[oldJob])).rows[0].value;
+    assert.deepEqual(after,{...before,credential_refresh_in_flight:false,credential_refresh_started_at:null});
+    const audit=(await db.query("select safe_detail from sellerpilot_private.operation_audit where entity_id=$1",[oldJob])).rows[0].safe_detail;
+    const credentialAudit=(await db.query("select safe_detail from sellerpilot_private.credential_audit where credential_id=$1 and safe_detail->>'source'='exact_confirmed_refresh_supersession_v1'",[saved.credentialId])).rows[0].safe_detail;
+    assert.equal(Date.parse(audit.supersededRefreshStartedAt),Date.parse(before.credential_refresh_started_at));
+    assert.equal(Date.parse(credentialAudit.supersededRefreshStartedAt),Date.parse(before.credential_refresh_started_at));
+    assert.equal((await db.query("select owner_id from sellerpilot_private.channel_operation_attempts where id=$1",[attempt])).rows[0].owner_id,actor);
+    assert.equal((await eligible(db)).length,312);
+    await assert.rejects(db.exec(fixed),/PREIMAGE_DRIFT/);await db.exec("rollback");
+  }finally{await db.close();}
 });

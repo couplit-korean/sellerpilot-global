@@ -31,6 +31,7 @@ import { CategoryAttributeField } from "./category-attribute-field";
 import { exactShopeeTargetFromPayload, fetchChannelTargets } from "./channel-target-client";
 import { CategoryTargetSelectionCoordinator } from "./category-target-selection-coordinator";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
+import { categoryJobStorageKey, runCategoryJobOperation } from "./category-job-polling";
 
 export type CredentialRow = {
   id: string;
@@ -305,7 +306,7 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
         // sessionStorage copy for a later official category validation call.
         ebayCategoryTreeBinding: undefined,
         error: state.phase === "suggesting" || state.phase === "inspecting"
-          ? "페이지 전환 중 중단된 조회입니다. 현재 검색어로 다시 조회해 주세요."
+          ? "페이지 전환으로 결과 조회가 중단됐습니다. 같은 조건으로 다시 확인하면 저장된 작업을 이어서 조회합니다."
           : state.error,
       } satisfies ChannelState]];
     }));
@@ -1110,6 +1111,15 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const bootstrapGenerationRef = useRef(0);
   const targetSelectionCoordinatorRef = useRef(new CategoryTargetSelectionCoordinator());
+  const categoryOperationAbortRef = useRef(new AbortController());
+  const categoryOperationsRef = useRef(new Map<string, Promise<OperationPayload>>());
+
+  useEffect(() => {
+    const controller = new AbortController();
+    categoryOperationAbortRef.current = controller;
+    const pending = categoryOperationsRef.current;
+    return () => { controller.abort(); pending.clear(); };
+  }, [productId]);
 
   useEffect(() => () => targetSelectionCoordinatorRef.current.dispose(), []);
 
@@ -1362,23 +1372,27 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   }, [localizedListings, productName, query, selectedTarget]);
 
   const operation = useCallback(async (channel: ActiveChannelKey, name: "categories.suggest" | "categories.attributes" | "categories.validate", args: Record<string, unknown>) => {
+    const signal = categoryOperationAbortRef.current.signal;
     const supabase = createClient();
-    const [{ data: sessionData }, { data: latestCredentialRows }] = await Promise.all([
-      supabase.auth.getSession(),
-      supabase.rpc("sellerpilot_list_credentials"),
-    ]);
+    const { data: latestCredentialRows } = await supabase.rpc("sellerpilot_list_credentials");
     const credential = selectActiveProductionCredential(latestCredentialRows, channel)
       ?? activeCredential.get(channel);
     if (!credential) throw new Error("실제 API 키 연결이 필요합니다.");
-    const response = await fetch("/api/admin/channel-operations", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: credential.id, channel, operation: name, idempotencyKey: crypto.randomUUID(), confirmWrite: false, arguments: args }),
+    const input = { productId, channel, operation: name, credentialId: credential.id, arguments: args };
+    const key = await categoryJobStorageKey(input);
+    const pending = categoryOperationsRef.current;
+    const existing = pending.get(key);
+    if (existing) return existing;
+    const work = runCategoryJobOperation(input, {
+      storage: window.sessionStorage, signal,
+      authorization: async () => {
+        const { data } = await supabase.auth.getSession();
+        return `Bearer ${data.session?.access_token ?? ""}`;
+      },
     });
-    const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as OperationPayload;
-    if (!response.ok || payload.ok === false) throw new Error(payload.message ?? `${channelCatalog[channel].name} 공식 API가 오류를 반환했습니다.`);
-    return payload;
-  }, [activeCredential]);
+    pending.set(key, work);
+    try { return await work; } finally { if (pending.get(key) === work) pending.delete(key); }
+  }, [activeCredential, productId]);
 
   const suggest = async (channel: ActiveChannelKey) => {
     const textQuery = localizedQuery(channel);
@@ -1434,6 +1448,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         } };
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
       setStates((current) => ({ ...current, [key]: {
         ...(current[key] ?? initialState()),
         ...(ebayTreeBinding ? { ebayCategoryTreeBinding: ebayTreeBinding } : {}),
@@ -1503,6 +1518,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         phase: "ready",
       } }));
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
     }
   };

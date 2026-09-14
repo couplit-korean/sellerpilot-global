@@ -38,6 +38,9 @@ const readOnlyTuples = new Set([
   "lazada:inquiries.list",
   "lazada:orders.list",
   "lazada:diagnostic.test",
+  "lazada:categories.suggest",
+  "lazada:categories.attributes",
+  "lazada:categories.validate",
 ]);
 
 const writeTuples = new Set([
