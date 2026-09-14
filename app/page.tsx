@@ -1343,7 +1343,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [commerceTemplates, setCommerceTemplates] = useState<CommerceTemplate[]>([]);
   const [appliedTemplate, setAppliedTemplate] = useState("");
   const connectedChannelKeys = useMemo(() => channelMetrics
-    .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
+    .filter((metric) => metric.channelKey !== "temu" && metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
 
@@ -1635,7 +1635,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   ];
   const intakeCompletedCount = intakeCompletionItems.filter(Boolean).length;
   const intakeProgress = Math.round((intakeCompletedCount / intakeCompletionItems.length) * 100);
-  const uploadChannelEntries = activeChannelKeys.map((key) => [key, channels[key]] as const);
+  const uploadChannelEntries = activeChannelKeys.filter((key) => key !== "temu").map((key) => [key, channels[key]] as const);
   const connectedChannelEntries = uploadChannelEntries.filter(([key]) => connectedChannelKeys.includes(key));
   const unavailableChannelEntries = uploadChannelEntries.filter(([key]) => !connectedChannelKeys.includes(key));
 
