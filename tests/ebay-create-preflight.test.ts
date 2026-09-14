@@ -48,7 +48,7 @@ function revisionBoundArgs() {
   const description = `<p>Approved English description.</p>${detailUrls.map((url) => `<img src="${url}">`).join("")}`;
   input.publicationExpectedImageCount = 8;
   input.inventoryItem.product.title = "Approved English title";
-  input.inventoryItem.product.description = description;
+  input.inventoryItem.product.description = "Approved English description.";
   input.inventoryItem.product.imageUrls = ["https://cdn.example.com/representative.jpg", ...detailUrls];
   input.offer.listingDescription = description;
   input.sellerpilotExternalDetail = {
@@ -256,7 +256,7 @@ test("eBay required create fields reject Inventory and Offer description drift b
         arguments: input,
         environment: "sandbox",
       }),
-      /EBAY_CREATE_REQUIRED_FIELDS_INVALID:offer\.listingDescription/u,
+      /EBAY_CREATE_REQUIRED_FIELDS_INVALID:.*offer\.listingDescription/u,
     );
     assert.equal(fetches, 0);
   } finally {

@@ -12,6 +12,7 @@ import {
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
 import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
+import { ebayInventoryDescription } from "./ebay-inventory-description";
 const marketplaceImageBucket = "sellerpilot-marketplace";
 const inputMimeTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxInputBytes = 10 * 1024 * 1024;
@@ -968,8 +969,8 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     ? uniqueStrings([...gallery, ...details]).slice(0, 12)
     : await normalizeList(product.imageUrls, 12, "gallery-square");
   product.imageUrls = normalized;
-  product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);
   if (offer) offer.listingDescription = upsertMarketplaceDetailImages(offer.listingDescription, details, detailImageAltTexts, detailImageRoles);
+  product.description = ebayInventoryDescription(offer?.listingDescription ?? product.description);
   return finish();
 }

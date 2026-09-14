@@ -18,3 +18,17 @@
 `gatewayClaimSchema`에 `attempt_id`, `credential_version`, `credential_fingerprint`가 없어 safeParse 응답에서 제거되고, Mac의 `attachEbayCreateClaimIncarnation`이 실제 작업 실행/heartbeat 이전에 거부한다. 같은 요청의 정상 전달만 수정한다. 기존 GetUser/정책/API토큰 검증, IP 조사, 새 CREATE는 반복하지 않는다. 현재 수정·집중 회귀 진행 중이며 운영 반영 전이다.
 
 Shopee 문의 완료 HTTP400 로그는 위 IP403과 다른 현상이다. 현재 로거에 job ID/시각이 없어17ff 작업의 오류로 단정하지 않는다.17ff는03:44:57 UTC 자동 재수령되어attempt4/lease03:59:57로 관측됐다. 160000의 실행 중 보호를 우회하지 않고 적용 전 종료 상태를 확인한다.
+
+## 2026-09-14 13:15 KST — 실제 실행 후 남은 항목
+
+- 운영 웹·DB active release·Mac gateway: `a1fa71283c2bfaa20662ce502deb368bf453c383`, Vercel `dpl_4Qz9JZLoSoCKFjQ2KjwKjzwMvST9`. 후보6/운영6 canary 및 Mac ready 확인. DB162000 원문MD5 `b37b1446d4c0eed80d5e08452514d64a` 일치.
+- eBay 응답3필드 누락 수정은 실제 전달 통과했다. 004aff의 전송 전 실패를 정확한 request/attempt/credential/원행 및 stage0 근거로 감사하고 배포 후 **동일 job**을 재개했다. 이력은 /tmp/sellerpilot-ebay-noexec-pause-apply.sql 및 -resume-apply.sql, 각 rollback/result에 있다.
+- 재개 후 eBay Inventory 실제 API가 `25718`, description 1..4000자 제한으로 거절했다. Gateway 작업 succeeded는 처리 완료일 뿐이며 상품 listing은 failed, 실제 신규게시0/8. 승인된 Offer 상세 HTML은 유지하고 Inventory에만 결정적 일반 텍스트를 적용하는 수정70개 검사 통과, 아직 배포 전.
+- 국내 비용은 Aside에서 저장했다. 초안v69에서 쿠팡/11번가/스마트스토어 원화 배송3000, 각 채널 유료배송3000 일치. 11번가와 스마트스토어 반품3000/교환6000 저장. 이후 쿠팡 수동 반품편도3000·기존CJGLS를 입력했다. 비용 재승인 질문 금지.
+- 스마트스토어 등록 전 차단: source `1e70b988...`가02:30:16UTC 만료됐고 product_updated_at도달라 snapshot null. 계정/credential/category50002253/속성누락[]/상세digest는 정상이다. 150000·source 저장 버그 재작업 금지. 같은 카테고리의 근거를 새로 조회·저장해야 한다.
+- 11번가 승인 차단: active credential v2의 seller_id가임시값 `sample`. 키/복호화/권한/소유자 문제 아님. 공식 Aside SellerOffice 로그인 `couplit`, 현재 공지의 점검은9/17 02:00~05:30(현재9/14아님)으로 확인. 기존 키를 보존하고 공식 seller_id만기존수정경로로정정해야 한다. 새키/로그인/digest위조 금지.
+- Shopee는04:00:24UTC 정상기존읽기에서v91로SG토큰 갱신·저장 완료, SG만료08:00:21UTC. 추가갱신요청불필요. 160000은이정상동일판매자승계를재사용하도록수정중. 과거403과정상v91, 현재문의결과저장400을섞어보고하지않는다.
+
+### Shopee 경로 수정 운영 적용 완료
+
+2026-09-14 DB160000 적용 및 원문MD5 `5ecd163c74a65688b73feac7b15eb32c` 검증 완료. 기존 거절 기록과 정상 v91 성공 기록 보존, local shops.get 경로1개 및 현재credential 승인경로5개 확인, serverless shops.get=false. 실제 갱신 시작과 같은 전역잠금으로 경쟁을 막고 정상 문의 read만 허용한다. 정적guard원인 재조사는 끝났으며 source_ip 문제를 다시 발견한 것으로 보고하지 않는다. 다음은 현재SG숍 정보조회·카테고리/필수입력, 실제등록 결과검증이다.

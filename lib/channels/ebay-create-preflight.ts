@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ebayInventoryDescriptionMatches } from "./ebay-inventory-description";
 import { externalDetailCanonical } from "../external-detail-canonical";
 import type { RemoteResponse } from "./protocols";
 import {
@@ -417,8 +418,8 @@ function ebayCreateApprovalProjection(arguments_: Record<string, unknown>) {
     && external.title === title
     && englishApprovedText(title)
     && typeof external.html === "string"
-    && external.html === description
-    && description === listingDescription
+    && external.html === listingDescription
+    && ebayInventoryDescriptionMatches(description, listingDescription)
     && englishApprovedText(description)
     && externalImageSha256s.length === 8
     && externalImageSha256s.every((digest) => /^[a-f0-9]{64}$/u.test(digest));
@@ -605,7 +606,7 @@ export function assertEbayCreateRequiredFields(
     ["offer.categoryId", /^[1-9]\d{0,9}$/u.test(text(offer.categoryId))],
     ["inventoryItem.condition", Boolean(text(inventoryItem.condition))],
     ["inventoryItem.product.title", Boolean(text(product.title))],
-    ["inventoryItem.product.description", Boolean(text(product.description))],
+    ["inventoryItem.product.description", ebayInventoryDescriptionMatches(product.description, offer.listingDescription)],
     ["inventoryItem.product.imageUrls", imagesValid],
     ["inventoryItem.product.aspects", aspectsValid],
     ["inventoryItem.availability.shipToLocationAvailability.quantity",
@@ -617,7 +618,7 @@ export function assertEbayCreateRequiredFields(
     ["offer.listingDescription",
       typeof offer.listingDescription === "string"
         && offer.listingDescription.length > 0
-        && offer.listingDescription === product.description],
+        && ebayInventoryDescriptionMatches(product.description, offer.listingDescription)],
     ["offer.pricingSummary.price.value",
       /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/u.test(price) && Number(price) > 0],
     ["offer.pricingSummary.price.currency",

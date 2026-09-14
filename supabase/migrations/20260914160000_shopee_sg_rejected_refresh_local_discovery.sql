@@ -14,6 +14,7 @@ begin
  ('sellerpilot_private.claim_local_channel_executor_read_job(text,text,text,text)','e39f070e5655bc6cc9516aa11d7a5ac9'),
  ('sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)','b1d542723830a3396b4eb272a27db7b1'),
  ('sellerpilot_private.shopee_sg_registration_refresh_job(uuid)','ebbb8ce767d6db6455964365b32c685d'),
+ ('public.sellerpilot_service_begin_gateway_credential_refresh(text,uuid,uuid)','b3cd87a12c71a61be9f50b5cd0839f10'),
  ('public.sellerpilot_service_prepare_cs_shopee_target_refresh_v1(text,uuid,uuid,text,text,jsonb,timestamptz,boolean,boolean)','7686d69204f3cdbf406f3a37749881d7')
  ) x(signature,hash) loop
   if (select md5(prosrc) from pg_proc where oid=e.signature::regprocedure) is distinct from e.hash
@@ -28,6 +29,50 @@ create table sellerpilot_private.shopee_sg_refresh_rejection_receipts(
 );
 alter table sellerpilot_private.shopee_sg_refresh_rejection_receipts enable row level security;
 revoke all on sellerpilot_private.shopee_sg_refresh_rejection_receipts from public,anon,authenticated,service_role;
+
+-- The normal orders read confirmed an SG-only refresh while this migration
+-- awaited an idle channel. Preserve that completed job, reuse its certified
+-- credential and inherit the existing approval; do not request another token.
+do $confirmed_successor$
+declare old_payload jsonb; new_payload jsonb; proof sellerpilot_private.channel_gateway_jobs%rowtype;
+begin
+ -- Match the existing refresh-begin/prepare ledger lock before taking
+ -- credential locks. A read cannot begin a token exchange between the
+ -- conflict check and commit; no runtime/provider call is made here.
+ perform pg_advisory_xact_lock(193674993,821065042);
+ perform pg_advisory_xact_lock(193674995,hashtext('shopee:production'));
+ perform 1 from sellerpilot_private.channel_credentials where id in('550d04ed-1e86-44a3-85a0-12ba17ce2374','e71683b7-113e-4f84-970e-1ca85868ff62') order by id for share;
+ select * into proof from sellerpilot_private.channel_gateway_jobs where id='1e710efc-4dc7-4c41-b079-820aa4b5993f' for share;
+ select d.decrypted_secret::jsonb into old_payload from sellerpilot_private.channel_credentials c join vault.decrypted_secrets d on d.id=c.vault_secret_id where c.id='550d04ed-1e86-44a3-85a0-12ba17ce2374';
+ select d.decrypted_secret::jsonb into new_payload from sellerpilot_private.channel_credentials c join vault.decrypted_secrets d on d.id=c.vault_secret_id where c.id='e71683b7-113e-4f84-970e-1ca85868ff62';
+ if md5(to_jsonb(proof)::text) is distinct from 'a4abfd735ce6d3883b583951951c2234'
+ or proof.status is distinct from 'succeeded' or proof.operation is distinct from 'orders.list'
+ or proof.credential_id is distinct from 'e71683b7-113e-4f84-970e-1ca85868ff62'::uuid
+ or proof.prepared_credential_id is distinct from proof.credential_id
+ or proof.credential_refresh_in_flight is distinct from false
+ or encode(extensions.digest(old_payload::text,'sha256'),'hex') is distinct from '07fa0b3e0955936def1fa8c914f2431157f3452066e4acd34a800a3dc1a05612'
+ or encode(extensions.digest(new_payload::text,'sha256'),'hex') is distinct from 'dd18074115aebb436354226b33c6009c26b4e0e7fd7c28e6ef882a1dbafa2d19'
+ or (old_payload-array['access_token','refresh_token','access_token_expires_at','refresh_token_expires_at','shopee_targets']) is distinct from (new_payload-array['access_token','refresh_token','access_token_expires_at','refresh_token_expires_at','shopee_targets'])
+ or not exists(select 1 from sellerpilot_private.channel_credentials a join sellerpilot_private.channel_credentials b on b.id=proof.credential_id
+ where a.id='550d04ed-1e86-44a3-85a0-12ba17ce2374' and a.version=90 and a.status='revoked'
+ and b.version=91 and b.status='active' and a.channel=b.channel and b.channel='shopee'
+ and a.environment=b.environment and b.environment='production' and a.created_by=b.created_by and b.created_by=proof.created_by
+ and a.seller_account_key=b.seller_account_key and b.seller_account_key=proof.seller_account_key
+ and a.seller_account_key_source='provider_certified_v1' and b.seller_account_key_source='provider_certified_v1'
+ and b.seller_account_verified_at='2026-09-14T04:00:24.419047Z'::timestamptz
+ and (b.expires_at is null or b.expires_at>clock_timestamp())
+ and exists(select 1 from sellerpilot_private.credential_audit audit where audit.credential_id=b.id and audit.action='token_refreshed' and audit.safe_detail->>'source'='service_refresh' and audit.occurred_at=b.seller_account_verified_at))
+ or (select jsonb_agg(t order by t->>'type',t->>'id') from jsonb_array_elements(old_payload->'shopee_targets') t where not(t->>'type'='shop' and t->>'id'='1719148844')) is distinct from
+    (select jsonb_agg(t order by t->>'type',t->>'id') from jsonb_array_elements(new_payload->'shopee_targets') t where not(t->>'type'='shop' and t->>'id'='1719148844'))
+ or not exists(select 1 from jsonb_array_elements(old_payload->'shopee_targets') a,jsonb_array_elements(new_payload->'shopee_targets') b
+ where a->>'type'='shop' and a->>'id'='1719148844' and b->>'type'='shop' and b->>'id'='1719148844'
+ and (a-array['access_token','refresh_token','access_token_expires_at','refresh_token_expires_at'])=(b-array['access_token','refresh_token','access_token_expires_at','refresh_token_expires_at'])
+ and a->>'access_token'<>b->>'access_token' and a->>'refresh_token'<>b->>'refresh_token'
+ and (b->>'access_token_expires_at')::timestamptz>clock_timestamp())
+ then raise exception 'SHOPEE_SG_CONFIRMED_SUCCESSOR_DRIFT';end if;
+ insert into sellerpilot_private.shopee_sg_registration_credential_lineage(credential_id,predecessor_id,source_job_id,payload_sha256)
+ values(proof.credential_id,'550d04ed-1e86-44a3-85a0-12ba17ce2374',proof.id,encode(extensions.digest(new_payload::text,'sha256'),'hex'));
+end $confirmed_successor$;
 
 do $rejection$
 declare j sellerpilot_private.channel_gateway_jobs%rowtype;
@@ -49,11 +94,18 @@ begin
  or t.job_id is null or t.status<>'active' or t.base_credential_version<>90 or t.credential_id is distinct from j.credential_id
  or t.lease_expires_at is distinct from '2026-09-14T01:00:07.182052Z'::timestamptz
  or t.candidate_digest is not null or t.preparation is not null or t.prepared_credential_id is not null
- or exists(select 1 from sellerpilot_private.channel_gateway_jobs where channel='shopee' and environment='production' and status='running')
+ -- A normal already-running read does not mutate the rejected incident or
+ -- stored credential. Block actual refresh/checkpoint/write activity and
+ -- unknown operations; keep the ordinary claimant's single-run gate intact.
+ or exists(select 1 from sellerpilot_private.channel_gateway_jobs where channel='shopee' and environment='production' and status='running'
+ and (credential_refresh_in_flight or credential_refresh_started_at is not null
+ or prepared_credential_id is not null or credential_refresh_recovery_vault_id is not null
+ or provider_mutation_started_at is not null
+ or coalesce(operation,'') not in('diagnostic.test','inquiries.list','orders.list','shops.get','categories.list','categories.suggest','categories.attributes','categories.validate','listing.get','listing.publication.verify','listing.lineage.verify')))
  or not exists(select 1 from sellerpilot_private.channel_credentials c
  join sellerpilot_private.shopee_sg_registration_credential_lineage l on l.credential_id=c.id
  join vault.decrypted_secrets d on d.id=c.vault_secret_id
- where c.id=j.credential_id and c.version=90 and c.status='active'
+ where c.id=j.credential_id and c.version=90 and c.status='revoked'
  and c.created_by='5286e97b-40aa-406f-9690-5697cf28cbb0'
  and d.decrypted_secret::jsonb->>'provider_account_subject'='shopee:main:4940266'
  and d.decrypted_secret::jsonb->>'partner_id'='2031489'
@@ -141,7 +193,16 @@ begin
  or r.egress_ip_sha256<>'92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01'
  then raise exception 'SHOPEE_SG_LOCAL_APPROVAL_DRIFT';end if;
  insert into sellerpilot_private.local_channel_executor_routes(id,owner_id,channel,operation,credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256,approved_by,approved_at,expires_at,enabled)
- values(gen_random_uuid(),r.owner_id,r.channel,'shops.get',r.credential_id,r.seller_account_key,r.worker_token_id,r.release_sha,r.egress_ip_sha256,r.approved_by,r.approved_at,r.expires_at,r.enabled);
+ values(gen_random_uuid(),r.owner_id,r.channel,'shops.get','e71683b7-113e-4f84-970e-1ca85868ff62',r.seller_account_key,r.worker_token_id,r.release_sha,r.egress_ip_sha256,r.approved_by,r.approved_at,r.expires_at,r.enabled);
+ insert into sellerpilot_private.local_channel_executor_routes(id,owner_id,channel,operation,credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256,approved_by,approved_at,expires_at,enabled)
+ select gen_random_uuid(),s.owner_id,s.channel,s.operation,'e71683b7-113e-4f84-970e-1ca85868ff62',s.seller_account_key,s.worker_token_id,s.release_sha,s.egress_ip_sha256,s.approved_by,s.approved_at,s.expires_at,s.enabled
+ from sellerpilot_private.local_channel_executor_routes s
+ where s.credential_id=r.credential_id and s.channel=r.channel and s.seller_account_key=r.seller_account_key
+ and s.owner_id=r.owner_id and s.worker_token_id=r.worker_token_id and s.release_sha=r.release_sha and s.egress_ip_sha256=r.egress_ip_sha256
+ and s.operation in('diagnostic.test','inquiries.list','orders.list','listing.create')
+ and s.enabled and s.approved_at<=clock_timestamp() and s.expires_at>clock_timestamp()
+ and exists(select 1 from sellerpilot_private.admin_users where user_id=s.approved_by)
+ on conflict(owner_id,channel,operation,credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256) do nothing;
 end $route$;
 
 -- A confirmed same-seller rotation inherits only still-live approvals from
