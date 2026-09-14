@@ -243,3 +243,13 @@
 - 관련 DB/API/실제 worker 및 gateway route 검사26/26, 타입·workspace 검사 통과. 추가 legacy lifecycle검사의 ai-cli-worker 단일파일/이전 버전 문자열 가정2개 실패는 별도 남아 있으며 전체검사 성공으로 표현하지 않는다.
 - 운영 DB에서 rollback 원문동일, ACL/설정/소유자/기존 창 전체행 보존을 검증한 후155000을 적용했다. 함수 MD5 5860bd7a48c16efc00df85cc38073f35. 적용된 migration 이름/원문 해시는 별도 재조회했다. 로컬 활성 작업은0까지 정상 감소했으며 강제종료하지 않았다.
 - Shopee SG는 저장된 access가 만료됐고, 이전 갱신의 provider 응답·준비 checkpoint가 없으며 lease도 만료됐다. 새 로그인을 반복하거나 미확정 fence를 지우지 않았다. 기존 Open Platform의 해당 요청 기록 확인이 다음 단계다.
+
+
+## 2026-09-14 12:07 KST — 통합 운영 반영 및 Aside 저장 확인
+
+- 코드 f697591fb447c82f569e5d113061c064cc792413를 양쪽 integration-aside에 푸시했다. Vercel dpl_CU7fNgY3ysDHE2zm5ixcBoVrB9JA 빌드READY 후 후보6개 canary, 기존일정 deactivate, 운영승격, 운영6개 canary 및 Supabase activation을 완료했다. 모든 canary는 신규업무 실행0이다.
+- 기존23개 상품등록/분류 로컬경로는 신원·권한·승인 조건을 보존하고 release만 갱신했다. 8개 adapter/등록gate 활성SHA가 일치한다. Mac은 활성작업0에서 SIGTERM 정상종료 후 동일SHA로 재시작했고 ready/HTTP200 및 최신gateway접촉을 확인했다. AI이미지 실행본은 기능변경이 없어 유지했다.
+- Aside의 관리자확인 지연은 기존탭 reload 후 상품화면 접근이 정상화됐다. DB권한상실/일반Supabase장애 증거가 없어 인증코드를 임의수정하지 않았다.
+- 새11번가필드에 출고지2/반품지3을 입력하고 페이지복귀 후 보존 확인했다. eBay v211 대상 정책3개/재고위치와 검토된 영어본문2개를 입력했다. UI문자열 정확일치 및 DB초안v49의 두본문2231자/동일MD5 fbfdc0bd9c41d89a24e57853ec708bbd, 4정책/위치값, 11번가주소2/3 저장을 확인했다.
+- Shopee 기존로그인 Open Platform의 API Access Log에서 Partner2031489와 /api/v2/auth/access_token/get,09:54:21~11:57:21KST를 조회했으나 응답완료 증거를 얻지 못했다. 화면의 초기0건을 해당갱신요청 부재로 판정하지 않는다. 새로그인/새refresh/미확정fence초기화는 하지 않았다.
+- 판매배송/반품비 질문은 미응답이다. 11번가라벨은 앞서실제6장확인완료했지만 현재reload후 입력선택재확인이 필요하다. 최종승인/등록을 이미수행한것으로 표현하지 않는다. 신규게시0/8, 카테고리6/8을 유지한다.
