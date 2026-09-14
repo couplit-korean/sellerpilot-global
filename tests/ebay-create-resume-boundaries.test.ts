@@ -278,3 +278,34 @@ for (const dropPhase of ["inventory", "offer", "publish"] as const) {
     }
   });
 }
+
+for (const [status, errorId, expectedRemoteId] of [[400, 25718, undefined], [503, 25718, sku], [400, 25002, sku]] as const) {
+  test(`eBay inventory rejection ${status}/${errorId} preserves the correct remote-identity boundary`, async () => {
+    const original = globalThis.fetch;
+    const writes: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const configured = configResponse(url, {
+        returnPolicyId: "r1", name: "Return", marketplaceId: "EBAY_US",
+        returnsAccepted: true, returnPeriod: { value: 30, unit: "DAY" }, returnShippingCostPayer: "BUYER",
+      });
+      if (configured) return configured;
+      if (method !== "GET") writes.push(`${method} ${url.pathname}`);
+      if (url.pathname.includes("/inventory_item/") && method === "GET") return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 404 });
+      if (url.pathname.endsWith("/offer") && method === "GET") return Response.json({ total: 0, offers: [] });
+      if (url.pathname.includes("/inventory_item/") && method === "PUT") {
+        return Response.json({ errors: [{ errorId, domain: "API_INVENTORY", category: "Request", message: "Invalid description", parameters: [{ name: "description", value: "too long" }] }] }, { status });
+      }
+      throw Error(`Unexpected ${method} ${url.pathname}`);
+    };
+    try {
+      const result = await execute();
+      assert.equal(result.ok, false);
+      assert.equal(result.remoteId, expectedRemoteId);
+      assert.deepEqual(writes, [`PUT /sell/inventory/v1/inventory_item/${sku}`]);
+      assert.equal(result.steps.at(-1)?.name, "inventory-item");
+      assert.equal(result.steps.some((step) => step.name === "offer" || step.name === "publish"), false);
+    } finally { globalThis.fetch = original; }
+  });
+}

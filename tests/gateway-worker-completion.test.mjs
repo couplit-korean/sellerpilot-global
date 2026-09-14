@@ -145,8 +145,8 @@ test("worker and route wire the bounded error, private journal, and value-free d
   assert.ok((worker.match(/error: boundedGatewayCompletionError\(/gu) ?? []).length >= 2);
   assert.match(contract, /status: z\.literal\("reconciliation_required"\),[\s\S]{0,160}error: z\.string\(\)\.min\(1\)\.max\(500\)/u);
   assert.match(route, /payloadBytes/u);
-  assert.match(route, /path:\s*issue\.path/u);
-  assert.match(route, /code:\s*issue\.code/u);
+  assert.match(route, /safeCompletionSchemaIssues\(error\.issues\)/u);
+  assert.match(route, /code: gatewayCompletionSchemaErrorCode/u);
   assert.match(commerceCompletion, /completionStatus: repairCompletion\.data\.status/u);
   assert.match(commerceCompletion, /durableEvidenceStored: repairCompletion\.data\.status === "verification_queued"/u);
   assert.doesNotMatch(route, /console\.error\([^\n]*parsed\.error/u);

@@ -1,6 +1,7 @@
 import { processShippingGatewayJob } from "./shipping-gateway-job.mjs";
 import { AI_HEARTBEAT_INTERVAL_MS, AI_HEARTBEAT_TRANSIENT_GRACE_MS, requestWithTransientRetry, WORKER_COMPLETION_TRANSIENT_GRACE_MS, WorkerRequestTerminalError } from "./worker-lifecycle-retry.mjs";
 import { processCsGatewayJob } from "./cs-gateway-job.mjs";
+import { gatewayCompletionFailureLog, readCompletionSchemaDiagnostic } from "../lib/worker-completion-diagnostics.ts";
 import { processCommerceGatewayJob, processElevenstCreateRecoveryDrain } from "./commerce-gateway-job.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -457,9 +458,10 @@ do {
                             const status = error instanceof WorkerRequestTerminalError
                                 ? error.status
                                 : Number(/\bHTTP (\d{3})\b/u.exec(String(error?.message ?? ""))?.[1] ?? 0);
-                            console.error("채널 작업 완료를 확정하지 못했습니다. 원장 확인이 필요합니다.", {
-                                channel: gatewayJob.channel, operation: gatewayJob.operation, status,
-                            });
+                            console.error("채널 작업 완료를 확정하지 못했습니다. 원장 확인이 필요합니다.", gatewayCompletionFailureLog({
+                                jobId: gatewayJob.id, channel: gatewayJob.channel, operation: gatewayJob.operation, status,
+                                diagnostic: error?.completionSchemaDiagnostic,
+                            }));
                         }).finally(() => {
                             activeGatewayJobs.delete(activeGatewayJob);
                             gatewayWorkerHealth?.setActiveGatewayJobs(activeGatewayJobs.size);
@@ -600,9 +602,15 @@ function createGatewayHeartbeat(jobId, claimToken) {
 
 async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_COMPLETION_TRANSIENT_GRACE_MS) {
   const requestBody = JSON.stringify(payload);
+  let completionSchemaDiagnostic = null;
   try {
     return await requestWithTransientRetry({
-      request: () => api(path, { method: "POST", body: requestBody }),
+      request: async () => {
+        const response = await api(path, { method: "POST", body: requestBody });
+        if (path === "/api/channel-gateway/worker/complete" && response.status === 400)
+          completionSchemaDiagnostic = await readCompletionSchemaDiagnostic(response);
+        return response;
+      },
       delay,
       graceMs,
       terminalStatuses: [401, 409],
@@ -612,6 +620,9 @@ async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_CO
       },
     });
   } catch (error) {
+    // Keep retry/status semantics unchanged. Only this sanitized, bounded
+    // diagnostic is carried to the job-specific outer error log.
+    if (error instanceof Error && completionSchemaDiagnostic) error.completionSchemaDiagnostic = completionSchemaDiagnostic;
     if (error instanceof WorkerRequestTerminalError && error.status === 401) {
       deferWorkerScope(workerScopeForPath(path));
     }

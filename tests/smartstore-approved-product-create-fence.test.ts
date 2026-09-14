@@ -37,7 +37,54 @@ const {
 const {
   attachSmartstoreListingCreateExecuteTransport,
   bindSmartstoreListingCreateSourceIdentity,
+  smartstoreCreateSourceErrorResponse,
 } = await import("../lib/server-smartstore-listing-create-binding");
+
+test("SmartStore source failures expose only the eight exact safe codes", () => {
+  const codes = [
+    "SMARTSTORE_CREATE_SOURCE_SNAPSHOT_INVALID",
+    "SMARTSTORE_CREATE_PRODUCT_NOT_READY",
+    "SMARTSTORE_CREATE_SELLER_CODE_INVALID",
+    "SMARTSTORE_CREATE_SOURCE_REVISION_MISMATCH",
+    "SMARTSTORE_CREATE_COMMERCIAL_SOURCE_MISMATCH",
+    "SMARTSTORE_CREATE_SELLER_CODE_MISMATCH",
+    "SMARTSTORE_CREATE_EXISTING_LISTING_REQUIRES_UPDATE",
+    "SMARTSTORE_CREATE_TRANSPORT_BODY_INVALID",
+  ];
+  const messages = new Set<string>();
+  for (const code of codes) {
+    const response = smartstoreCreateSourceErrorResponse(new Error(code));
+    assert.equal(response.code, code);
+    assert.match(response.message, /스마트스토어/u);
+    messages.add(response.message);
+  }
+  assert.equal(messages.size, codes.length);
+  assert.match(smartstoreCreateSourceErrorResponse(new Error(codes[4])).message, /상품명·채널 상품명·판매가·재고/u);
+});
+
+test("SmartStore unknown or decorated errors never expose raw error or prototype values", () => {
+  const fallback = smartstoreCreateSourceErrorResponse(null);
+  for (const error of [
+    new Error("SMARTSTORE_CREATE_COMMERCIAL_SOURCE_MISMATCH token=secret-value"),
+    new Error("secret-value"), new Error("toString"), new Error("__proto__"),
+    { message: "SMARTSTORE_CREATE_PRODUCT_NOT_READY", token: "secret-value" },
+    "SMARTSTORE_CREATE_PRODUCT_NOT_READY", undefined,
+  ]) {
+    assert.deepEqual(smartstoreCreateSourceErrorResponse(error), fallback);
+    assert.doesNotMatch(JSON.stringify(smartstoreCreateSourceErrorResponse(error)), /secret-value/u);
+  }
+});
+
+test("SmartStore route preserves category blockers and uses the safe source mapper", async () => {
+  const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+  const start = route.indexOf("if (error instanceof SmartstoreCreateCategorySourceError)");
+  const catchBody = route.slice(start, route.indexOf('if (channel === "temu" && operation === "listing.create")', start));
+  assert.match(catchBody, /blocker: error\.blocker/u);
+  assert.match(catchBody, /\.\.\.smartstoreCreateSourceErrorResponse\(error\)/u);
+  assert.doesNotMatch(catchBody, /message: error\.message/u);
+  assert.match(catchBody, /providerWritePerformed: false/u);
+  assert.match(catchBody, /jobCreated: false/u);
+});
 
 const productId = "20000000-0000-4000-8000-000000000001";
 const ownerId = "20000000-0000-4000-8000-000000000002";

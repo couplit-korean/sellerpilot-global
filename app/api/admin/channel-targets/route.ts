@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
+import { ChannelGatewayInProgressError, executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
+import { completeExistingShopeeDiscovery } from "../../../../lib/product-registration/shopee/discovery-job-completion";
 import {
   activeLazadaSellerIdForMarket,
   activeProductionLazadaCredentialEnvelope,
@@ -175,6 +176,16 @@ export async function GET(request: Request) {
           credentialVersion: envelope.version,
           targets: [exactTarget.target],
         }, { headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      try {
+        const completed = await completeExistingShopeeDiscovery({ actorId: userData.user.id, snapshot: envelope,
+          targetId: exactShopeeTarget.data.targetId, rpc: (name, args) => serviceClient.rpc(name, args) });
+        if (completed) return NextResponse.json(completed.body, { status: completed.status, headers: { "cache-control": "no-store, max-age=0" } });
+      } catch {
+        return NextResponse.json({ channel: "shopee", credentialId: envelope.credentialId,
+          code: "SHOPEE_TARGET_DISCOVERY_READ_UNAVAILABLE", pending: true, targets: [],
+          message: "기존 숍 조회의 결과 확인이 지연되고 있습니다. 새 조회를 전송하지 않습니다.",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
       return NextResponse.json({
         code: exactTarget.reason,
@@ -509,6 +520,9 @@ export async function POST(request: Request) {
       if (!initialShopeeSnapshot || !parsed.data.targetId || parsed.data.marketCode !== "SG") {
         throw new Error("SHOPEE_EXACT_TARGET_SELECTION_REQUIRED");
       }
+      const existing = await completeExistingShopeeDiscovery({ actorId: userData.user.id, snapshot: initialShopeeSnapshot,
+        targetId: parsed.data.targetId, rpc: (name, args) => serviceClient.rpc(name, args) });
+      if (existing) return NextResponse.json(existing.body, { status: existing.status, headers: { "cache-control": "no-store, max-age=0" } });
       const result = await executeChannelTargetDiscovery({
         serviceClient,
         credentialId: initialShopeeSnapshot.credentialId,
@@ -645,6 +659,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ channel: "lazada", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
   } catch (error) {
     if (parsed.data.channel === "shopee") {
+      if (error instanceof ChannelGatewayInProgressError) return NextResponse.json({
+        channel: "shopee", credentialId: credential.id, targets: [], jobId: error.jobId,
+        code: "SHOPEE_TARGET_DISCOVERY_PENDING", pending: true,
+        message: "기존 숍 조회 작업이 처리 중입니다. 같은 숍의 상태 확인은 새 조회를 전송하지 않습니다.",
+      }, { status: 202, headers: { "cache-control": "no-store, max-age=0" } });
       const unsafeCode = error instanceof Error ? error.message : "";
       const safeCodes = new Set([
         "SHOPEE_EXACT_TARGET_SELECTION_REQUIRED",

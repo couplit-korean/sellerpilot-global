@@ -52,6 +52,16 @@ test("uncertain sync stays pending and its next click is GET only", async () => 
   assert.deepEqual(retry.calls.map((call) => call.init?.method), ["GET"]);
 });
 
+test("server finds an existing job after reload and suppresses POST even without local pending state", async () => {
+  for (const status of [202, 409, 503]) {
+    const existing = mock([Response.json({ channel: "shopee", credentialId: oldId, pending: true,
+      code: "SHOPEE_TARGET_DISCOVERY_PENDING", message: "기존 조회 처리 중" }, { status })]);
+    const result = await syncExistingShopeeTarget({ ...input, fetcher: existing.fetcher });
+    assert.equal(result.pending, true);
+    assert.deepEqual(existing.calls.map(call => call.init?.method), ["GET"]);
+  }
+});
+
 test("unauthorized targets and mismatched readback never become ready", async () => {
   const denied = mock([Response.json({ channel: "shopee", credentialId: oldId, code: "SHOPEE_TARGET_NOT_AUTHORIZED" }, { status: 409 })]);
   assert.equal((await syncExistingShopeeTarget({ ...input, fetcher: denied.fetcher })).target, null);

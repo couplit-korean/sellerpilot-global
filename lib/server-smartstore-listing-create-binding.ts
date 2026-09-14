@@ -6,6 +6,30 @@ import {
 
 type UnknownRecord = Record<string, unknown>;
 
+const smartstoreCreateSourceErrorMessages = {
+  SMARTSTORE_CREATE_SOURCE_SNAPSHOT_INVALID: "현재 상품·판매 계정·승인 정보의 서버 확인 자료가 유효하지 않아 스마트스토어 등록을 시작하지 않았습니다. 상품 정보를 다시 조회해 주세요.",
+  SMARTSTORE_CREATE_PRODUCT_NOT_READY: "선택 상품의 준비 상태 또는 상품·판매 계정 연결이 현재 원장과 일치하지 않아 스마트스토어 등록을 시작하지 않았습니다.",
+  SMARTSTORE_CREATE_SELLER_CODE_INVALID: "상품 원장의 확정 판매자 SKU가 없거나 유효하지 않아 스마트스토어 등록을 시작하지 않았습니다. 원장의 판매자 SKU를 확인해 주세요.",
+  SMARTSTORE_CREATE_SOURCE_REVISION_MISMATCH: "현재 상세페이지 승인 버전 또는 승인 이미지 정보가 서버 확인 자료와 달라 스마트스토어 등록을 시작하지 않았습니다. 최신 상세페이지 승인을 확인해 주세요.",
+  SMARTSTORE_CREATE_COMMERCIAL_SOURCE_MISMATCH: "등록할 상품명·채널 상품명·판매가·재고 중 현재 상품 원장의 확정값과 다른 항목이 있어 스마트스토어 등록을 시작하지 않았습니다. 두 상품명과 판매가·재고를 원장 기준으로 확인해 주세요.",
+  SMARTSTORE_CREATE_SELLER_CODE_MISMATCH: "등록 요청의 판매자 SKU가 상품 원장의 확정 SKU와 달라 스마트스토어 등록을 시작하지 않았습니다.",
+  SMARTSTORE_CREATE_EXISTING_LISTING_REQUIRES_UPDATE: "같은 판매 대상에 이미 등록된 스마트스토어 상품이 있어 신규 등록을 시작하지 않았습니다. 기존 상품 수정으로 진행해 주세요.",
+  SMARTSTORE_CREATE_TRANSPORT_BODY_INVALID: "서버에서 준비한 스마트스토어 등록 본문의 검증이 완료되지 않아 등록을 시작하지 않았습니다. 등록 요청을 다시 준비해 주세요.",
+} as const;
+
+/** Only exact internal codes are public; arbitrary error text may contain secrets. */
+export function smartstoreCreateSourceErrorResponse(error: unknown) {
+  const code = error instanceof Error ? error.message : "";
+  if (Object.hasOwn(smartstoreCreateSourceErrorMessages, code)) {
+    const safeCode = code as keyof typeof smartstoreCreateSourceErrorMessages;
+    return { code: safeCode, message: smartstoreCreateSourceErrorMessages[safeCode] };
+  }
+  return {
+    code: "SMARTSTORE_CREATE_SOURCE_IDENTITY_INVALID",
+    message: "스마트스토어 등록 정보와 현재 상품 원장의 연결을 확인하지 못해 등록을 시작하지 않았습니다. 상품 정보를 다시 조회해 주세요.",
+  };
+}
+
 function record(value: unknown): UnknownRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { gatewayWorkerCompletionSchema } from "../../../../../lib/channels/gateway-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import { createBoundedSupabaseFetch, workerRpcErrorMessage, workerRpcErrorStatus } from "../../../../../lib/worker-rpc";
+import { gatewayCompletionSchemaErrorCode, safeCompletionSchemaIssues } from "../../../../../lib/worker-completion-diagnostics";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,10 +24,7 @@ function completionPayloadBytes(value: unknown) {
 }
 
 function completionSchemaDiagnostics(error: z.ZodError) {
-  return error.issues.slice(0, 12).map((issue) => ({
-    path: issue.path,
-    code: issue.code,
-  }));
+  return safeCompletionSchemaIssues(error.issues);
 }
 
 export async function POST(request: Request) {
@@ -46,11 +44,15 @@ export async function POST(request: Request) {
   const completionPayload = await request.json().catch(() => null);
   const parsed = gatewayWorkerCompletionSchema.safeParse(completionPayload);
   if (!parsed.success) {
+    const diagnostics = { code: gatewayCompletionSchemaErrorCode, issues: completionSchemaDiagnostics(parsed.error) };
+    const jobId = z.string().uuid().safeParse(completionPayload?.jobId);
     console.error("channel gateway completion payload rejected", {
+      jobId: jobId.success ? jobId.data : "unknown",
+      recordedAt: new Date().toISOString(),
       payloadBytes: completionPayloadBytes(completionPayload),
-      issues: completionSchemaDiagnostics(parsed.error),
+      ...diagnostics,
     });
-    return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
+    return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다.", ...diagnostics }, { status: 400 });
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {

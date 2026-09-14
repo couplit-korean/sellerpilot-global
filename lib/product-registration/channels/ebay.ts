@@ -416,7 +416,24 @@ export async function executeEbay(input: ExecuteInput) {
         body: inventoryItem,
       });
       steps.push(step("inventory-item", itemRemote));
-      if (!itemRemote.response.ok) return result(input, steps, rawSku);
+      if (!itemRemote.response.ok) {
+        // A request SKU is not a remote listing identity. Only this explicit
+        // validation rejection after both absence checks proves that neither
+        // inventory creation nor the subsequent offer/publish began.
+        const errors = itemRemote.data.errors;
+        const rejectedDescriptionBeforeCreate = itemRemote.response.status === 400
+          && !lineage.inventoryPresent && !lineage.offerId
+          && lineage.code === "EBAY_INVENTORY_AND_OFFER_ABSENT"
+          && Array.isArray(errors) && errors.length === 1
+          && errors.every((error) => error && typeof error === "object"
+            && !Array.isArray(error)
+            && error.errorId === 25718 && error.domain === "API_INVENTORY"
+            && error.category === "Request"
+            && Array.isArray(error.parameters)
+            && error.parameters.some((parameter: unknown) => parameter && typeof parameter === "object"
+              && !Array.isArray(parameter) && "name" in parameter && parameter.name === "description"));
+        return result(input, steps, rejectedDescriptionBeforeCreate ? undefined : rawSku);
+      }
       itemReadback = await ebayRequest({
         payload: input.payload,
         environment: input.environment,

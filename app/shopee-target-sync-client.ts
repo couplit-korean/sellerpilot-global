@@ -28,6 +28,12 @@ export async function syncExistingShopeeTarget({ accessToken, selection, checkOn
   const before = await request("GET");
   const ready = before.response.ok ? exactShopeeTargetFromPayload(before.body, target) : null;
   if (ready) return { target: ready, pending: false, message: "기존 연결의 숍 국가·언어 정보를 확인했습니다." };
+  // Server discovers the already enqueued job even after a reload/lost POST
+  // response. Its pending/blocked result must never cause another POST.
+  if (before.body?.channel === "shopee" && before.body.pending === true) return {
+    target: null, pending: true,
+    message: typeof before.body.message === "string" ? before.body.message : "기존 숍 조회의 완료를 확인하고 있습니다.",
+  };
   if (checkOnly) return { target: null, pending: true, message: "앞선 동기화의 완료를 아직 확인하지 못했습니다. 상태 확인은 새 동기화를 전송하지 않습니다." };
   const credentialId = typeof before.body?.credentialId === "string" ? before.body.credentialId : "";
   if (before.response.status !== 409 || before.body?.channel !== "shopee"

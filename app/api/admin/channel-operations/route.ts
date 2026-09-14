@@ -60,6 +60,7 @@ import { bindSmartstoreManualAdoptionUpdateArguments, hasClientSmartstoreManualA
 import {
   attachSmartstoreListingCreateExecuteTransport,
   bindSmartstoreListingCreateSourceIdentity,
+  smartstoreCreateSourceErrorResponse,
 } from "../../../../lib/server-smartstore-listing-create-binding";
 import { bindSmartstoreCreateCategoryAttributesFromServerSource, SmartstoreCreateCategorySourceError } from "../../../../lib/server-smartstore-category-attribute-binding";
 import { smartstoreContentRepairArgument, smartstoreContentRepairTransmissionArgument } from "../../../../lib/channels/smartstore-content-repair-contract";
@@ -1534,7 +1535,7 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
       return NextResponse.json({
-        message: "선택 상품의 준비 상태와 확정 판매자 SKU를 현재 상품 원장에 결속하지 못해 스마트스토어 등록을 시작하지 않았습니다.",
+        ...smartstoreCreateSourceErrorResponse(error),
         mode: "smartstore_listing_create_source_identity_invalid",
         providerWritePerformed: false,
         jobCreated: false,
