@@ -1,5 +1,6 @@
 import type { ActiveChannelKey } from "./channels/catalog";
 import type { ListingRequirement } from "./channels/listing-preflight";
+import { elevenstProcessedFoodNotificationFields, isElevenstProcessedFoodCategory } from "./channels/elevenst-listing";
 export type RegistrationRequirement = Omit<ListingRequirement, "source"> & { source: string };
 export type RegistrationValue = string | number | boolean | null | RegistrationValue[] | { [key: string]: RegistrationValue };
 export type RegistrationPatch = { path: string[]; value: RegistrationValue };
@@ -162,7 +163,12 @@ export function applyRegistrationPatches(base: Record<string,unknown>, patches: 
 }
 export function channelRegistrationFields(channel: ActiveChannelKey,draft: Record<string,unknown>,requirements: RegistrationRequirement[]): RegistrationField[] {
   const fields=new Map<string,RegistrationField>();
+  const elevenstFood = channel === "elevenst" && isElevenstProcessedFoodCategory(registrationValueAt(draft,["product","dispCtgrNo"]));
   const walk=(value: unknown,path: string[],depth=0)=>{
+    // Official notice codes/type and no-certificate group codes are a category
+    // contract, not user-entered product facts. Edit only the labelled values.
+    if(elevenstFood && path[0]==="product" && (path[1]==="ProductCertGroup"
+      || (path[1]==="ProductNotification" && (path.at(-1)==="code" || path.at(-1)==="type")))) return;
     if(depth>16 || (path.length && !editableRegistrationPath(path)) || (channel === "coupang" && (path.includes("notices") || path.includes("noticeContent") || path.includes("coupangOptionRows")))) return;
     if(Array.isArray(value)) value.forEach((child,index)=>walk(child,[...path,String(index)],depth+1));
     else if(value && typeof value==="object") Object.entries(value).forEach(([key,child])=>walk(child,[...path,key],depth+1));
@@ -174,6 +180,17 @@ export function channelRegistrationFields(channel: ActiveChannelKey,draft: Recor
     if(!path || !editableRegistrationPath(path) || (channel==="coupang" && requirement.key==="notices")) continue;
     const value=registrationValueAt(draft,path);
     fields.set(JSON.stringify(path),{path,label:requirement.label,value:(value==="SERVER_MANAGED"?null:value??null) as RegistrationValue,required:requirement.status!=="runtime",issue:requirement.status==="manual"?"필수값을 확인해 주세요.":undefined,help:requirement.help,inputType:requirement.inputType,options:requirement.options,...(requirement.key==="unit-indication"?{options:["g","kg","ml","L","cm","m","개","개입","매","매입","정","캡슐","구미","포","구"]}:{})});
+  }
+  if(elevenstFood) {
+    const items=registrationValueAt(draft,["product","ProductNotification","item"]);
+    if(Array.isArray(items)) items.forEach((item,index)=>{
+      if(!item || typeof item!=="object") return;
+      const official=elevenstProcessedFoodNotificationFields.find(field=>field.code===item.code);
+      if(!official) return;
+      const path=["product","ProductNotification","item",String(index),"name"];
+      const key=JSON.stringify(path), existing=fields.get(key);
+      if(existing) fields.set(key,{...existing,label:`가공식품 고시 · ${official.label}`});
+    });
   }
   return [...fields.values()];
 }

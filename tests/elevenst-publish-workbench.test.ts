@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildChannelArguments, normalizeManualFields } from "../app/product-publish-workbench";
 import { validateElevenstListingProduct } from "../lib/channels/elevenst-listing";
 import { inspectListingDraft } from "../lib/channels/listing-preflight";
+import { channelRegistrationFields, applyRegistrationPatches } from "../lib/channel-registration-form";
 
 type WorkbenchContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -144,6 +145,28 @@ test("11st processed-food leaf maps the official 891031 notice fields without ch
   ]);
 });
 
+test("11st cider food notices are editable by official labels, preserve category and never invent missing facts", () => {
+  const context = publishContext({ categoryId: "1009792", providedAttributes: processedFoodAttributes });
+  context.manualFields.productName = "나랑드사이다 제로 500ml 1병";
+  const draft = elevenstDraft(context);
+  assert.equal(draft.product.dispCtgrNo, "1009792");
+  assert.doesNotThrow(() => validateElevenstListingProduct(draft.product));
+  const fields = channelRegistrationFields("elevenst", draft, inspectListingDraft("elevenst", draft));
+  const notices = fields.filter(field => field.label.startsWith("가공식품 고시 ·"));
+  assert.equal(notices.length, 11);
+  assert.equal(fields.some(field => field.path.includes("ProductCertGroup") || field.path.includes("ProductNotification") && ["code", "type"].includes(field.path.at(-1)!)), false);
+  const ingredients = notices.find(field => field.label.includes("원재료명"))!;
+  const changed = applyRegistrationPatches(draft, [{ path: ingredients.path, value: "라벨에서 확인한 원재료" }]);
+  assert.equal((changed.product as typeof draft.product).dispCtgrNo, "1009792");
+  const notice = (changed.product as typeof draft.product).ProductNotification as {type:string;item:Array<{code:string;name:string}>};
+  assert.equal(notice.type, "891031");
+  assert.equal(notice.item.find(item => item.code === "23757245")?.name, "라벨에서 확인한 원재료");
+  assert.doesNotThrow(() => validateElevenstListingProduct(changed.product));
+  const missing = elevenstDraft(publishContext({ categoryId: "1009792" }));
+  assert.equal(inspectListingDraft("elevenst", missing).filter(field => field.key.startsWith("food-notice-") && field.status === "manual").length, 10);
+  assert.throws(() => validateElevenstListingProduct(missing.product));
+});
+
 test("11st processed-food preflight exposes and blocks unconfirmed expiry, GMO, nutrition, and phone", () => {
   const providedAttributes = { ...processedFoodAttributes };
   delete providedAttributes["notification:176398001"];
@@ -183,7 +206,7 @@ test("11st category contract no longer depends on a QA-prefixed seller SKU", () 
   assert.deepEqual(qaPrefixed.product.ProductCertGroup, production.product.ProductCertGroup);
 });
 
-test("11st categories outside the two verified leaves cannot inherit guessed notice or certification metadata", () => {
+test("11st categories outside the verified leaves cannot inherit guessed notice or certification metadata", () => {
   const draft = elevenstDraft(publishContext({
     categoryId: "1341822",
     providedAttributes: {

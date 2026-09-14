@@ -8,7 +8,7 @@ import { ChannelLinkBadge } from "./channel-link-badge";
 import { ShopeeTargetSync } from "./shopee-target-sync";
 import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
 import {
-  elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
   elevenstProcessedFoodNotificationFields,
   elevenstProcessedFoodProductNameNoticeCode,
 } from "../lib/channels/elevenst-listing";
@@ -1054,7 +1054,7 @@ function appendChannelRequiredAttributes(
   categoryId: string,
   providerAttributes: CategoryAttribute[],
 ) {
-  if (channel !== "elevenst" || categoryId !== elevenstProcessedFoodCategoryId) return providerAttributes;
+  if (channel !== "elevenst" || !isElevenstProcessedFoodCategory(categoryId)) return providerAttributes;
   const explicitFoodNotices: CategoryAttribute[] = elevenstProcessedFoodNotificationFields
     .filter((field) => field.code !== elevenstProcessedFoodProductNameNoticeCode)
     .map((field) => ({
@@ -1113,6 +1113,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const targetSelectionCoordinatorRef = useRef(new CategoryTargetSelectionCoordinator());
   const categoryOperationAbortRef = useRef(new AbortController());
   const categoryOperationsRef = useRef(new Map<string, Promise<OperationPayload>>());
+  const categoryConfirmationsRef = useRef(new Set<string>());
+  const [confirmationProgress, setConfirmationProgress] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1558,6 +1560,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
 
   const confirm = async (channel: ActiveChannelKey) => {
     const key = stateKey(channel);
+    const confirmationKey = `${productId}:${key}`;
+    if (categoryConfirmationsRef.current.has(confirmationKey)) return;
     const state = states[key];
     const credential = activeCredential.get(channel);
     const target = selectedTarget(channel);
@@ -1588,7 +1592,15 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     // that every other Shopee market accepts the same values. Persist only the
     // target the seller reviewed; the other markets keep independent states.
     const assignmentTargets = categoryConfirmationTargets(target);
-    const results = await Promise.all(assignmentTargets.map((assignmentTarget) => createClient().rpc("sellerpilot_save_product_category_assignment", {
+    const parentSignal = categoryOperationAbortRef.current.signal;
+    const bounded = createBoundedRequestSignal(parentSignal, 240_000,
+      "저장 확인 대기 시간이 초과되었습니다. 서버의 공식 속성 조회가 계속될 수 있으므로 작업 상태를 확인해 주세요.");
+    let stage = "카테고리와 입력 속성 저장 중";
+    categoryConfirmationsRef.current.add(confirmationKey);
+    setConfirmationProgress((current) => ({ ...current, [confirmationKey]: stage }));
+    setStates((current) => ({ ...current, [key]: { ...(current[key] ?? state), error: undefined } }));
+    try {
+    const results = await waitForAbortablePromise(Promise.all(assignmentTargets.map((assignmentTarget) => createClient().rpc("sellerpilot_save_product_category_assignment", {
       p_product_id: productId,
       p_source_ref: sourceRef,
       p_product_name: productName,
@@ -1628,46 +1640,64 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         } : {}),
       },
       p_confirm: true,
-    })));
-    if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
+    }))), bounded.signal);
+    if (results.some((result) => result.error)) throw new Error("카테고리 확정값을 저장하지 못했습니다. DB와 관리자 권한을 확인해 주세요.");
     if (channel === "smartstore") {
+      stage = "입력 속성 저장 완료 · 스마트스토어 계정 연결 확인 중";
+      setConfirmationProgress((current) => ({ ...current, [confirmationKey]: stage }));
       const supabase = createClient();
-      const [{ data: sessionData }, { data: credentialRows }] = await Promise.all([
+      const [{ data: sessionData }, { data: credentialRows }] = await waitForAbortablePromise(Promise.all([
         supabase.auth.getSession(),
         supabase.rpc("sellerpilot_list_credentials"),
-      ]);
+      ]), bounded.signal);
       const currentCredential = selectActiveProductionCredential(
         credentialRows,
         "smartstore",
       );
       if (!currentCredential || !sessionData.session?.access_token) {
-        notify("현재 스마트스토어 production credential과 관리자 세션을 확인하지 못했습니다.");
-        return;
+        throw new Error("현재 스마트스토어 production credential과 관리자 세션을 확인하지 못했습니다.");
       }
-      const sourceResponse = await fetch(
+      stage = "입력 속성 저장 완료 · 스마트스토어 공식 속성 원본 확인 중 (최대 3분)";
+      setConfirmationProgress((current) => ({ ...current, [confirmationKey]: stage }));
+      const sourceResponse = await waitForAbortablePromise(fetch(
         `/api/admin/products/${encodeURIComponent(productId)}/smartstore-create-category-source`,
         {
           method: "POST",
+          signal: bounded.signal,
           headers: {
             "content-type": "application/json",
             authorization: `Bearer ${sessionData.session.access_token}`,
           },
           body: JSON.stringify({ credentialId: currentCredential.id }),
         },
-      );
-      const sourcePayload = await sourceResponse.json().catch(() => null) as {
+      ), bounded.signal);
+      const sourcePayload = await waitForAbortablePromise(sourceResponse.json().catch(() => null), bounded.signal) as {
         sourceReady?: boolean;
         message?: string;
       } | null;
       if (!sourceResponse.ok || sourcePayload?.sourceReady !== true) {
-        notify(sourcePayload?.message
-          ?? "스마트스토어 공식 카테고리 속성 원본을 저장하지 못했습니다. 다시 확정해 주세요.");
-        return;
+        throw new Error(sourcePayload?.message
+          ?? `스마트스토어 공식 속성 확인이 완료되지 않았습니다 (HTTP ${sourceResponse.status}). 작업 상태를 확인해 주세요.`);
       }
     }
-    setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
+    if (parentSignal.aborted) return;
+    setStates((current) => ({ ...current, [key]: { ...(current[key] ?? state), phase: "confirmed", error: undefined } }));
     onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} ${categoryMarketCode(channel, assignmentTargets[0]?.marketCode)} 카테고리와 입력한 전체 속성을 확정했습니다.`);
+    } catch (error) {
+      if (parentSignal.aborted) return;
+      const message = `${stage}: ${error instanceof Error ? error.message : "저장 요청의 결과를 확인하지 못했습니다."}`;
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? state), phase: "error", error: message } }));
+      notify(message);
+    } finally {
+      bounded.dispose();
+      categoryConfirmationsRef.current.delete(confirmationKey);
+      setConfirmationProgress((current) => {
+        const next = { ...current };
+        delete next[confirmationKey];
+        return next;
+      });
+    }
   };
 
   return <section className="panel category-workbench">
@@ -1690,7 +1720,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       const target = selectedTarget(channel);
       const key = stateKey(channel);
       const state = states[key] ?? initialState();
-      const busy = state.phase === "suggesting" || state.phase === "inspecting";
+      const saving = confirmationProgress[`${productId}:${key}`];
+      const busy = Boolean(saving) || state.phase === "suggesting" || state.phase === "inspecting";
       const applicableAttributes = state.attributes.filter((attribute) => categoryAttributeApplies(attribute, state.values));
       const supportedAttributes = applicableAttributes.filter((attribute) => attribute.inputKind !== "unsupported");
       const unsupportedAttributes = applicableAttributes.filter((attribute) => attribute.inputKind === "unsupported");
@@ -1713,7 +1744,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         </header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select">
           <span>등록 국가·언어</span>
-          <select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = targets[channel]?.find((item) => item.marketCode === event.target.value); if (nextTarget) void changeSelectedMarket(channel, nextTarget); }}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>
+          <select disabled={Boolean(saving)} value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = targets[channel]?.find((item) => item.marketCode === event.target.value); if (nextTarget) void changeSelectedMarket(channel, nextTarget); }}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>
           <small>{channel === "shopee" ? "각 국가·숍을 따로 검증하고 저장합니다." : channel === "ebay" ? "선택 국가의 공식 category tree를 조회합니다." : "선택 국가의 공식 카테고리 메타를 조회합니다."}</small>
         </label>}
         {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} /><span>{targetErrors[channel]}</span><button type="button" disabled={loadingCredentials} onClick={() => setBootstrapVersion((current) => current + 1)}><RefreshCw className={loadingCredentials ? "spin" : undefined} size={13} />다시 확인</button></p>}
@@ -1742,7 +1773,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           <div className="category-suggestions-toolbar"><small>후보가 맞지 않으면 위 검색어를 고친 뒤 이 채널만 다시 조회하세요.</small><button type="button" disabled={busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}현재 검색어로 다시 추천</button></div>
           {state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}
         </div>}
-        {state.selected && <div className="category-inspection">
+        {state.selected && <fieldset className="category-inspection" disabled={Boolean(saving)} aria-busy={Boolean(saving)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="selected-category">
             <BadgeCheck size={18} />
             <span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}{state.loadedFromAssignment ? " · 저장값 불러옴" : ""}</small></span>
@@ -1759,9 +1790,10 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
             {unsupportedAttributes.length > 0 && <div className="category-attribute-list" role="status"><b>아직 입력할 수 없는 공식 메타 {unsupportedAttributes.length}개</b>{unsupportedAttributes.map((attribute) => <CategoryAttributeField key={attribute.id} attribute={attribute} value={state.values[attribute.id]} onChange={(value) => updateAttributeValue(key, attribute.id, value)} />)}</div>}
             {state.isolatedValues.length > 0 && <p className="category-error"><AlertTriangle size={14} /><span>카테고리 변경과 맞지 않는 이전 값 {state.isolatedValues.reduce((count, item) => count + Object.keys(item.values).length, 0)}개를 자동 적용하지 않고 보관했습니다.</span></p>}
             {issues.length > 0 && <p className="category-error"><AlertTriangle size={14} /><span>{issues.slice(0, 4).map((issue) => issue.label).join(" · ")} 확인이 필요합니다.</span></p>}
-            <button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || issues.length > 0 || metadataRefreshRequired || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리·전체 속성 저장됨</> : metadataRefreshRequired ? "공식 메타 다시 확인 필요" : "카테고리·전체 속성 저장"}</button>
+            {saving && <p className="category-loading" role="status" aria-live="polite"><LoaderCircle className="spin" size={16} />{saving}</p>}
+            <button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={busy || !state.verifiedLeaf || issues.length > 0 || metadataRefreshRequired || state.phase === "confirmed"}>{saving ? <><LoaderCircle className="spin" size={15} />저장 확인 중</> : state.phase === "confirmed" ? <><Check size={15} />카테고리·전체 속성 저장됨</> : metadataRefreshRequired ? "공식 메타 다시 확인 필요" : "카테고리·전체 속성 저장"}</button>
           </>}
-        </div>}
+        </fieldset>}
         {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}
       </article>;
     })}</div>

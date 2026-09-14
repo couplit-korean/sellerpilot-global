@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
   elevenstProcessedFoodNotificationFields,
   elevenstProcessedFoodNoticeType,
   elevenstProcessedFoodProductNameNoticeCode,
@@ -325,7 +325,7 @@ function manualNoticeResolution(
       blocker: blocker(
         "ELEVENST_NOTICE_REQUIREDNESS_TAMPERED",
         `${path}.required`,
-        `${field.label}은 category 1346631의 필수 고시이며 선택 입력으로 낮출 수 없습니다.`,
+        `${field.label}은 현재 가공식품 카테고리의 필수 고시이며 선택 입력으로 낮출 수 없습니다.`,
         { fieldCode: field.code, label: field.label, acceptedSourceKinds },
       ),
     };
@@ -408,8 +408,8 @@ export function resolveElevenstNewProductInput(
   if (input.contract !== elevenstNewProductInputContract) {
     blockers.push(blocker("ELEVENST_NEW_PRODUCT_INPUT_CONTRACT_INVALID", "contract", "11번가 신규 입력 계약 버전이 일치하지 않습니다."));
   }
-  if (input.categoryId !== elevenstProcessedFoodCategoryId) {
-    blockers.push(blocker("ELEVENST_NEW_PRODUCT_CATEGORY_UNVERIFIED", "categoryId", "검증된 가공식품 category 1346631 입력만 처리할 수 있습니다."));
+  if (!isElevenstProcessedFoodCategory(input.categoryId)) {
+    blockers.push(blocker("ELEVENST_NEW_PRODUCT_CATEGORY_UNVERIFIED", "categoryId", "공식 확인한 비스켓·사이다 카테고리의 가공식품 입력만 처리할 수 있습니다."));
   }
   blockers.push(...sellerIdentityBlockers(input.sellerIdentity, nowMs));
   blockers.push(...providerAvailabilityBlockers(input.providerAvailability, nowMs));
@@ -427,7 +427,7 @@ export function resolveElevenstNewProductInput(
         `notices.${index}`,
         candidate.code === elevenstProcessedFoodProductNameNoticeCode
           ? "제품명 고시는 승인된 상품명에서만 자동 생성하며 수동 입력을 허용하지 않습니다."
-          : `category 1346631 계약에 없는 고시 code ${candidate.code || "(empty)"}를 허용하지 않습니다.`,
+          : `현재 가공식품 계약에 없는 고시 code ${candidate.code || "(empty)"}를 허용하지 않습니다.`,
         { fieldCode: candidate.code || undefined },
       ));
     }
@@ -471,7 +471,7 @@ export function resolveElevenstNewProductInput(
     contract: "sellerpilot_elevenst_new_product_preflight_v1",
     state,
     canCreate: state === "ready",
-    categoryId: elevenstProcessedFoodCategoryId,
+    categoryId: input.categoryId,
     notificationType: elevenstProcessedFoodNoticeType,
     requiredNoticeCount: elevenstProcessedFoodNotificationFields.length,
     resolvedNoticeCount: resolved.length,

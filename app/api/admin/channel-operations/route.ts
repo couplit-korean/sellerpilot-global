@@ -3,6 +3,7 @@ import {
   elevenstCreateCredentialBindingArgument,
 } from "../../../../lib/product-registration/elevenst/credential-request-binding";
 import { prepareElevenstNewProductCreateBeforeClaimFromRpc } from "../../../../lib/product-registration/elevenst/new-product-input-source-rpc";
+import { isElevenstProcessedFoodCategory } from "../../../../lib/channels/elevenst-listing";
 import { bindShopeeSgCreateExecutionLineage, exactShopeeListingPrepareReadiness, shopeeCredentialSnapshot, shopeeSgCreateExecutionLineage, shopeeSgCreateExecutionLineageArgument, type ShopeeSgCreateExecutionLineage } from "../../../../lib/product-registration/shopee/target-lineage-readiness";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { mergeShopeeChannelTargets, shopeeIdentityChannelTargets } from "../../../../lib/channels/shopee-shop-identity";
@@ -2003,7 +2004,7 @@ export async function POST(request: NextRequest) {
     assignment.channel === "elevenst"
       && assignment.environment === "production"
       && assignment.market === parsed.data.market
-      && assignment.categoryId === "1346631"
+      && isElevenstProcessedFoodCategory(assignment.categoryId)
       && assignment.status === "confirmed");
   const elevenstServerOwnerId = typeof verifiedPublishContext?.ownerId === "string"
     ? verifiedPublishContext.ownerId
@@ -2011,9 +2012,11 @@ export async function POST(request: NextRequest) {
   const strictElevenstProcessedFoodCreate = channel === "elevenst"
     && operation === "listing.create"
     && (Boolean(elevenstProcessedFoodAssignment)
-      || elevenstCreateProduct?.dispCtgrNo === "1346631");
+      || isElevenstProcessedFoodCategory(elevenstCreateProduct?.dispCtgrNo));
   if (strictElevenstProcessedFoodCreate) {
     if (environment !== "production"
+      || !isElevenstProcessedFoodCategory(elevenstProcessedFoodAssignment?.categoryId)
+      || elevenstCreateProduct?.dispCtgrNo !== elevenstProcessedFoodAssignment.categoryId
       || elevenstCreateCredentialVersion === null
       || !parsed.data.productId
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(elevenstServerOwnerId)) {
@@ -2029,7 +2032,7 @@ export async function POST(request: NextRequest) {
       prepared = await prepareElevenstNewProductCreateBeforeClaimFromRpc({
         ownerId: elevenstServerOwnerId,
         productId: parsed.data.productId,
-        categoryId: "1346631",
+        categoryId: elevenstProcessedFoodAssignment.categoryId,
         credentialId: parsed.data.credentialId,
         credentialVersion: elevenstCreateCredentialVersion,
         environment: "production",

@@ -65,6 +65,12 @@ const generalProductNoticeCodes = new Set(["11800", "11905", "23760413", "237591
 const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"]);
 const verifiedSimpleListingCategoryId = "1341821";
 export const elevenstProcessedFoodCategoryId = "1346631";
+export const elevenstCiderCategoryId = "1009792";
+export type ElevenstProcessedFoodCategoryId = typeof elevenstProcessedFoodCategoryId | typeof elevenstCiderCategoryId;
+/** Official food notice 891031; category 1009792 was read from Seller API on 2026-09-14. */
+export function isElevenstProcessedFoodCategory(value: unknown): value is ElevenstProcessedFoodCategoryId {
+  return value === elevenstProcessedFoodCategoryId || value === elevenstCiderCategoryId;
+}
 export const elevenstProcessedFoodNoticeType = "891031";
 export const elevenstProcessedFoodProductNameNoticeCode = "176317774";
 export const elevenstProcessedFoodNotificationFields = [
@@ -196,7 +202,7 @@ function validateProductNotification(product: Record<string, unknown>, categoryI
   if (Object.keys(notification).some((key) => !["type", "item"].includes(key))) {
     throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
   }
-  const processedFood = categoryId === elevenstProcessedFoodCategoryId;
+  const processedFood = isElevenstProcessedFoodCategory(categoryId);
   const expectedType = processedFood ? elevenstProcessedFoodNoticeType : "891045";
   const supportedNoticeCodes = processedFood ? processedFoodNoticeCodes : generalProductNoticeCodes;
   if (text(notification, "type", 20) !== expectedType) throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
@@ -219,7 +225,7 @@ function validateProductNotification(product: Record<string, unknown>, categoryI
 
 /**
  * Validate the exact contracts verified from 11st metadata: the simple
- * non-regulated general-product leaf 1341821 and processed-food leaf 1346631.
+ * non-regulated general-product leaf 1341821 and food leaves 1346631/1009792.
  * Other category-specific options, certifications, notices, and delivery modes
  * remain blocked until their exact provider metadata is supplied.
  */
@@ -232,7 +238,7 @@ export function validateElevenstListingProduct(value: unknown, shippingSource?: 
   exactCode(product, "selMthdCd", ["01"]);
   const categoryId = text(product, "dispCtgrNo", 20);
   if (!/^\d{7,12}$/u.test(categoryId)) throw new Error("ELEVENST_CONTRACT_FIELD_INVALID:dispCtgrNo");
-  if (![verifiedSimpleListingCategoryId, elevenstProcessedFoodCategoryId].includes(categoryId)) {
+  if (categoryId !== verifiedSimpleListingCategoryId && !isElevenstProcessedFoodCategory(categoryId)) {
     throw new Error("ELEVENST_CATEGORY_CONTRACT_UNVERIFIED");
   }
   exactCode(product, "prdTypCd", ["01"]);

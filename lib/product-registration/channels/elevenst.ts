@@ -12,6 +12,7 @@ import {
   elevenstShippingContractErrorMessage,
   validateElevenstListingArguments,
   elevenstFixedShippingReadbackMatches,
+  isElevenstProcessedFoodCategory,
 } from "../../channels/elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "../../channels/elevenst-listing-publication";
 
@@ -337,7 +338,7 @@ export async function executeElevenst(input: ExecuteInput) {
       && !Array.isArray(input.arguments.product)
       ? input.arguments.product as Record<string, unknown>
       : {};
-    if (String(rawProduct.dispCtgrNo ?? "").trim() === "1346631") {
+    if (isElevenstProcessedFoodCategory(String(rawProduct.dispCtgrNo ?? "").trim())) {
       const newProductInput = preflightElevenstNewProductInputExecution({
         arguments: input.arguments,
         payload: input.payload,

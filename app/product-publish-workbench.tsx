@@ -5,12 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { categoryScalar, coupangCategoryInputs, shopeeCategoryAttributes } from "../lib/channel-category-values";
 import { ChannelRegistrationFields } from "./channel-registration-fields";
+import { ElevenstSourceApproval } from "./elevenst-source-approval";
 import { ChannelLinkBadge } from "./channel-link-badge";
 import { channelIntegrationStatus } from "../lib/channels/integration-status";
 import { getProductRegistrationDraft, putProductRegistrationDraft, ProductRegistrationDraftClientError } from "../lib/product-registration-draft-client";
 import { editableCommonFacts, preserveChannelRegistrationEdits, publishRegistrationDataSchema, publishRegistrationIdentity, restoreChannelRegistrationForCategory, type PublishRegistrationData } from "../lib/publish-registration-draft";
 import { registrationIdentityIssue, registrationPatches, setRegistrationValue } from "../lib/channel-registration-form";
-import { elevenstProcessedFoodCategoryId, elevenstProcessedFoodNotificationFields, elevenstProcessedFoodNoticeType, elevenstSaleDateRange, elevenstListingShippingFields } from "../lib/channels/elevenst-listing";
+import { isElevenstProcessedFoodCategory, elevenstProcessedFoodNotificationFields, elevenstProcessedFoodNoticeType, elevenstSaleDateRange, elevenstListingShippingFields } from "../lib/channels/elevenst-listing";
 import { qoo10JapaneseListingCopyFromCategory, repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import { marketplaceChannelDetailImageCount, marketplaceGeneratedAssetCount, marketplaceMinimumThumbnailCount } from "../lib/channels/marketplace-image-contract";
 import { parseProductDetailImageManifest, productDetailImageCount } from "../lib/product-detail-image-manifest";
@@ -634,7 +635,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
             // repeat core fields such as `name` and `description`. Keep only
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
-            Attributes: { ...providedAttributes, name: title.slice(0, 255), description: richDescription, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
+            Attributes: { ...providedAttributes, name: title.slice(0, 255), description: richDescription, short_description: shortDescription.slice(0, 500), brand: providedAttributes.brand ?? manual.brandName },
             Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: title.slice(0, 255), Status: "active", Images: { Image: galleryImageUrls } }] },
           },
         },
@@ -688,7 +689,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   }
   if (channel === "elevenst") {
     const verifiedCableOrganizerContract = assignment?.categoryId === "1341821";
-    const verifiedProcessedFoodContract = assignment?.categoryId === elevenstProcessedFoodCategoryId;
+    const verifiedProcessedFoodContract = isElevenstProcessedFoodCategory(assignment?.categoryId);
     const verifiedNoCertificationContract = verifiedCableOrganizerContract || verifiedProcessedFoodContract;
     const explicitNotificationValue = (code: string) => categoryScalar(assignment?.providedAttributes[`notification:${code}`]).trim();
     const notificationItems = verifiedCableOrganizerContract
@@ -2897,6 +2898,19 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
                 try { setDrafts(current => ({ ...current, [channel]: JSON.stringify(setRegistrationValue(parseDraft(current[channel]) ?? {}, path, value), null, 2) })); }
                 catch { notify("입력값의 구조를 확인해 주세요. 기존 값은 유지했습니다."); }
               }} />
+              {channel === "elevenst" && operation === "listing.create" && credential && isElevenstProcessedFoodCategory(assignment?.categoryId) && <ElevenstSourceApproval
+                key={`${productId}:${credential.id}`}
+                productId={productId} credentialId={credential.id} market={target?.marketCode ?? "KR"} targetId={target?.targetId ?? ""}
+                draft={draftObject} disabled={registrationHasIssues || registrationTargetLoading || registrationSourceChanged || !registrationLoaded || blockingRequirements.length > 0}
+                onSave={async () => {
+                  const expectedSignature = registrationSignature;
+                  if (!(await saveRegistrationDraft())) throw new Error("현재 입력을 서버 초안에 저장한 뒤 승인해 주세요.");
+                  const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+                  if (!accessToken || !mountedRef.current || sessionProductIdRef.current !== productId || registrationCurrentSignatureRef.current !== expectedSignature || registrationSavedRef.current !== expectedSignature)
+                    throw new Error("저장 중 입력이나 로그인 상태가 바뀌었습니다. 다시 확인해 주세요.");
+                  return { version: registrationVersionRef.current, accessToken };
+                }}
+              />}
               {channel === "ebay" && ebayHandoffStatus && requirements.some((item) => item.manualPath) && <div className="publish-required-head"><button type="button" className="credential-secondary" disabled={ebayHandoffSaving || !ebayDraftHandoff || ebayHandoffStatus === "saved"} onClick={() => void saveEbayListingHandoff()}>{ebayHandoffSaving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}정책 저장</button><small role="status">{listingHandoffStatusLabel(ebayHandoffStatus)}{ebayHandoffError ? ` · ${ebayHandoffError}` : ""}</small></div>}
               {channel === "ebay" && <div className="publish-required-head">
                 <button type="button" className="credential-secondary" disabled={registrationHasIssues || ebayHandoffSaving || ebayBootstrapRunning || !productId} title="입력한 조건으로 eBay에서 배송·결제·반품 정책과 창고 위치를 확인하고, 없으면 만든 뒤 정책 ID와 위치 키를 저장합니다." onClick={() => void resolveEbayAccountFromOperatorTerms()}>{ebayBootstrapRunning ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}eBay 정책·창고 자동 확보</button>

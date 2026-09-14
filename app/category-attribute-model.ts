@@ -465,7 +465,7 @@ export function serializeCategoryAttributeValues(
         ...(range.attributeRealValueUnitCode ? { attributeRealValueUnitCode: range.attributeRealValueUnitCode } : {}),
       }]];
     }
-    const serialized = channel === "lazada"
+    const serialized = channel === "lazada" && attribute.id !== "brand"
       ? supplied.map((item) => attribute.values.find((option) => option.id === item)?.name ?? item)
       : supplied;
     return [[attribute.id, attribute.repeatable || attribute.inputKind === "multi_select" ? serialized : serialized[0]]];

@@ -120,13 +120,13 @@ test("11st processed-food server-source gate is before fingerprint and claim", a
     import.meta.url,
   ), "utf8");
   const prepareIndex = route.indexOf("await prepareElevenstNewProductCreateBeforeClaimFromRpc");
-  const fingerprintIndex = route.indexOf("const baseRequestFingerprint = createHash");
+  const fingerprintIndex = route.indexOf("const baseFingerprintArguments = structuredClone(fingerprintArguments)");
   const claimIndex = route.indexOf('userClient.rpc("sellerpilot_claim_channel_operation"');
   assert.ok(prepareIndex > 0);
   assert.ok(prepareIndex < fingerprintIndex);
   assert.ok(fingerprintIndex < claimIndex);
-  assert.match(route, /elevenstCreateProduct\?\.dispCtgrNo === "1346631"/u);
-  assert.match(route, /assignment\.categoryId === "1346631"/u);
+  assert.match(route, /isElevenstProcessedFoodCategory\(elevenstCreateProduct\?\.dispCtgrNo\)/u);
+  assert.match(route, /isElevenstProcessedFoodCategory\(assignment\.categoryId\)/u);
   assert.match(route, /assignment\.status === "confirmed"/u);
   assert.match(route, /ownerId: elevenstServerOwnerId/u);
   assert.match(route, /effectiveArguments = prepared\.arguments;/u);

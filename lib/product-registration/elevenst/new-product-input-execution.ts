@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
-  elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
+  type ElevenstProcessedFoodCategoryId,
   elevenstProcessedFoodNotificationFields,
   elevenstProcessedFoodNoticeType,
 } from "../../channels/elevenst-listing";
@@ -21,7 +22,7 @@ export type ElevenstNewProductInputExecutionReceipt = {
   contract: typeof elevenstNewProductInputExecutionReceiptContract;
   status: "verified";
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   credentialId: string;
   credentialVersion: number;
   environment: "production";
@@ -185,7 +186,9 @@ export function buildElevenstNewProductInputExecutionReceipt(input: {
   const productName = normalizedText(input.product.prdNm);
   const sellerProductCode = normalizedText(input.product.sellerPrdCd);
   const notification = notificationItems(input.product);
-  if (String(input.product.dispCtgrNo ?? "") !== elevenstProcessedFoodCategoryId
+  const categoryId = input.product.dispCtgrNo;
+  if (!isElevenstProcessedFoodCategory(categoryId)
+    || categoryId !== input.preflight.categoryId
     || !productName
     || !sellerProductCode
     || notification.type !== elevenstProcessedFoodNoticeType) {
@@ -218,7 +221,7 @@ export function buildElevenstNewProductInputExecutionReceipt(input: {
     contract: elevenstNewProductInputExecutionReceiptContract,
     status: "verified",
     productId: input.productId,
-    categoryId: elevenstProcessedFoodCategoryId,
+    categoryId,
     credentialId: input.credentialId,
     credentialVersion: input.credentialVersion,
     environment: input.environment,
@@ -278,7 +281,7 @@ export function preflightElevenstNewProductInputExecution(input: {
     blockers.push(blocker(
       "ELEVENST_NEW_PRODUCT_NOTICE_UNEXPECTED",
       `product.ProductNotification.item.${code || "(empty)"}`,
-      `category 1346631 계약에 없는 고시 code ${code || "(empty)"}가 포함되었습니다.`,
+      `현재 가공식품 계약에 없는 고시 code ${code || "(empty)"}가 포함되었습니다.`,
       { fieldCode: code || undefined },
     ));
   }
@@ -286,7 +289,7 @@ export function preflightElevenstNewProductInputExecution(input: {
     blockers.push(blocker(
       "ELEVENST_NEW_PRODUCT_NOTICE_TYPE_MISMATCH",
       "product.ProductNotification.type",
-      "category 1346631의 고시 type은 891031이어야 합니다.",
+      "공식 확인한 가공식품 카테고리의 고시 type은 891031이어야 합니다.",
     ));
   }
 
@@ -307,7 +310,7 @@ export function preflightElevenstNewProductInputExecution(input: {
     && rawReceipt.status === "verified"
     && typeof rawReceipt.productId === "string"
     && uuidPattern.test(rawReceipt.productId)
-    && rawReceipt.categoryId === elevenstProcessedFoodCategoryId
+    && isElevenstProcessedFoodCategory(rawReceipt.categoryId)
     && typeof rawReceipt.credentialId === "string"
     && uuidPattern.test(rawReceipt.credentialId)
     && positiveInteger(rawReceipt.credentialVersion)

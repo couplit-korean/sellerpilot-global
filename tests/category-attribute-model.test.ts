@@ -22,6 +22,7 @@ import {
 test("Lazada selection type spellings retain official options and serialize their names", () => {
   const metadata = normalizeCategoryMetadata("lazada", [{ data: [
     { name: "storage_type", label: "Jenis Simpanan", input_type: "singleSelect", is_mandatory: 1, options: [{ id: 1, name: "Room Temperature" }] },
+    { name: "brand", label: "Jenama", input_type: "singleSelect", is_mandatory: 1, options: [{ id: 42, name: "Example Brand" }] },
     { name: "hazmat", label: "Bahan Berbahaya", input_type: "multiSelect", is_mandatory: 0, options: [{ id: 2, name: "None" }, { id: 3, name: "Liquid" }] },
   ] }]);
   const [storage, hazmat] = ["storage_type", "hazmat"].map(id => metadata.descriptors.find(row => row.id === id)!);
@@ -30,6 +31,7 @@ test("Lazada selection type spellings retain official options and serialize thei
   assert.equal(categoryAttributeValueValid(storage, "unlisted"), false);
   assert.equal(categoryAttributeValueValid(hazmat, ["2", "unlisted"]), false);
   assert.deepEqual(serializeCategoryAttributeValues("lazada", metadata.descriptors, { storage_type: "1", hazmat: ["2", "3"] }), { storage_type: "Room Temperature", hazmat: ["None", "Liquid"] });
+  assert.deepEqual(serializeCategoryAttributeValues("lazada", metadata.descriptors, { brand: "42" }), { brand: "42" });
   assert.match(renderToStaticMarkup(createElement(CategoryAttributeField, { attribute: storage, value: "1", onChange() {} })), /<select/);
 });
 

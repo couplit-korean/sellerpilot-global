@@ -52,7 +52,7 @@ export function elevenstNewProductSourceDependenciesFromRpc(
 export async function prepareElevenstNewProductCreateBeforeClaimFromRpc(input: {
   ownerId: string;
   productId: string;
-  categoryId: "1346631";
+  categoryId: SourceKey["categoryId"];
   credentialId: string;
   credentialVersion: number;
   environment: "production";
@@ -64,4 +64,3 @@ export async function prepareElevenstNewProductCreateBeforeClaimFromRpc(input: {
     elevenstNewProductSourceDependenciesFromRpc(client),
   );
 }
-

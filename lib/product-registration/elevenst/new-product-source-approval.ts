@@ -8,6 +8,8 @@ import {
 } from "../../channels/elevenst-new-product-input";
 import {
   elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
+  type ElevenstProcessedFoodCategoryId,
   elevenstProcessedFoodNotificationFields,
   elevenstProcessedFoodProductNameNoticeCode,
   elevenstSaleDateRange,
@@ -53,10 +55,11 @@ const availabilitySchema = z.object({
 export const elevenstNewProductSourceApprovalRequestSchema = z.object({
   contract: z.literal(elevenstNewProductSourceApprovalContract),
   approvalRequestId: z.string().uuid(),
+  expectedDraftVersion: z.number().int().positive().optional(),
   productId: z.string().uuid(),
   credentialId: z.string().uuid(),
   market: z.string().trim().min(1).max(32),
-  targetId: z.string().trim().min(1).max(160),
+  targetId: z.string().trim().max(160),
   notices: z.array(noticeSchema).length(10),
   sellerOfficeAccountSha256: sha256,
   sellerVerifiedAt: timestamp,
@@ -92,6 +95,8 @@ export type ElevenstNewProductSourceApprovalRequest = z.infer<
 >;
 
 export type ElevenstNewProductSourceAutomaticContext = {
+  /** Legacy callers are biscuit-only; the live route requires an explicit server category. */
+  categoryId?: ElevenstProcessedFoodCategoryId;
   actorId: string;
   ownerId: string;
   productId: string;
@@ -121,7 +126,7 @@ export type ElevenstNewProductSourceApprovalPayload = {
   actorId: string;
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   credentialId: string;
   credentialVersion: number;
   productUpdatedAt: string;
@@ -161,7 +166,7 @@ function noticeInputs(
     },
     approval: {
       productId: context.productId,
-      categoryId: elevenstProcessedFoodCategoryId,
+      categoryId: context.categoryId ?? elevenstProcessedFoodCategoryId,
       fieldCode: notice.code,
       revision: context.draftVersion,
       sourceSha256: notice.sourceSha256,
@@ -178,7 +183,7 @@ function providerProduct(
   const salePeriod = elevenstSaleDateRange(now);
   return {
     selMthdCd: "01",
-    dispCtgrNo: elevenstProcessedFoodCategoryId,
+    dispCtgrNo: context.categoryId ?? elevenstProcessedFoodCategoryId,
     prdTypCd: "01",
     prdNm: context.productName,
     brand: context.brand,
@@ -214,7 +219,9 @@ export async function buildElevenstNewProductSourceApproval(
   preparedArguments: Record<string, unknown>;
 }> {
   const request = elevenstNewProductSourceApprovalRequestSchema.parse(rawRequest);
-  if (request.productId !== automatic.productId
+  const categoryId = automatic.categoryId ?? elevenstProcessedFoodCategoryId;
+  if (!isElevenstProcessedFoodCategory(categoryId)
+    || request.productId !== automatic.productId
     || request.credentialId !== automatic.credentialId
     || automatic.productRevision !== automatic.productApprovalRevision
     || automatic.productRevision < 1
@@ -269,7 +276,7 @@ export async function buildElevenstNewProductSourceApproval(
     current: true,
     ownerId: automatic.ownerId,
     productId: automatic.productId,
-    categoryId: elevenstProcessedFoodCategoryId,
+    categoryId,
     revision: automatic.productRevision,
     approvalRevision: automatic.productApprovalRevision,
     providerProduct: product,
@@ -292,7 +299,7 @@ export async function buildElevenstNewProductSourceApproval(
       current: true,
       ownerId: automatic.ownerId,
       productId: automatic.productId,
-      categoryId: elevenstProcessedFoodCategoryId,
+      categoryId,
       productRevision: automatic.productRevision,
       notices,
     },
@@ -319,7 +326,7 @@ export async function buildElevenstNewProductSourceApproval(
       current: true,
       ownerId: automatic.ownerId,
       productId: automatic.productId,
-      categoryId: elevenstProcessedFoodCategoryId,
+      categoryId,
       productRevision: automatic.productRevision,
       sourceRevision: automatic.draftVersion,
       approvalRevision: automatic.draftVersion,
@@ -330,7 +337,7 @@ export async function buildElevenstNewProductSourceApproval(
   const prepared = await buildElevenstNewProductArgumentsFromServerSources({
     ownerId: automatic.ownerId,
     productId: automatic.productId,
-    categoryId: elevenstProcessedFoodCategoryId,
+    categoryId,
     credentialId: automatic.credentialId,
     credentialVersion: automatic.credentialVersion,
     environment: "production",
@@ -358,7 +365,7 @@ export async function buildElevenstNewProductSourceApproval(
       actorId: automatic.actorId,
       ownerId: automatic.ownerId,
       productId: automatic.productId,
-      categoryId: elevenstProcessedFoodCategoryId,
+      categoryId,
       credentialId: automatic.credentialId,
       credentialVersion: automatic.credentialVersion,
       productUpdatedAt: automatic.productUpdatedAt,

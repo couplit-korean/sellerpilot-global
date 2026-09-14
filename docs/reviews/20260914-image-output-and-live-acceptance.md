@@ -170,3 +170,17 @@
 - Shopee134000은실제5286계정소유자/768관리자관계,운영17CHECK와원래저장함수포함회귀를통과. SGshop→merchant→identity메타credential연속저장,다른계정불변,148과거불확정원장보존검증. 운영rollback에서exact4a45 eligible true/52.506ms,plan36.449ms를확인했다. 일반claim에서는다른Qoo10조회가선택되었으며모든진단변경rollback;SG실제인증성공증거는아직없다.
 - Lazada공식singleSelect/multiSelect철자지원추가. 옵션ID는기존정확옵션명으로직렬화하며잘못된값거절. brand선택은공식옵션조회가별도로필요하여진행중이다.
 - 이번통합전체TypeScript및관련94/94검사통과. 실제신규채널등록0/8,카테고리저장Qoo10+11st2/8. 11st브라우저로그인/판매배송비질문대기.
+
+
+## 후속 실등록 검증과 승인 경로 수정 (2026-09-14)
+
+- 운영 Vercel `fcaa864498556a686802af65b8417d2fb2588b6c` / `dpl_99C7NZZ2gGumkCySJ8EezW4dySai`를 후보·운영 각 6개 canary 후 활성화했다. Mac gateway도 같은 버전 ready를 확인했다. 134000 Shopee 및 140000 SmartStore category queue SQL을 원문 MD5 대조 후 적용했다. 기존 20개 등록/분류 경로 버전을 계정·승인 변경 없이 이동하고 SmartStore 분류 3개 경로를 기존 승인에서 승계했다.
+- Coupang DB cloud 정책 true와 Vercel 환경 `elevenst,smartstore`의 불일치를 실측했다. 새 클라우드 허용을 만들지 않고 기존 승인된 Mac 7개 경로와 heartbeat를 검증하여 Coupang cloud 정책을 false로 전환했다. 이어 Aside의 공식 사이다58766 조회가 성공했고 가공식품 고시를 포함한 필수14/14 저장을 확인했다.
+- Aside에서 SmartStore50002253의 PET병·실온·500ml·0kcal·제로칼로리 5개 속성을 입력해 DB confirmed 저장을 확인했다. eBay179188의 Narangd/Soft Drink/대한민국/Pantry, Temu 공식 추천42447도 정상 UI로 확정했다. Qoo10 및11st를 포함해 카테고리 저장6/8이며, 실제 신규 상품 게시0/8이다. SmartStore의 후속 카테고리 source 저장은 별도 조건이다.
+- SmartStore source 수집부터 전송/완료까지8함수의 active-only 조건이 실제 draft 상품을 거절했다.145000은 상태 predicate 한 곳씩만 draft|active로 바꾸며 소유/승인 상세/자격/분류 조건을 보존한다. 운영 rollback에서 현재 상품 contextAvailable=true,5개속성/승인v1 일치, 상품/source원장 불변을 확인했다.
+- 11st 공식 로그인 문서의 사이다1009792 및 가공식품891031 고시11개를 확인해 UI/서버/승인 source/실행 결속을 확장했다. 수동고시10개+서버제품명1개가 최종전송11개다. 신규 승인상품 이미지는 승인manifest8장 중 첫4장의 가공본이며 실제bytes SHA/완료claim/manifest SHA를 검증한다. 기존촬영6장은 제작근거로 보존한다.
+- 11st 등록정보 승인 UI는 먼저 초안을 저장하고 예상버전을 보낸다. 선택한 실제 라벨사진의 bytes digest를 근거로 삼고 판매자ID·고시·정책·현재 가용성을 명시 확인한다. 새 원본 업로드/이미지 재생성은 하지 않는다. 과거 요청의 uncertain 결과는 동일 ID/본문으로 재확인한다.
+- 11st143000 운영 rollback 첫 시도는 draft.categoryId가 비어 있어 contextAvailable=false였다. Aside에서 변경 내용을 검토하고 publish draft v23을 정상 저장한 뒤 재검증하여 category1009792/가공4+SHA4/상세8/원본6/기존원장불변을 확인했다. SQL 성공 자체를 업무 성공으로 계산하지 않았다.
+- Lazada MY 최신 공식 브랜드 API742개 연속 페이지를 조회했지만 Narangd/Dong-A Otsuka 정확 항목은 없었다(공식total148229,반환고유148196; 일부페이지199개). 유사명/No Brand를 채택하지 않았다. 확정brand ID를 이름으로 바꾸거나 수동브랜드명으로 덮는 결함만 수정했다. 등록은 미완료다.
+- Shopee SG4a45 작업은134000 적용 후 실제수령됐으나00:55:07 UTC 시작 fence 후 약0.5초에 reconciliation_required가 됐다. 갱신 후보 저장 증거가 없어 재요청하지 않았다. 기존실패CS f5는attempt4 lease 만료로정상failed; 이 기록을삭제하거나상품성공으로바꾸지 않았다. 정확실패원인은별도로그진단중이다.
+- 소비자상담 번호는 동아오츠카 공식 홈페이지 https://www.donga-otsuka.co.kr/ 에서080-999-7644를 확인해 입력했다. 기타 제품 사실은 앞서 확인한 라벨/제조사자료를 사용했다. 배송비 적용 질문은 미응답이며 무료배송을 임의 적용하지 않았다.

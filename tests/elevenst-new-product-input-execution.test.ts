@@ -204,6 +204,17 @@ async function executeWithoutProvider(argumentsValue: Record<string, unknown>) {
   }
 }
 
+test("cider also requires the exact server approval receipt before any official read or CREATE", async () => {
+  const product = processedProduct();
+  product.dispCtgrNo = "1009792";
+  const outcome = await executeWithoutProvider({ product });
+  assert.equal(outcome.operation.ok, false);
+  assert.equal(outcome.operation.steps[0]?.name, "new-product-input-preflight");
+  assert.equal(outcome.operation.steps[0]?.data.sellerpilotProviderCalls, 0);
+  assert.equal(outcome.fetchCalls, 0);
+  assert.equal(outcome.beginCalls, 0);
+});
+
 test("006-style 2-of-11 input is blocked before provider GET/POST and exposes the exact nine missing codes", async () => {
   const product = processedProduct();
   const notification = product.ProductNotification as { item: Array<{ code: string; name: string }> };

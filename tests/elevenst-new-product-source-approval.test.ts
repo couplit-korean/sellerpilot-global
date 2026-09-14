@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { elevenstNewProductInputReceiptArgument, preflightElevenstNewProductInputExecution } from "../lib/product-registration/elevenst/new-product-input-execution";
 import {
   elevenstProviderAvailabilityReceiptContract,
 } from "../lib/channels/elevenst-new-product-input";
@@ -115,9 +116,37 @@ test("11st approval builds source identity and revisions only from automatic con
   assert.equal(preparedProduct.ProductNotification != null, true);
 });
 
+test("11st cider category propagates through all source approvals, product and execution receipt without borrowing biscuit identity", async () => {
+  const built = await buildElevenstNewProductSourceApproval(request(), { ...automatic(), categoryId: "1009792", productName: "나랑드사이다 500ml 1병" }, now);
+  assert.equal(built.payload.categoryId, "1009792");
+  assert.equal(built.payload.providerProduct.dispCtgrNo, "1009792");
+  assert.equal(built.payload.notices.every(notice => notice.approval?.categoryId === "1009792"), true);
+  assert.equal((built.preparedArguments.product as Record<string, unknown>).dispCtgrNo, "1009792");
+  const receipt = built.preparedArguments[elevenstNewProductInputReceiptArgument] as Record<string,unknown> | undefined;
+  // The source builder must issue a category-bound execution receipt, not just
+  // change the outgoing XML category while retaining biscuit approval hashes.
+  assert.ok(receipt);
+  assert.equal(receipt.categoryId, "1009792");
+  const exchangedCategory = structuredClone(built.preparedArguments);
+  (exchangedCategory.product as Record<string,unknown>).dispCtgrNo = "1346631";
+  assert.equal(preflightElevenstNewProductInputExecution({ arguments: exchangedCategory, payload: { api_key: "a".repeat(32) }, environment: "production", now }).ok, false);
+  const legacy = await buildElevenstNewProductSourceApproval(request(), automatic(), now);
+  assert.equal(legacy.payload.categoryId, "1346631");
+  assert.equal(legacy.payload.notices.every(notice => notice.approval?.categoryId === "1346631"), true);
+});
+
+test("11st approval optionally accepts a positive expected draft version for optimistic UI concurrency", () => {
+  assert.equal(elevenstNewProductSourceApprovalRequestSchema.safeParse(request()).success,true);
+  assert.equal(elevenstNewProductSourceApprovalRequestSchema.safeParse({...request(),expectedDraftVersion:12}).success,true);
+  assert.equal(elevenstNewProductSourceApprovalRequestSchema.parse({...request(),targetId:""}).targetId,"", "domestic target matches the existing blank target draft key");
+  for(const invalid of [0,-1,1.5,"12"])
+    assert.equal(elevenstNewProductSourceApprovalRequestSchema.safeParse({...request(),expectedDraftVersion:invalid}).success,false);
+});
+
 test("11st approval request cannot carry owner, credential version, revision or provider Product", () => {
   for (const forged of [
     { ownerId },
+    { categoryId: "1009792" },
     { actorId },
     { credentialVersion: 999 },
     { productRevision: 999 },

@@ -7,7 +7,8 @@ import {
   type ElevenstSellerIdentityReceipt,
 } from "../../channels/elevenst-new-product-input";
 import {
-  elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
+  type ElevenstProcessedFoodCategoryId,
 } from "../../channels/elevenst-listing";
 import {
   buildElevenstNewProductInputExecutionReceipt,
@@ -30,7 +31,7 @@ export const elevenstNewProductPolicySourceContract =
 type ExactSourceKey = {
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   credentialId: string;
   credentialVersion: number;
   environment: "production";
@@ -41,7 +42,7 @@ export type ElevenstNewProductServerSource = {
   current: true;
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   revision: number;
   approvalRevision: number;
   providerProduct: Record<string, unknown>;
@@ -53,7 +54,7 @@ export type ElevenstNewProductNoticeSource = {
   current: true;
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   productRevision: number;
   notices: ElevenstNoticeInput[];
 };
@@ -94,7 +95,7 @@ export type ElevenstNewProductPolicySource = {
   current: true;
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   productRevision: number;
   sourceRevision: number;
   approvalRevision: number;
@@ -430,7 +431,7 @@ function policySourceBlockers(
 export async function buildElevenstNewProductArgumentsFromServerSources(input: {
   ownerId: string;
   productId: string;
-  categoryId: typeof elevenstProcessedFoodCategoryId;
+  categoryId: ElevenstProcessedFoodCategoryId;
   credentialId: string;
   credentialVersion: number;
   environment: "production";
@@ -440,7 +441,7 @@ export async function buildElevenstNewProductArgumentsFromServerSources(input: {
   const sanitizedArguments = sanitizeBrowserArguments(input.arguments);
   if (!uuidPattern.test(input.ownerId)
     || !uuidPattern.test(input.productId)
-    || input.categoryId !== elevenstProcessedFoodCategoryId
+    || !isElevenstProcessedFoodCategory(input.categoryId)
     || !uuidPattern.test(input.credentialId)
     || !positiveInteger(input.credentialVersion)
     || input.environment !== "production") {

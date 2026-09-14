@@ -12,7 +12,7 @@ import {
 import { compileCoupangOptionItems } from "../product-registration/coupang/option-items";
 import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
-  elevenstProcessedFoodCategoryId,
+  isElevenstProcessedFoodCategory,
   elevenstProcessedFoodNotificationFields,
 } from "./elevenst-listing";
 
@@ -204,11 +204,12 @@ function elevenstNotificationValue(draft: Record<string, unknown>, code: string)
 }
 
 const elevenstFoodExplicitConfirmationCodes = new Set(["176398001", "23757260", "23757095", "23756754"]);
-const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFoodNotificationFields.map((field) => ({
+const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFoodNotificationFields.map((field, index) => ({
   key: `food-notice-${field.code}`,
   label: `가공식품 고시 · ${field.label}`,
   source: "카테고리",
-  applies: (draft) => String(valueAt(draft, ["product", "dispCtgrNo"])) === elevenstProcessedFoodCategoryId,
+  applies: (draft) => isElevenstProcessedFoodCategory(valueAt(draft, ["product", "dispCtgrNo"])),
+  manualPath: ["product", "ProductNotification", "item", String(index), "name"],
   test: (draft) => meaningful(elevenstNotificationValue(draft, field.code)),
   help: elevenstFoodExplicitConfirmationCodes.has(field.code)
     ? `추정하지 않습니다. 카테고리 속성 notification:${field.code}에 판매자가 확인한 확정값을 입력해 주세요.`

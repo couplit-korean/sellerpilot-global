@@ -21,6 +21,7 @@ const automaticContextSchema = z.object({
   actorId: z.string().uuid(),
   ownerId: z.string().uuid(),
   productId: z.string().uuid(),
+  categoryId: z.enum(["1346631", "1009792"]),
   productUpdatedAt: z.string().refine((value) => Number.isFinite(Date.parse(value))),
   productRevision: z.number().int().positive(),
   productApprovalRevision: z.number().int().positive(),
@@ -37,6 +38,8 @@ const automaticContextSchema = z.object({
   conditionCode: z.literal("01"),
   productImagePaths: z.array(z.string().trim().min(1).max(2_048)).length(4),
   detailImagePaths: z.array(z.string().trim().min(1).max(2_048)).length(8),
+  productImageSha256s: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).length(4).optional(),
+  detailImageSha256s: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).length(8).optional(),
   detailManifestDigest: z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
 
@@ -145,6 +148,23 @@ export async function POST(request: Request) {
     }, contextError ? 503 : 409);
   }
 
+  if (body.data.expectedDraftVersion !== undefined
+    && automatic.data.draftVersion !== body.data.expectedDraftVersion) {
+    return json({
+      code: "ELEVENST_NEW_PRODUCT_SOURCE_APPROVAL_CONTEXT_STALE",
+      message: "저장 후 등록 정보가 변경되었습니다. 최신 내용을 확인하고 다시 승인해 주세요.",
+    }, 409);
+  }
+
+  if (automatic.data.categoryId === "1009792"
+    && (!automatic.data.productImagePaths.every((path) => path.startsWith("results/"))
+      || !automatic.data.productImageSha256s || !automatic.data.detailImageSha256s)) {
+    return json({
+      code: "ELEVENST_NEW_PRODUCT_SOURCE_APPROVAL_IMAGES_UNAVAILABLE",
+      message: "현재 승인된 가공 이미지와 저장 원장의 일치를 확인하지 못했습니다.",
+    }, 409);
+  }
+
   const { data: credential, error: credentialError } = await admin.serviceClient.rpc(
     "sellerpilot_decrypt_credential",
     { p_credential_id: automatic.data.credentialId },
@@ -208,6 +228,9 @@ export async function POST(request: Request) {
       productImagePaths: automatic.data.productImagePaths,
       detailImagePaths: automatic.data.detailImagePaths,
       detailImageBucket: detailExternal ? "sellerpilot-detail-imports" : "sellerpilot-ai",
+      productImageSha256s: automatic.data.productImageSha256s,
+      detailImageSha256s: automatic.data.detailImageSha256s,
+      detailManifestDigest: automatic.data.detailManifestDigest,
     }, (bucket, path) => admin.serviceClient.storage.from(bucket).download(path));
     approval.payload.policySource.content = {
       ...record(approval.payload.policySource.content),
