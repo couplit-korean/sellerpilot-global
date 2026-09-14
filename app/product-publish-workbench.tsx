@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { categoryScalar, coupangCategoryInputs, shopeeCategoryAttributes } from "../lib/channel-category-values";
 import { ChannelRegistrationFields } from "./channel-registration-fields";
+import { ShopeePriceTool } from "./shopee-price-tool";
+import { applyShopeePriceToDraft } from "../lib/pricing/shopee-price-tool";
 import { ElevenstSourceApproval } from "./elevenst-source-approval";
 import { ChannelLinkBadge } from "./channel-link-badge";
 import { channelIntegrationStatus } from "../lib/channels/integration-status";
@@ -2854,6 +2856,15 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           </section>}
           {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />{"원격 반영 차단 · 판매자센터 수동 수정"}</button>}
           {operationAvailable && <>
+            {channel === "shopee" && <ShopeePriceTool key={`${productId}:${target?.marketCode}:${target?.targetId}`} market={target?.marketCode ?? ""} currency={target?.currency ?? ""} currentPrice={Number(listingDraftValue(draftObject ?? {}, ["publish", "item", "original_price"])) || null} weightKg={packageFields.weight} disabled={remoteUpdate || registrationHasIssues || registrationSaveStatus === "saving" || ["queued", "publishing"].includes(listing?.status ?? "") || ["queued", "running", "pending_review"].includes(result.phase)} onApply={quote => {
+              try {
+                if (!target || remoteUpdate) return false;
+                const next = JSON.stringify(applyShopeePriceToDraft(parseDraft(drafts.shopee) ?? {}, quote, { market: target.marketCode, currency: target.currency }), null, 2);
+                setDrafts(current => ({ ...current, shopee: next }));
+                notify("쇼피 예상 판매가를 초안에 반영했습니다. 구매자 배송비 설정은 별도 유지됩니다.");
+                return true;
+              } catch { notify("등록 국가·통화·가격을 확인해 주세요. 기존 가격은 유지했습니다."); return false; }
+            }} />}
             <div className="publish-readiness"><span className={channelIntegrationStatus(linkInput).tone === "ok" ? "ok" : "missing"} title={channelIntegrationStatus(linkInput).label}>{channelIntegrationStatus(linkInput).tone === "ok" ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{channelIntegrationStatus(linkInput).short} · 운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? `원본 저장 · 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
             {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
             {globalPriceMissing && <div className="publish-blocked" role="alert"><AlertTriangle size={18} /><b>글로벌 채널 기준가 USD를 입력해 주세요.</b><small>0보다 큰 기준가를 입력하고 채널별 통화·판매가를 확인한 뒤 등록할 수 있습니다.</small></div>}

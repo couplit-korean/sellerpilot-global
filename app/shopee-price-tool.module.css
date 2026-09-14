@@ -1,0 +1,22 @@
+.panel { margin: 16px 0; border: 1px solid #ccd9e5; border-radius: 12px; color: #183046; background: #f8fbfd; overflow: hidden; }
+.panel summary { padding: 14px 16px; font-weight: 700; cursor: pointer; }
+.panel summary span { margin-left: 10px; font-size: 12px; color: #557083; font-weight: 400; }
+.body { padding: 0 16px 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 12px; margin: 12px 0; }
+.grid label, .country { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; min-width: 0; }
+.country { max-width: 320px; }
+.panel input, .panel select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; border: 1px solid #bbcbd8; border-radius: 7px; padding: 8px 10px; background: #fff; color: #132c40; font: inherit; }
+.help { font-size: 12px; color: #4c6373; line-height: 1.65; overflow-wrap: anywhere; }
+.notice { padding: 10px 12px; border-radius: 8px; background: #fff4dc; color: #664507; font-size: 13px; line-height: 1.6; }
+.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+.results div { padding: 12px; border: 1px solid #d9e3ea; border-radius: 8px; background: white; min-width: 0; }
+.results dt { font-size: 12px; color: #536879; }
+.results dd { margin: 6px 0 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.results .total { border-color: #59978e; background: #edf8f3; }
+.notes { padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.apply { min-height: 42px; padding: 10px 14px; border: 0; border-radius: 8px; color: white; background: #126d60; cursor: pointer; font-weight: 700; }
+.apply:disabled { opacity: .45; cursor: not-allowed; }
+.panel a { color: #145faa; font-size: 12px; text-decoration: underline; }
+.evidence { margin-top: 12px; }
+.evidence summary { padding: 8px 0; font-size: 12px; font-weight: 500; }
+@media (max-width: 480px) { .panel summary span { display: block; margin: 5px 0 0; } .body { padding: 0 12px 12px; } .apply { width: 100%; } }
