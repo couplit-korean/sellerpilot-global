@@ -12,10 +12,12 @@ import { executeElevenst } from "../lib/product-registration/channels/elevenst";
 import {
   assertElevenstListingShippingSource,
   bindElevenstAuthoritativeShippingSource,
+  elevenstCiderCategoryId,
   elevenstSaleDateRange,
   elevenstListingShippingFields,
   elevenstFixedShippingReadbackMatches,
   elevenstShippingContractErrorMessage,
+  isElevenstProcessedFoodCategory,
   mergeElevenstListingUpdateProduct,
   validateElevenstListingArguments,
   validateElevenstListingProduct,
@@ -1105,7 +1107,7 @@ async function runElevenstShippingRouteBranch(input: {
   const body = ts.transpileModule(`return (async () => { ${route.slice(start, end)} ${continuation} return null; })();`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  const executeBranch = new Function("userClient", "parsed", "channel", "operation", "bindElevenstAuthoritativeShippingSource", "elevenstShippingContractErrorMessage", "NextResponse", "isRecord", "observations", body);
+  const executeBranch = new Function("userClient", "parsed", "channel", "operation", "bindElevenstAuthoritativeShippingSource", "elevenstShippingContractErrorMessage", "isElevenstProcessedFoodCategory", "NextResponse", "isRecord", "observations", body);
   const parsed = { data: { productId: "1ed4acfc-7603-48ec-a638-241131e59358", arguments: input.argumentsValue } };
   const reads: unknown[] = [];
   const observations: { contentBound?: boolean; contentModePassed?: boolean } = {};
@@ -1115,7 +1117,7 @@ async function runElevenstShippingRouteBranch(input: {
       reads.push(args);
       return { data: input.context, error: input.contextError ?? null };
     }
-  }, parsed, input.channel ?? "elevenst", input.operation, bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage,
+  }, parsed, input.channel ?? "elevenst", input.operation, bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage, isElevenstProcessedFoodCategory,
     { json: (value: unknown, init: ResponseInit) => new Response(JSON.stringify(value), init) },
     (value: unknown) => Boolean(value) && typeof value === "object" && !Array.isArray(value), observations) as Response | null;
   return { response, argumentsValue: parsed.data.arguments, reads, observations };
@@ -1159,6 +1161,29 @@ test("11st actual route branch fails closed for missing stored fee, wrong produc
   }
   const failure = await runElevenstShippingRouteBranch({ argumentsValue: {}, operation: "listing.create", context: authoritativeShippingContext(0), contextError: { message: "unavailable" } });
   assert.equal(failure.response?.status, 409);
+});
+
+test("11st processed-food CREATE leaves draft shipping untouched for the approved server source stage", async () => {
+  const args = {
+    product: completeProduct({
+      dispCtgrNo: elevenstCiderCategoryId,
+      ...elevenstListingShippingFields({ shippingFeeKrw: 3000 }),
+      rtngdDlvCst: "3000",
+      exchDlvCst: "6000",
+    }),
+    sellerpilotAssets: { shipping: { shippingFeeKrw: 3000 } },
+  };
+  const before = structuredClone(args);
+  const result = await runElevenstShippingRouteBranch({
+    argumentsValue: args,
+    operation: "listing.create",
+    context: authoritativeShippingContext(0),
+  });
+
+  assert.equal(result.response, null);
+  assert.equal(result.reads.length, 0, "generic product draft shipping must not precede the approved food policy source");
+  assert.strictEqual(result.argumentsValue, args);
+  assert.deepEqual(args, before);
 });
 
 test("11st actual route binds stored zero over browser fee/rules without changing product, SKU or remote ID", async () => {

@@ -19,7 +19,7 @@ const egressSha256 = "a".repeat(64);
 test("SmartStore category enqueue retains the existing Mac heartbeat gate after gaining a local claim tuple", async () => {
   const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   assert.match(route, /const smartstoreCategoryRead = channel === "smartstore"\s*&& \["categories.suggest", "categories.attributes", "categories.validate"\]\.includes\(operation\)/);
-  assert.match(route, /if \(localExecutorAccess && !smartstoreCategoryRead\)/);
+  assert.match(route, /if \(localExecutorAccess && !smartstoreCategoryRead && !smartstoreApprovedAiLocalCreate\)/);
   assert.match(route, /channel === "smartstore" && isSmartstoreLocalReadOperation\(operation\)/);
   assert.match(route, /resolveLocalGatewayReadReady\(localGatewayRuntime/);
 });

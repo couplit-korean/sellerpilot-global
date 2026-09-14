@@ -77,3 +77,12 @@ test("invalid shop IDs and unsupported selected markets do not send requests or 
   }
   assert.equal(unused.calls.length, 0);
 });
+
+test('expired successful discovery can start one explicitly bound fresh read, while status checks never POST',async()=>{
+ const jobId='39c870a8-2ab1-4c73-b859-a2d0b7f2a107';
+ const expired=()=>Response.json({channel:'shopee',credentialId:oldId,code:'SHOPEE_TARGET_DISCOVERY_RECEIPT_EXPIRED',jobId,pending:false,refreshable:true},{status:409});
+ const status=mock([expired()]);assert.equal((await syncExistingShopeeTarget({...input,checkOnly:true,fetcher:status.fetcher})).pending,false);assert.equal(status.calls.length,1);
+ const renewal=mock([expired(),ready(),ready()]);assert.ok((await syncExistingShopeeTarget({...input,fetcher:renewal.fetcher})).target);
+ assert.equal(renewal.calls.filter(c=>c.init?.method==='POST').length,1);
+ assert.equal(JSON.parse(String(renewal.calls[1].init?.body)).refreshExpiredJobId,jobId);
+});

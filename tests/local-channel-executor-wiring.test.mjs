@@ -6,7 +6,7 @@ import { createGatewayWorkerHealth } from "../scripts/persistent-worker-health.m
 const [claimRoute, adminRoute, worker, migration] = await Promise.all([
   readFile(new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
-  readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../scripts/channel-gateway-worker.mjs", import.meta.url), "utf8"),
   readFile(new URL(
     "../supabase/migrations/20260907110000_general_local_channel_executor.sql",
     import.meta.url,
@@ -24,11 +24,12 @@ test("claim ingress independently binds worker release and observed Vercel egres
 test("admin enqueue readiness is checked before static-egress fallback", () => {
   const readiness = adminRoute.indexOf("LOCAL_CHANNEL_EXECUTOR_READINESS_RPC");
   const providerStaticFence = adminRoute.indexOf("const providerMutationStaticEgressChannel");
-  const smartstoreStaticFence = adminRoute.indexOf('} else if (channel === "smartstore" && !localChannelExecutorReady)');
+  const smartstoreStaticFence = adminRoute.indexOf('} else if (channel === "smartstore"');
   assert.ok(readiness > 0 && readiness < providerStaticFence);
   assert.ok(smartstoreStaticFence > providerStaticFence);
   assert.match(adminRoute, /localExecutorAccess === "read" && !localChannelExecutorReady/u);
   assert.match(adminRoute, /externalDetailApprovalBindingFromPublishContext/u);
+  assert.match(adminRoute, /smartstoreApprovedAiLocalCreate[\s\S]{0,180}!localChannelExecutorReady/u);
   assert.match(adminRoute, /const coupangScopedReleaseGateIsExact/u);
   assert.match(adminRoute, /releaseGateStatus\.openedChannel === "coupang"/u);
   assert.match(adminRoute, /releaseGateStatus\.coupangAttestedRelease === runtimeRelease\.release/u);

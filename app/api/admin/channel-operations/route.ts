@@ -358,6 +358,8 @@ function errorMessage(error: unknown) {
   if (message.includes("MARKETPLACE_IMAGE_")) return "대표 이미지를 1200×1200 JPEG·3MB 이하 영구 공개 경로로 자동 보정하지 못했습니다.";
   if (message.includes("NAVER_AFTER_SERVICE_PHONE_MISSING")) return "네이버 판매자 주소록에서 A/S 연락처를 찾지 못했습니다. API 키의 A/S 전화번호 필드에 실제 연락처를 입력해 주세요.";
   if (message.includes("EBAY_LISTING_CONFIGURATION_REQUIRED")) return "eBay 마켓과 Seller Hub에서 확인한 배송·결제·반품 정책 ID, 재고 위치 키를 명시적으로 입력해 주세요.";
+  if (message.startsWith("EBAY_INVENTORY_DESCRIPTION_TOO_LONG")) return "eBay 상품 설명 본문이 4,000자를 초과했습니다. 성분·주의사항을 유지해 상품 설명을 줄여 주세요.";
+  if (message === "EBAY_INVENTORY_DESCRIPTION_EMPTY") return "eBay에 전송할 상품 설명이 비어 있습니다.";
   if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "Vercel 서버리스 채널 게이트웨이의 응답 제한시간을 초과했습니다. 운영 상태를 확인해 주세요.";
   if (message.startsWith("CHANNEL_WRITE_RESOURCE_")) return "가격·재고·발송 작업의 원격 대상 식별값을 확인하지 못해 실행을 차단했습니다.";
   if (message.startsWith("CHANNEL_GATEWAY_")) return "Vercel 서버리스 채널 게이트웨이에서 안전하게 처리된 오류가 발생했습니다.";
@@ -533,9 +535,17 @@ export async function POST(request: NextRequest) {
   // content mutation. Preserve the original classification before binding.
   const elevenstRequestedContentAssets = channel === "elevenst"
     && isRecord(parsed.data.arguments.sellerpilotAssets);
+  const elevenstCreateUsesApprovedServerSource = channel === "elevenst"
+    && operation === "listing.create"
+    && isRecord(parsed.data.arguments.product)
+    && isElevenstProcessedFoodCategory(parsed.data.arguments.product.dispCtgrNo);
   // Run before content preparation, identity permits, claims or enqueue. Later
   // create/update binders copy parsed arguments, so bind the server facts here.
-  if (channel === "elevenst" && (operation === "listing.create" || operation === "listing.update")) {
+  // Processed-food CREATE binds the stricter approved policy source immediately
+  // before claim; the generic product draft is editing context, not that policy.
+  if (channel === "elevenst"
+      && (operation === "listing.update"
+        || (operation === "listing.create" && !elevenstCreateUsesApprovedServerSource))) {
     try {
       const { data: shippingContext, error: shippingContextError } = await userClient.rpc(
         "sellerpilot_get_product_publish_context",
@@ -1108,12 +1118,20 @@ export async function POST(request: NextRequest) {
   }
 
   const localExecutorAccess = localChannelExecutorAccess(channel, operation);
+  // Approved AI SmartStore CREATE is checked after enqueue by the exact local
+  // claimant, which binds the current route, source snapshot, manifest and final
+  // transport. The older readiness RPC only understands external-detail approval
+  // revisions, so applying it here falsely falls through to the forbidden cloud
+  // egress gate before the claim row exists.
+  const smartstoreApprovedAiLocalCreate = channel === "smartstore"
+    && operation === "listing.create"
+    && verifiedProductContentMode === "ai_generated";
   let localChannelExecutorReady = false;
   // SmartStore category reads retain the existing live Mac heartbeat gate
   // below; the local claimant checks their explicit operation route binding.
   const smartstoreCategoryRead = channel === "smartstore"
     && ["categories.suggest", "categories.attributes", "categories.validate"].includes(operation);
-  if (localExecutorAccess && !smartstoreCategoryRead) {
+  if (localExecutorAccess && !smartstoreCategoryRead && !smartstoreApprovedAiLocalCreate) {
     const runtimeRelease = resolveRuntimeReleaseIdentity();
     let approvalRevision: number | null = null;
     let contentSha256: string | null = null;
@@ -1259,7 +1277,9 @@ export async function POST(request: NextRequest) {
         message: localGatewayReady.message,
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-  } else if (channel === "smartstore" && !localChannelExecutorReady) {
+  } else if (channel === "smartstore"
+      && !smartstoreApprovedAiLocalCreate
+      && !localChannelExecutorReady) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),

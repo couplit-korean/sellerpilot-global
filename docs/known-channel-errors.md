@@ -1,5 +1,21 @@
 # 확인된 채널 오류와 재작업 금지 기준
 
+## 현재 실등록 재시도 — 2026-09-14 15:16 KST
+
+나랑드 상품 c0bdb493-6447-41bf-af0a-46a3da7a75a8을 Aside에서 실제 등록 실행했다. 신규 게시 확인은 아직0/8이다. 아래 수정은 로컬 검사 통과·운영 반영 준비 상태이며 배포 후 원격 상품번호와 조회 결과를 확인한다.
+
+| 채널 | 이번 실제 차단 | 수정 또는 다음 실행 |
+|---|---|---|
+| 11번가 | 상품 편집 원장의 배송 사실 검사에서 전송 전 차단 | 가공식품 CREATE는 기존 승인된 서버 배송 source를 사용하도록 수정. 승인 검사 유지 |
+| SmartStore | 승인된 AI CREATE에 외부 상세 전용 readiness 검사를 적용해 클라우드 IP 안내 발생 | 기존 Mac claimant의 source/승인 검사를 사용하도록 수정. cloud 차단 유지 |
+| eBay | 상위 시도 d87b18df-2e82-40fc-a029-2116113ebdb5, failed422/pre_gateway_retryable, 원격 전송 없음 | Inventory에서 생성된 질문·출처 주석만 제외해 실제 본문3087자. Offer11169자와 상품 본문·이미지는 유지 |
+| Temu | mall/region 불일치 안내, 전송 전 차단 | 운영 credential의 mall/region 결속은 정상. UI 요청의 빈 market을 KR로 수정 |
+| Shopee | 기존 성공 숍 조회가10분 뒤 만료되면 UI가 영구 대기 처리 | 성공 증거와 정확한 이전 job ID가 있는 명시적 재조회만 허용. IP/OAuth/토큰 재조사 금지 |
+| Qoo10 | 기존 QSM 배송·반품 capture 결속 불일치, 전송 전 차단 | 정확한 만료/상품 revision 원인 확인 중. capture 증거 위조·TTL 연장 금지 |
+| Coupang | 공식 조건 조회 source revision 불일치, 출고 확인 필드 미완료 | 저장과 조회 revision 경로 및 기존 WING 근거 확인 중 |
+| Lazada | 정확한 브랜드와 필수 카테고리 미확정 | 기존 공식 브랜드 조회 및 선택 입력 경로 확인 중 |
+
+
 > **2026-09-14 14:42 KST 상태 확인:** 기존 Shopee SG 숍 조회 `39c870a8-2ab1-4c73-b859-a2d0b7f2a107`은14:11:18 KST에 succeeded 완료됐다. 저장된 response_payload의 ok=true, shop-info 단계 ok=true/HTTP200/provider error 빈 문자열을 운영 DB에서 확인했다. 이 조회는 더 이상 대기/재요청 대상이 아니다. 현재 Mac gateway는 가격 계산 배포 `eeee61d`로 ready/HTTP200이며, 앞선 IP·오류 로깅 수정도 포함한다. 다음은 저장된 숍 정보를 사용한 카테고리·등록 필수조건 및 상품 등록 진행이다. 이 확인은 상품 게시 완료 근거가 아니다.
 
 > **2026-09-14 14:11 KST 최신 적용:** 운영 웹·Supabase 활성 release·기존 Mac gateway는 `ac7a8a5559daa32a86d5edf06e027e61bf5f754d`로 일치한다. Vercel `dpl_5Xen7CUU6GjRznwBS957ikV66zBZ`, 후보6/운영6 무실행 canary 및 gateway ready 확인. 아래 표의164000 대응 API/UI·완료 오류 로깅·165000 대응 eBay 저장 코드의 “배포 전” 문구는 이 적용으로 완료됐다.170000/171000/172000도 원자 적용 완료했다.

@@ -79,3 +79,11 @@ test('exact target, owner and environment cannot be substituted; failed and reco
  assert.deepEqual((await db.query('select request_payload from sellerpilot_private.channel_gateway_jobs')).rows[0].request_payload,baseline);
  }finally{await db.close();}
 });
+
+test('renewal permits only the exact expired successful read; pending, failed and unrelated jobs cannot pass',async()=>{
+ const {canRenewExpiredShopeeDiscovery}=await import('../lib/product-registration/shopee/discovery-job-completion.ts');
+ const old={status:409,body:{code:'SHOPEE_TARGET_DISCOVERY_RECEIPT_EXPIRED',refreshable:true,jobId}};
+ assert.equal(canRenewExpiredShopeeDiscovery(old,jobId),true);
+ for(const candidate of [null,{status:202,body:old.body},{status:409,body:{...old.body,code:'SHOPEE_TARGET_DISCOVERY_PENDING'}},{status:409,body:{...old.body,refreshable:false}}])assert.equal(canRenewExpiredShopeeDiscovery(candidate,jobId),false);
+ assert.equal(canRenewExpiredShopeeDiscovery(old,successor),false);assert.equal(canRenewExpiredShopeeDiscovery(old),false);
+});

@@ -168,6 +168,12 @@ type PackageFields = {
   width: number;
   height: number;
 };
+function channelOperationMarket(
+  channel: ActiveChannelKey,
+  target: Pick<ChannelTarget, "marketCode"> | undefined,
+) {
+  return target?.marketCode ?? (channel === "qoo10" ? "JP" : channel === "temu" ? "KR" : "");
+}
 type LegacyQoo10TitleReferenceRepair = {
   legacyName: string;
   legacyTitle: string;
@@ -2119,7 +2125,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     const listingCurrency = marketplaceListingCurrency(channel, target?.currency);
     const operationPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
-    const operationMarket = target?.marketCode ?? (channel === "qoo10" ? "JP" : "");
+    const operationMarket = channelOperationMarket(channel, target);
     if (!options.skipConfirm) {
       openConfirmation({ kind: "channel", channel });
       return false;

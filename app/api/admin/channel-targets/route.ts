@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { ChannelGatewayInProgressError, executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
-import { completeExistingShopeeDiscovery } from "../../../../lib/product-registration/shopee/discovery-job-completion";
+import { canRenewExpiredShopeeDiscovery, completeExistingShopeeDiscovery } from "../../../../lib/product-registration/shopee/discovery-job-completion";
 import {
   activeLazadaSellerIdForMarket,
   activeProductionLazadaCredentialEnvelope,
@@ -409,6 +409,7 @@ export async function POST(request: Request) {
     credentialId: z.string().uuid().optional(),
     targetId: z.string().regex(/^[1-9][0-9]{0,31}$/u).optional(),
     marketCode: z.string().transform((value) => value.trim().toUpperCase()).optional(),
+    refreshExpiredJobId: z.string().uuid().optional(),
   }).safeParse(await request.json().catch(() => null));
   if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
   if (!parsed.success) return NextResponse.json({ message: "지원하지 않는 채널입니다." }, { status: 400 });
@@ -522,7 +523,7 @@ export async function POST(request: Request) {
       }
       const existing = await completeExistingShopeeDiscovery({ actorId: userData.user.id, snapshot: initialShopeeSnapshot,
         targetId: parsed.data.targetId, rpc: (name, args) => serviceClient.rpc(name, args) });
-      if (existing) return NextResponse.json(existing.body, { status: existing.status, headers: { "cache-control": "no-store, max-age=0" } });
+      if (existing && !canRenewExpiredShopeeDiscovery(existing, parsed.data.refreshExpiredJobId)) return NextResponse.json(existing.body, { status: existing.status, headers: { "cache-control": "no-store, max-age=0" } });
       const result = await executeChannelTargetDiscovery({
         serviceClient,
         credentialId: initialShopeeSnapshot.credentialId,

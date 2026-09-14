@@ -4,10 +4,8 @@ const namedEntities: Record<string, string> = {
   bull: "•", middot: "·", hellip: "…", copy: "©", reg: "®", trade: "™",
 };
 
-/** Full factual text only: never truncate an ingredient, warning, or quantity. */
-export function ebayInventoryDescription(value: unknown): string {
-  const html = typeof value === "string" ? value : "";
-  const plain = html
+function inventoryPlainText(html: string): string {
+  return html
     .replace(/<!--[\s\S]*?-->/gu, " ")
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/\{\{SELLERPILOT_IMAGE:[^{}]+\}\}/gu, " ")
@@ -20,6 +18,25 @@ export function ebayInventoryDescription(value: unknown): string {
         ? String.fromCodePoint(point) : entity;
     })
     .replace(/\s+/gu, " ").trim();
+}
+
+/**
+ * The full Offer keeps the approved detail and source annotations. Inventory
+ * has a separate 4,000-character limit: when necessary, omit only the marked
+ * editorial questions and provenance notes of our eight-section renderer.
+ * Keep every product paragraph, section heading/body, and classification.
+ * Unmarked HTML and oversized factual content still fail without truncation.
+ */
+export function ebayInventoryDescription(value: unknown): string {
+  const html = typeof value === "string" ? value : "";
+  let plain = inventoryPlainText(html);
+  if (plain.length > 4000
+      && /<div\b[^>]*\bdata-sellerpilot-localized-detail="true"[^>]*\bdata-sellerpilot-section-count="8"[^>]*>/u.test(html)
+      && (html.match(/<section\b[^>]*\bdata-sellerpilot-section="(?:overview|feature|howto|spec|routine|contents|care|proof)"[^>]*>/gu) ?? []).length === 8) {
+    plain = inventoryPlainText(html
+      .replace(/<p\b[^>]*\bdata-sellerpilot-buyer-question="true"[^>]*>[\s\S]*?<\/p\s*>/gu, " ")
+      .replace(/<aside\b[^>]*\bdata-sellerpilot-evidence="true"[^>]*>[\s\S]*?<\/aside\s*>/gu, " "));
+  }
   if (!plain) throw new Error("EBAY_INVENTORY_DESCRIPTION_EMPTY");
   // UTF-16 length is conservative for supplementary Unicode characters.
   if (plain.length > 4000) throw new Error("EBAY_INVENTORY_DESCRIPTION_TOO_LONG:4000");

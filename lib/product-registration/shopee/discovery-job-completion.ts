@@ -7,6 +7,12 @@ const record = (value: unknown): Row | null => value && typeof value === "object
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 const fail = () => { throw new Error("SHOPEE_SG_DISCOVERY_RECEIPT_INVALID"); };
 
+export function canRenewExpiredShopeeDiscovery(existing: { status: number; body: Row } | null, expectedJobId?: string) {
+  return Boolean(existing && expectedJobId && uuid(expectedJobId) && existing.status === 409
+    && existing.body.code === "SHOPEE_TARGET_DISCOVERY_RECEIPT_EXPIRED"
+    && existing.body.refreshable === true && existing.body.jobId === expectedJobId);
+}
+
 /** Consume only a DB-attested existing exact SG read. Never enqueue/refresh. */
 export async function completeExistingShopeeDiscovery(input: {
   actorId: string; snapshot: ShopeeCredentialSnapshot; targetId: string; rpc: Rpc; nowMs?: number;
@@ -40,11 +46,12 @@ export async function completeExistingShopeeDiscovery(input: {
     message: "앞선 숍 조회 결과를 확인해야 합니다. 새 조회를 중복 전송하지 않았습니다.",
   } };
   const observedAt = String(job.completedAt), timestamp = Date.parse(observedAt), nowMs = input.nowMs ?? Date.now();
-  if (!Number.isFinite(timestamp) || timestamp > nowMs + 5_000 || timestamp < nowMs - 10 * 60_000) return { status: 409, body: {
-    ...base, code: "SHOPEE_TARGET_DISCOVERY_RECEIPT_EXPIRED", pending: true,
-    message: "앞선 숍 조회의 확인 유효시간이 지났습니다. 기존 결과를 최신 조회로 표시하지 않았습니다.",
-  } };
+  if (!Number.isFinite(timestamp) || timestamp > nowMs + 5_000) return fail();
   const evidence = shopeeShopDiscoveryEvidenceFromGatewayResult({ result: job.response, requestedTargetId: targetId });
+  if (timestamp < nowMs - 10 * 60_000) return { status: 409, body: {
+    ...base, code: "SHOPEE_TARGET_DISCOVERY_RECEIPT_EXPIRED", pending: false, refreshable: true,
+    message: "기존 숍 조회는 성공했지만 확인 유효시간이 지났습니다. 기존 연결로 최신 숍 정보를 다시 조회할 수 있습니다.",
+  } };
   // The reader attests same-owner/subject source and the exact prepared successor;
   // the active snapshot still supplies the existing target/token freshness guard.
   const binding = exactShopeeTargetStoreBinding({

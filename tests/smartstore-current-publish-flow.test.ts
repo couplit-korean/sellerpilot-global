@@ -252,6 +252,7 @@ type ProviderAudit = {
 };
 type RouteAudit = {
   claims: number;
+  staticEgressChecks: number;
   snapshotMode: "exact" | "stale" | "missing" | "cross" | "error";
 };
 
@@ -361,8 +362,14 @@ async function channelOperationRoute(
           categoryAttributeSource: categoryAttributeSource(routeAudit.snapshotMode),
         }, error: null };
       }
-      if (name === "sellerpilot_service_serverless_static_egress_status") return { data: { smartstore: true }, error: null };
-      if (name === "sellerpilot_service_serverless_cs_wakeup_status") return { data: { configured: true, active: true, activeRelease: releaseSha }, error: null };
+      if (name === "sellerpilot_service_serverless_static_egress_status") {
+        routeAudit.staticEgressChecks += 1;
+        return { data: { smartstore: false }, error: null };
+      }
+      if (name === "sellerpilot_service_serverless_cs_wakeup_status") {
+        routeAudit.staticEgressChecks += 1;
+        return { data: { configured: true, active: true, activeRelease: releaseSha }, error: null };
+      }
       if (name === "sellerpilot_service_listing_mutation_release_gate_status") return { data: {
         contract: "verified_publication_release_gate_v1", effectiveOpen: true,
         open: true, state: "open", openedChannel: null, openedRelease: releaseSha,
@@ -384,8 +391,8 @@ async function channelOperationRoute(
     if (name.endsWith("/retired-product-recovery")) return { hasRetiredProductRecovery: () => false };
     if (name.endsWith("/operation-availability")) return { channelOperationRelease: () => ({ available: true, mode: "implemented", reason: "ready" }) };
     if (name.endsWith("/serverless-static-egress")) return {
-      configuredServerlessStaticEgressChannels: () => ["smartstore"],
-      hasServerlessStaticEgressFor: () => true,
+      configuredServerlessStaticEgressChannels: () => [],
+      hasServerlessStaticEgressFor: () => false,
       SERVERLESS_STATIC_EGRESS_REQUIRED: "SERVERLESS_STATIC_EGRESS_REQUIRED",
     };
     if (name.endsWith("/local-channel-executor")) return {
@@ -602,7 +609,7 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   assert.equal(registrationValueAt(firstRestored, kcDecisionPath), "");
   const gatewayArguments: Record<string, unknown>[] = [];
   const providerAudits: ProviderAudit[] = [];
-  const routeAudit: RouteAudit = { claims: 0, snapshotMode: "exact" };
+  const routeAudit: RouteAudit = { claims: 0, staticEgressChecks: 0, snapshotMode: "exact" };
   const route = await channelOperationRoute(gatewayArguments, providerAudits, routeAudit);
   const request = (argumentsValue: Record<string, unknown>) => new Request("https://fixture.invalid/api/admin/channel-operations", {
     method: "POST",
@@ -666,4 +673,6 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   assert.equal(providerAudits[1].error, undefined);
   assert.equal(providerAudits[1].creates, 1);
   assert.equal(providerAudits[1].puts, 0);
+  assert.equal(routeAudit.staticEgressChecks, 0,
+    "approved AI SmartStore create must stay on the exact Mac claim path without cloud-egress validation");
 });

@@ -2,6 +2,61 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ebayInventoryDescription, ebayInventoryDescriptionMatches } from "../lib/channels/ebay-inventory-description";
 import { upsertMarketplaceDetailImages } from "../lib/channels/marketplace-images";
+import { buildLocalizedRichDetail, type LocalizedCreativeListing } from "../lib/marketplace-localized-content";
+
+function annotatedListing(): LocalizedCreativeListing {
+  const types = ["overview", "feature", "howto", "spec", "routine", "contents", "care", "proof"] as const;
+  const roles = ["detail-overview", "detail-feature", "detail-use", "detail-dimensions", "detail-routine", "detail-contents", "detail-care", "detail-package"] as const;
+  return {
+    title: "Fixture carbonated drink 500 ml single bottle",
+    shortDescription: "One bottle. Keep the original label for ingredient details.",
+    description: "No health benefit is claimed. The complete allergen statement must be checked on the label.",
+    keywords: [], locale: "en-US",
+    classification: { displayName: "Carbonated soft drink", verificationStatus: "verified", isHealthFunctionalFood: false, evidence: "Classification follows the original food-type label." },
+    detailSections: types.map((type, index) => ({
+      type, imageAsset: roles[index], heading: `Section ${index + 1}`,
+      body: `Product fact ${index + 1}: one 500 ml bottle, sodium 90 mg. Ingredients include water and carbon dioxide. Refrigerate after opening. The full ingredients and allergens require the original label.`,
+      buyerQuestion: `EDITORIAL QUESTION ${index + 1}: ${"Which supplied photo explains this product detail? ".repeat(3)}`,
+      evidence: `PHOTO PROVENANCE ${index + 1}: ${"The source photograph and confirmed seller field support the corresponding product paragraph. ".repeat(3)}`,
+      imageAltText: `Bottle label view ${index + 1}`,
+    })),
+  };
+}
+
+test("long generated details omit only marked editorial annotations from Inventory and preserve the full Offer", () => {
+  const listing = annotatedListing();
+  const html = buildLocalizedRichDetail(listing, listing.title, listing.description);
+  const urls = Array.from({ length: 8 }, (_, i) => `https://images.example/${i}.jpg`);
+  const offer = upsertMarketplaceDetailImages(html, urls, [], listing.detailSections!.map(section => section.imageAsset));
+  const originalOffer = offer;
+  const inventory = ebayInventoryDescription(offer);
+  assert.ok(inventory.length <= 4000);
+  assert.ok(inventory.includes(listing.title));
+  assert.ok(inventory.includes(listing.shortDescription));
+  assert.ok(inventory.includes(listing.description));
+  assert.ok(inventory.includes(listing.classification!.evidence));
+  for (const section of listing.detailSections!) {
+    assert.ok(inventory.includes(section.heading));
+    assert.ok(inventory.includes(section.body), `must preserve complete ${section.type} facts`);
+    assert.ok(offer.includes(section.buyerQuestion!.trim()));
+    assert.ok(offer.includes(section.evidence!.trim()));
+  }
+  assert.doesNotMatch(inventory, /EDITORIAL QUESTION|PHOTO PROVENANCE/);
+  assert.equal(offer, originalOffer);
+  assert.equal((offer.match(/<img\b/gu) ?? []).length, 8);
+  assert.equal(ebayInventoryDescriptionMatches(inventory, offer), true);
+  assert.equal(ebayInventoryDescriptionMatches(inventory.replace("sodium 90 mg", "sodium 0 mg"), offer), false);
+  assert.equal(ebayInventoryDescription(html), inventory);
+});
+
+test("annotation reduction cannot truncate oversized facts or apply to unmarked/incomplete documents", () => {
+  const listing = annotatedListing();
+  const html = buildLocalizedRichDetail(listing, listing.title, listing.description);
+  assert.throws(() => ebayInventoryDescription(html.replace('data-sellerpilot-localized-detail="true"', 'data-other="true"')), /TOO_LONG/);
+  assert.throws(() => ebayInventoryDescription(html.replace('data-sellerpilot-section-count="8"', 'data-sellerpilot-section-count="7"')), /TOO_LONG/);
+  listing.detailSections![0].body = "Ingredient warning: " + "complete factual text ".repeat(210);
+  assert.throws(() => ebayInventoryDescription(buildLocalizedRichDetail(listing, listing.title, listing.description)), /TOO_LONG/);
+});
 
 test("eight expanded transport images do not consume the Inventory description limit", () => {
   const facts = "Narangd Cider Zero 500ml. One bottle. Ingredients: purified water, carbon dioxide. Store away from direct sunlight.";
